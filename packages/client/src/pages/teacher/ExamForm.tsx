@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Form, Input, Select, InputNumber, Button, Card, Table, Transfer, message, Spin, Space, Row, Col } from 'antd';
+import { Form, Input, Select, InputNumber, Button, Card, Table, Transfer, message, Spin, Space, Row, Col, Switch } from 'antd';
 import { SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import type { Question } from '../../types';
@@ -30,6 +30,7 @@ export function ExamForm() {
           mode: e.mode,
           durationMinutes: e.durationMinutes,
           passScore: e.passScore,
+          shuffleQuestions: e.settings?.shuffleQuestions || false,
         });
         if (e.examQuestions) {
           setSelectedKeys(e.examQuestions.map((eq: any) => eq.questionId));
@@ -41,7 +42,13 @@ export function ExamForm() {
   const onFinish = async (values: any) => {
     setSaving(true);
     try {
-      const payload = { ...values };
+      const payload = {
+        ...values,
+        settings: {
+          shuffleQuestions: values.shuffleQuestions || false,
+        },
+      };
+      delete payload.shuffleQuestions;
       if (isEdit) {
         await api.put(`/exams/${id}`, payload);
         // Update questions
@@ -103,6 +110,10 @@ export function ExamForm() {
               </Form.Item>
             </Col>
           </Row>
+          <Form.Item name="shuffleQuestions" label="随机出卷" valuePropName="checked">
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+            <span style={{ marginLeft: 8, color: '#999' }}>开启后每位学生看到不同的题目顺序</span>
+          </Form.Item>
         </Card>
 
         <Card title="选择题目" style={{ marginBottom: 16 }}>

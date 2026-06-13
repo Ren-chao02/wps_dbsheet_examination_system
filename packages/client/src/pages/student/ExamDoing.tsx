@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Steps, Button, Modal, message, Spin, Typography, Tag, Divider } from 'antd';
-import { CheckOutlined, LinkOutlined } from '@ant-design/icons';
+import { Card, Steps, Button, Modal, message, Spin, Typography, Tag, Divider, Statistic, Alert } from 'antd';
+import { CheckOutlined, LinkOutlined, ClockCircleOutlined, WarningOutlined } from '@ant-design/icons';
+import { io } from 'socket.io-client';
 import api from '../../services/api';
+import { useAuthStore } from '../../stores/auth';
 import type { Question } from '../../types';
 
 const { Text, Paragraph } = Typography;
+const { Countdown } = Statistic;
 
 const typeLabels: Record<string, string> = {
   create_table: '建表', add_field: '字段', config_view: '视图', create_form: '表单', comprehensive: '综合',
@@ -18,10 +21,90 @@ export function ExamDoingPage() {
   const [loading, setLoading] = useState(true);
   const [currentStep, setCurrentStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [tabSwitchCount, setTabSwitchCount] = useState(0);
+  const [deadline, setDeadline] = useState<number | null>(null);
+  const submittedRef = useRef(false);
+  const socketRef = useRef<any>(null);
+  const { user } = useAuthStore();
+
+  // Socket.IO connection for real-time monitoring
+  useEffect(() => {
+    const socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      socket.emit('exam:join', { examId: id, studentId: user?.id, studentName: user?.realName || user?.username });
+    });
+
+    // Heartbeat every 10s via socket
+    const heartbeatInterval = setInterval(() => {
+      socket.emit('exam:heartbeat', { examId: id, studentId: user?.id, currentQuestion, tabSwitchCount });
+    }, 10000);
+
+    return () => { clearInterval(heartbeatInterval); socket.disconnect(); };
+  }, [id, user, currentStep, tabSwitchCount]);
 
   useEffect(() => {
-    api.get(`/my-exams/${id}`).then(res => setData(res.data)).catch(() => message.error('加载失败')).finally(() => setLoading(false));
+    api.get(`/my-exams/${id}`).then(res => {
+      const d = res.data;
+      setData(d);
+
+      // Calculate deadline from startedAt + durationMinutes
+      if (d.submission?.startedAt && d.exam?.durationMinutes) {
+        const start = new Date(d.submission.startedAt).getTime();
+        const duration = d.exam.durationMinutes * 60 * 1000;
+        setDeadline(start + duration);
+      }
+    }).catch(() => message.error('加载失败')).finally(() => setLoading(false));
   }, [id]);
+
+  // Tab switch detection (anti-cheat)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.hidden) {
+        setTabSwitchCount(c => {
+          const newCount = c + 1;
+          // Report to server
+          api.post(`/my-exams/${id}/heartbeat`, { tabSwitchCount: newCount }).catch(() => {});
+          return newCount;
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [id]);
+
+  // Heartbeat every 30s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      api.post(`/my-exams/${id}/heartbeat`, { tabSwitchCount }).catch(() => {});
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [id, tabSwitchCount]);
+
+  const doSubmit = useCallback(async (auto = false) => {
+    if (submittedRef.current) return;
+    submittedRef.current = true;
+    setSubmitting(true);
+    try {
+      await api.post(`/my-exams/${id}/submit`);
+      // Notify via socket
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('exam:submit', { examId: id, studentId: user?.id, studentName: user?.realName || user?.username });
+      }
+      if (auto) {
+        message.warning('考试时间已到，已自动提交答卷');
+      } else {
+        message.success('提交成功！');
+      }
+      navigate(`/student/exam/${id}/result`);
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '提交失败');
+      submittedRef.current = false;
+    } finally {
+      setSubmitting(false);
+    }
+  }, [id, navigate]);
 
   const handleSubmit = () => {
     Modal.confirm({
@@ -29,35 +112,69 @@ export function ExamDoingPage() {
       content: '提交后将无法修改，确定要提交答卷吗？',
       okText: '确认提交',
       cancelText: '再检查一下',
-      onOk: async () => {
-        setSubmitting(true);
-        try {
-          await api.post(`/my-exams/${id}/submit`);
-          message.success('提交成功！');
-          navigate(`/student/exam/${id}/result`);
-        } catch (err: any) {
-          message.error(err.response?.data?.message || '提交失败');
-        } finally {
-          setSubmitting(false);
-        }
-      },
+      onOk: () => doSubmit(false),
     });
   };
+
+  // Timer finish callback (auto-submit)
+  const handleTimerFinish = useCallback(() => {
+    if (!submittedRef.current) {
+      doSubmit(true);
+    }
+  }, [doSubmit]);
 
   if (loading) return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>;
   if (!data) return null;
 
   const questions: Question[] = data.questions || [];
   const currentQuestion = questions[currentStep];
+  const hasTimeLimit = !!deadline;
 
   return (
     <div className="page-container" style={{ maxWidth: 900 }}>
+      {/* Header with timer */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h2>{data.exam?.title || '答题'}</h2>
-        <Button type="primary" danger onClick={handleSubmit} loading={submitting} icon={<CheckOutlined />}>
-          提交答卷
-        </Button>
+        <h2 style={{ margin: 0 }}>{data.exam?.title || '答题'}</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {hasTimeLimit && deadline && (
+            <div style={{
+              background: '#fff',
+              padding: '4px 16px',
+              borderRadius: 8,
+              border: '2px solid #1890ff',
+              display: 'flex',
+              alignItems: 'center',
+            }}>
+              <Countdown
+                title={<span style={{ fontSize: 12 }}><ClockCircleOutlined /> 剩余时间</span>}
+                value={deadline}
+                format="HH:mm:ss"
+                onFinish={handleTimerFinish}
+                valueStyle={{
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: '#1890ff',
+                }}
+              />
+            </div>
+          )}
+          <Button type="primary" danger onClick={handleSubmit} loading={submitting} icon={<CheckOutlined />}>
+            提交答卷
+          </Button>
+        </div>
       </div>
+
+      {/* Tab switch warning */}
+      {tabSwitchCount > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          icon={<WarningOutlined />}
+          message={`检测到 ${tabSwitchCount} 次切屏行为，请注意考试纪律`}
+          style={{ marginBottom: 16 }}
+          closable
+        />
+      )}
 
       <Steps
         current={currentStep}

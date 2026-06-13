@@ -18,6 +18,7 @@ import { ExamForm } from './pages/teacher/ExamForm';
 import { ExamMonitor } from './pages/teacher/ExamMonitor';
 import { GradingPage } from './pages/teacher/GradingPage';
 import { StatisticsPage } from './pages/teacher/StatisticsPage';
+import { StudentProfilePage } from './pages/teacher/StudentProfile';
 import { UserManagement } from './pages/admin/UserManagement';
 import { DemoPage } from './pages/demo/DemoPage';
 
@@ -74,6 +75,7 @@ export default function App() {
         <Route path="exams/:id/monitor" element={<ExamMonitor />} />
         <Route path="exams/:id/grading" element={<GradingPage />} />
         <Route path="exams/:id/statistics" element={<StatisticsPage />} />
+        <Route path="students/:id/profile" element={<StudentProfilePage />} />
       </Route>
 
       {/* Admin */}

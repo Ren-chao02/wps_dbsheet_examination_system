@@ -140,11 +140,75 @@ statisticsRouter.get('/exam/:examId', async (req: Request, res: Response) => {
       questionStats,
       submissions: graded.map(s => ({
         id: s.id,
+        studentId: s.student.id,
         studentName: s.student.realName || s.student.id,
         score: s.totalScore,
         submittedAt: s.submittedAt,
       })),
     });
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// GET /api/statistics/exam/:examId/export — CSV 导出
+statisticsRouter.get('/exam/:examId/export', async (req: Request, res: Response) => {
+  try {
+    const exam = await prisma.exam.findUnique({
+      where: { id: req.params.examId },
+      include: {
+        examQuestions: {
+          include: { question: { select: { title: true, type: true, score: true } } },
+        },
+        submissions: {
+          where: { status: 'graded' },
+          include: {
+            student: { select: { username: true, realName: true } },
+            details: {
+              include: { question: { select: { title: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    if (!exam) {
+      return res.status(404).json({ message: '考试不存在' });
+    }
+
+    const BOM = '\ufeff'; // UTF-8 BOM for Excel compatibility
+    const headers = ['学生姓名', '学号', '总分', '得分', '通过率', '开始时间', '提交时间'];
+
+    // Add per-question columns
+    exam.examQuestions.forEach(eq => {
+      headers.push(`${eq.question.title}(${eq.question.type})`);
+    });
+
+    const rows = exam.submissions.map(sub => {
+      const row = [
+        sub.student.realName || sub.student.username,
+        sub.student.username,
+        String(exam.totalScore),
+        String(sub.totalScore ?? ''),
+        sub.totalScore !== null ? `${Math.round((sub.totalScore / exam.totalScore) * 100)}%` : '',
+        sub.startedAt ? new Date(sub.startedAt).toLocaleString('zh-CN') : '',
+        sub.submittedAt ? new Date(sub.submittedAt).toLocaleString('zh-CN') : '',
+      ];
+
+      // Add per-question scores
+      exam.examQuestions.forEach(eq => {
+        const detail = sub.details.find(d => d.questionId === eq.questionId);
+        row.push(detail ? `${detail.score ?? ''}/${eq.scoreOverride ?? eq.question.score}` : '');
+      });
+
+      return row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',');
+    });
+
+    const csv = BOM + headers.map(h => `"${h}"`).join(',') + '\n' + rows.join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(exam.title)}_成绩.csv"`);
+    res.send(csv);
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
@@ -166,6 +230,11 @@ statisticsRouter.get('/student/:studentId', async (req: Request, res: Response) 
       where: { studentId: req.params.studentId, status: 'graded' },
       include: {
         exam: { select: { id: true, title: true, totalScore: true, passScore: true, mode: true } },
+        details: {
+          include: {
+            question: { select: { type: true, score: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -193,6 +262,31 @@ statisticsRouter.get('/student/:studentId', async (req: Request, res: Response) 
         passed: s.exam.passScore ? (s.totalScore ?? 0) >= s.exam.passScore : null,
         submittedAt: s.submittedAt,
       })),
+      // Ability radar: per question type correct rate
+      abilityRadar: (() => {
+        const typeMap: Record<string, { total: number; correct: number }> = {};
+        submissions.forEach(s => {
+          s.details.forEach(d => {
+            const type = d.question.type;
+            if (!typeMap[type]) typeMap[type] = { total: 0, correct: 0 };
+            typeMap[type].total++;
+            if (d.isCorrect) typeMap[type].correct++;
+          });
+        });
+
+        const labels: Record<string, string> = {
+          create_table: '建表',
+          add_field: '字段',
+          config_view: '视图',
+          create_form: '表单',
+          comprehensive: '综合',
+        };
+
+        return Object.entries(typeMap).map(([type, data]) => ({
+          type: labels[type] || type,
+          rate: data.total > 0 ? Math.round((data.correct / data.total) * 100) : 0,
+        }));
+      })(),
     });
   } catch {
     res.status(500).json({ message: '服务器错误' });

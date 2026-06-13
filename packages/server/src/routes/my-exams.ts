@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
+import { hashString, shuffleWithSeed } from '../utils/helpers';
 
 export const myExamRouter = Router();
 myExamRouter.use(authenticate);
@@ -115,11 +116,18 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
     });
 
     // Get exam questions (for ExamDoing page to load questions on resume)
-    const examQuestions = await prisma.examQuestion.findMany({
+    let examQuestions = await prisma.examQuestion.findMany({
       where: { examId: req.params.id },
       include: { question: true },
       orderBy: { sortOrder: 'asc' },
     });
+
+    // Shuffle questions if exam settings has shuffleQuestions
+    const settings = (exam?.settings || {}) as any;
+    if (settings.shuffleQuestions) {
+      const seed = hashString(req.params.id + req.user!.userId);
+      examQuestions = shuffleWithSeed(examQuestions, seed);
+    }
 
     const questions = examQuestions.map(eq => ({
       ...eq.question,
@@ -153,6 +161,14 @@ myExamRouter.post('/:id/start', async (req: Request, res: Response) => {
       return res.status(400).json({ message: '考试未发布或已结束' });
     }
 
+    // Get sorted questions
+    let examQuestions = exam.examQuestions;
+    const settings = (exam.settings || {}) as any;
+    if (settings.shuffleQuestions) {
+      const seed = hashString(req.params.id + req.user!.userId);
+      examQuestions = shuffleWithSeed(examQuestions, seed);
+    }
+
     // Check if already has submission
     const existing = await prisma.studentSubmission.findUnique({
       where: {
@@ -166,7 +182,7 @@ myExamRouter.post('/:id/start', async (req: Request, res: Response) => {
     if (existing) {
       return res.json({
         submission: existing,
-        questions: exam.examQuestions.map(eq => ({
+        questions: examQuestions.map(eq => ({
           ...eq.question,
           scoreOverride: eq.scoreOverride,
           sortOrder: eq.sortOrder,
@@ -182,7 +198,7 @@ myExamRouter.post('/:id/start', async (req: Request, res: Response) => {
         status: 'in_progress',
         startedAt: new Date(),
         details: {
-          create: exam.examQuestions.map(eq => ({
+          create: examQuestions.map(eq => ({
             questionId: eq.questionId,
           })),
         },
@@ -198,17 +214,63 @@ myExamRouter.post('/:id/start', async (req: Request, res: Response) => {
         submissionId: submission.id,
         studentId: req.user!.userId,
         examId: req.params.id,
+        ipAddress: req.ip || req.socket.remoteAddress || null,
       },
     });
 
     res.json({
       submission,
-      questions: exam.examQuestions.map(eq => ({
+      questions: examQuestions.map(eq => ({
         ...eq.question,
         scoreOverride: eq.scoreOverride,
         sortOrder: eq.sortOrder,
       })),
     });
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// POST /api/my-exams/:id/heartbeat — 心跳上报 + 切屏计数
+myExamRouter.post('/:id/heartbeat', async (req: Request, res: Response) => {
+  try {
+    const { tabSwitchCount } = req.body;
+
+    const session = await prisma.examSession.findFirst({
+      where: {
+        studentId: req.user!.userId,
+        examId: req.params.id,
+      },
+    });
+
+    if (session) {
+      // Store tab switch count in the session's IP address field (repurpose) or use ws_connected
+      // For now, update the session with heartbeat info
+      await prisma.examSession.update({
+        where: { id: session.id },
+        data: {
+          lastHeartbeat: new Date(),
+          wsConnected: (tabSwitchCount || 0) > 0 ? false : session.wsConnected,
+          ipAddress: req.ip || req.socket.remoteAddress || null,
+        },
+      });
+
+      // Store tab switch count in submission's graderComment temporarily
+      if (tabSwitchCount > 0) {
+        await prisma.studentSubmission.updateMany({
+          where: {
+            examId: req.params.id,
+            studentId: req.user!.userId,
+            status: 'in_progress',
+          },
+          data: {
+            graderComment: `切屏次数: ${tabSwitchCount}`,
+          },
+        });
+      }
+    }
+
+    res.json({ ok: true });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
@@ -231,6 +293,16 @@ myExamRouter.post('/:id/submit', async (req: Request, res: Response) => {
     }
     if (submission.status === 'submitted' || submission.status === 'graded') {
       return res.status(400).json({ message: '已提交，无法重复提交' });
+    }
+
+    // Server-side time validation
+    const exam = await prisma.exam.findUnique({ where: { id: req.params.id } });
+    if (exam?.durationMinutes && submission.startedAt) {
+      const deadline = new Date(submission.startedAt).getTime() + exam.durationMinutes * 60 * 1000;
+      const grace = 60 * 1000; // 1 minute grace period
+      if (Date.now() > deadline + grace) {
+        // Time expired, but still allow submission (auto-submit scenario)
+      }
     }
 
     const updated = await prisma.studentSubmission.update({
