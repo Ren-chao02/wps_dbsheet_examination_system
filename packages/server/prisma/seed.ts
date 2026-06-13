@@ -123,7 +123,7 @@ async function main() {
       status: 'published',
       createdBy: teacher.id,
     },
-  );
+  });
 
   const q3 = await prisma.question.create({
     data: {
