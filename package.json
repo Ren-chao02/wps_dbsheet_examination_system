@@ -1,0 +1,25 @@
+{
+  "name": "examination-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "金山多维表格考试系统",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "npm run dev -w packages/server",
+    "dev:client": "npm run dev -w packages/client",
+    "build": "npm run build -w packages/server && npm run build -w packages/client",
+    "db:migrate": "npm run db:migrate -w packages/server",
+    "db:seed": "npm run db:seed -w packages/server",
+    "db:studio": "npm run db:studio -w packages/server",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
+  },
+  "workspaces": [
+    "packages/server",
+    "packages/client"
+  ],
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.0"
+  }
+}
