@@ -2,8 +2,11 @@
  * 金山多维表格 API 适配器
  *
  * 封装对 WPS 开放平台服务端 REST API 的调用。
- * Demo 阶段使用 Mock 数据，Phase 2 切换为真实 API。
+ * 实现 WPS-3 签名鉴权（HMAC-SHA1 + MD5）。
  */
+
+import crypto from 'crypto';
+import { config } from '../../config';
 
 const API_BASE = 'https://openapi.wps.cn/kopen/office/file';
 
@@ -50,6 +53,15 @@ export interface RecordInfo {
   fields: Record<string, any>;
 }
 
+export interface RecordListResponse {
+  result: number;
+  detail: {
+    fieldsSchema: { id: string; name: string; type: string }[];
+    offset: string;
+    records: RecordInfo[];
+  };
+}
+
 // ============================================================
 // 适配器类
 // ============================================================
@@ -57,15 +69,17 @@ export interface RecordInfo {
 export class KingsoftAdapter {
   private fileId: string;
   private accessToken: string;
+  private apiSecret: string;
 
-  constructor(fileId: string, accessToken: string) {
+  constructor(fileId: string, accessToken: string, apiSecret?: string) {
     this.fileId = fileId;
     this.accessToken = accessToken;
+    this.apiSecret = apiSecret || config.kingsoft.apiSecret;
   }
 
   /** 获取完整 Schema（核心方法） */
   async getSchema(): Promise<SchemaResponse> {
-    return this.request('/schema/query', {});
+    return this.request<SchemaResponse>('/schema/query', {});
   }
 
   /** 获取所有表 */
@@ -94,13 +108,30 @@ export class KingsoftAdapter {
   async getRecords(
     sheetId: number,
     options?: { pageSize?: number; viewId?: string; fields?: string[] }
-  ): Promise<{ records: RecordInfo[]; offset: string }> {
-    return this.request('/record/list', {
+  ): Promise<RecordListResponse> {
+    return this.request<RecordListResponse>('/record/list', {
       sheetId,
       pageSize: options?.pageSize ?? 100,
       viewId: options?.viewId,
       fields: options?.fields,
+      showFieldsInfo: true,
     });
+  }
+
+  /** 获取指定表的所有记录 */
+  async getRecordsByTableName(
+    tableName: string,
+    options?: { pageSize?: number }
+  ): Promise<{ records: RecordInfo[]; fieldsSchema: { id: string; name: string; type: string }[] }> {
+    const tables = await this.getTables();
+    const table = tables.find(t => t.name === tableName);
+    if (!table) throw new Error(`表 "${tableName}" 不存在`);
+
+    const response = await this.getRecords(table.id, options);
+    return {
+      records: response.detail.records,
+      fieldsSchema: response.detail.fieldsSchema,
+    };
   }
 
   // ============================================================
@@ -108,7 +139,8 @@ export class KingsoftAdapter {
   // ============================================================
 
   private async request<T>(action: string, params: Record<string, any>): Promise<T> {
-    const url = `${API_BASE}/${this.fileId}/core/execute${action}?access_token=${this.accessToken}`;
+    const baseUrl = config.kingsoft.apiBaseUrl || API_BASE;
+    const url = `${baseUrl}/${this.fileId}/core/execute${action}?access_token=${this.accessToken}`;
     const body = JSON.stringify({ param: params });
     const headers = this.buildHeaders(body);
 
@@ -119,35 +151,68 @@ export class KingsoftAdapter {
     });
 
     if (!response.ok) {
-      throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
+      const text = await response.text().catch(() => '');
+      throw new Error(`API 请求失败 [${action}]: ${response.status} ${response.statusText} - ${text}`);
     }
 
-    return response.json() as Promise<T>;
+    const data = await response.json() as T & { result?: number };
+
+    // WPS API 约定 result=0 表示成功
+    if (data.result !== undefined && data.result !== 0) {
+      throw new Error(`API 返回错误 [${action}]: result=${data.result}, ${JSON.stringify(data)}`);
+    }
+
+    return data;
   }
 
   /** 构建 WPS-3 签名请求头 */
   private buildHeaders(body: string): Record<string, string> {
     const date = new Date().toUTCString();
-    const md5 = this.md5(body);
-    // WPS-3 签名 = Base64(HMAC-SHA1(secret, md5 + content-type + date))
-    // 此处为简化实现，生产环境需使用完整签名算法
+    const contentMd5 = this.md5Hash(body);
+    const contentType = 'application/json';
+
+    // WPS-3 签名: Base64(HMAC-SHA1(secret, Content-MD5 + "\n" + Content-Type + "\n" + Date))
+    const signString = `${contentMd5}\n${contentType}\n${date}`;
+    const signature = this.hmacSha1(signString, this.apiSecret);
+
     return {
-      'Content-Type': 'application/json',
-      'Content-Md5': md5,
-      Date: date,
-      // 'X-Auth': this.sign(md5, date), // Phase 2 实现
+      'Content-Type': contentType,
+      'Content-Md5': contentMd5,
+      'Date': date,
+      'X-Auth': signature,
     };
   }
 
-  /** MD5 哈希（简化实现） */
-  private md5(str: string): string {
-    // 生产环境使用 crypto.createHash('md5').update(str).digest('hex')
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
-    }
-    return Math.abs(hash).toString(16).padStart(8, '0');
+  /** MD5 哈希（十六进制小写） */
+  private md5Hash(str: string): string {
+    return crypto.createHash('md5').update(str, 'utf-8').digest('hex');
   }
+
+  /** HMAC-SHA1 → Base64 */
+  private hmacSha1(data: string, secret: string): string {
+    return crypto.createHmac('sha1', secret).update(data, 'utf-8').digest('base64');
+  }
+}
+
+// ============================================================
+// 工厂方法：从 submission 的 tableSpaceId 解析出 adapter
+// ============================================================
+
+/**
+ * tableSpaceId 格式约定：
+ *   "fileId:accessToken"
+ *   或 "fileId:accessToken:apiSecret"
+ *
+ * 如果未配置 tableSpaceId，返回 null（将使用 mock 模式）
+ */
+export function createAdapterFromSpaceId(tableSpaceId: string | null | undefined): KingsoftAdapter | null {
+  if (!tableSpaceId) return null;
+
+  const parts = tableSpaceId.split(':');
+  if (parts.length < 2) return null;
+
+  const [fileId, accessToken, apiSecret] = parts;
+  if (!fileId || !accessToken) return null;
+
+  return new KingsoftAdapter(fileId, accessToken, apiSecret);
 }

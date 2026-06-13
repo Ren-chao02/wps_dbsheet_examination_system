@@ -2,11 +2,13 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
+import { enqueueGrading, enqueueExamGrading } from '../jobs/grading-queue';
+import { gradeSubmission } from '../services/grading-service';
 
 export const gradingRouter = Router();
 gradingRouter.use(authenticate);
 
-// POST /api/grading/batch/:examId — 批量开始评分（具体路径必须在参数路径前）
+// POST /api/grading/batch/:examId — 批量自动判分（具体路径必须在参数路径前）
 gradingRouter.post('/batch/:examId', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
     const submissions = await prisma.studentSubmission.findMany({
@@ -20,22 +22,39 @@ gradingRouter.post('/batch/:examId', authorize('teacher', 'admin'), async (req: 
       return res.status(400).json({ message: '没有待评分的答卷' });
     }
 
-    // Set all to grading
-    await prisma.studentSubmission.updateMany({
-      where: {
-        examId: req.params.examId,
-        status: 'submitted',
-      },
-      data: { status: 'grading' },
-    });
+    // 逐份执行自动判分（异步）
+    const results = [];
+    const errors = [];
 
-    res.json({ message: `已将 ${submissions.length} 份答卷设为评分中` });
-  } catch {
-    res.status(500).json({ message: '服务器错误' });
+    for (const sub of submissions) {
+      try {
+        const result = await gradeSubmission(sub.id);
+        results.push(result);
+      } catch (err: any) {
+        errors.push({ submissionId: sub.id, error: err.message });
+      }
+    }
+
+    res.json({
+      message: `批量判分完成：成功 ${results.length} 份，失败 ${errors.length} 份`,
+      total: submissions.length,
+      success: results.length,
+      failed: errors.length,
+      results: results.map(r => ({
+        submissionId: r.submissionId,
+        totalScore: r.totalScore,
+        maxScore: r.maxScore,
+        hasNeedsReview: r.hasNeedsReview,
+        needsReviewCount: r.needsReviewCount,
+      })),
+      errors,
+    });
+  } catch (err: any) {
+    res.status(500).json({ message: '服务器错误', detail: err.message });
   }
 });
 
-// GET /api/grading/:submissionId — 查看判分详情
+// GET /api/grading/:submissionId — 查看判分详情（含验证结果）
 gradingRouter.get('/:submissionId', async (req: Request, res: Response) => {
   try {
     const userId = req.user!.userId;
@@ -49,11 +68,15 @@ gradingRouter.get('/:submissionId', async (req: Request, res: Response) => {
         details: {
           include: {
             question: { select: { id: true, title: true, type: true, score: true, answerRules: true } },
-            verificationResults: true,
+            verificationResults: {
+              orderBy: { verifiedAt: 'asc' },
+            },
           },
           orderBy: { createdAt: 'asc' },
         },
-        verificationResults: true,
+        verificationResults: {
+          orderBy: { verifiedAt: 'asc' },
+        },
       },
     });
 
@@ -72,7 +95,7 @@ gradingRouter.get('/:submissionId', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/grading/:submissionId — 触发自动判分 (目前为手动判分入口)
+// POST /api/grading/:submissionId — 触发自动判分
 gradingRouter.post('/:submissionId', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
     const submission = await prisma.studentSubmission.findUnique({
@@ -82,22 +105,26 @@ gradingRouter.post('/:submissionId', authorize('teacher', 'admin'), async (req: 
     if (!submission) {
       return res.status(404).json({ message: '答卷不存在' });
     }
-    if (submission.status !== 'submitted') {
-      return res.status(400).json({ message: '答卷未提交或已评分' });
+    if (submission.status !== 'submitted' && submission.status !== 'grading') {
+      return res.status(400).json({ message: '答卷状态不允许判分（需为 submitted 或 grading）' });
     }
 
-    // Set status to grading
-    await prisma.studentSubmission.update({
-      where: { id: req.params.submissionId },
-      data: { status: 'grading' },
+    // 清除旧的验证结果（重新判分）
+    await prisma.verificationResult.deleteMany({
+      where: { submissionId: req.params.submissionId },
     });
 
-    // For Phase 1: just transition to grading state (manual grading)
-    // In Phase 2, this will trigger the rule engine
+    // 执行自动判分
+    const result = await gradeSubmission(req.params.submissionId);
 
-    res.json({ message: '已开始评分流程', submissionId: req.params.submissionId });
-  } catch {
-    res.status(500).json({ message: '服务器错误' });
+    res.json({
+      message: result.hasNeedsReview
+        ? `自动判分完成，有 ${result.needsReviewCount} 条规则需人工复核`
+        : '自动判分完成',
+      ...result,
+    });
+  } catch (err: any) {
+    res.status(500).json({ message: '判分失败', detail: err.message });
   }
 });
 
@@ -106,7 +133,7 @@ const overrideSchema = z.object({
   isCorrect: z.boolean().optional(),
 });
 
-// POST /api/grading/:submissionId/detail/:detailId — 手动对某道题打分
+// POST /api/grading/:submissionId/detail/:detailId — 手动对某道题打分（含复核 needsReview）
 gradingRouter.post('/:submissionId/detail/:detailId', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
     const { score, isCorrect } = overrideSchema.parse(req.body);
@@ -128,6 +155,58 @@ gradingRouter.post('/:submissionId/detail/:detailId', authorize('teacher', 'admi
     });
 
     res.json(updated);
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ message: '参数错误', errors: err.errors });
+    }
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// POST /api/grading/:submissionId/review/:detailId — 复核 needsReview 的规则
+gradingRouter.post('/:submissionId/review/:detailId', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
+  try {
+    const reviewSchema = z.object({
+      ruleId: z.string(),
+      passed: z.boolean(),
+      score: z.number().int().min(0),
+    });
+    const { ruleId, passed, score } = reviewSchema.parse(req.body);
+
+    // 更新对应的 verification result
+    await prisma.verificationResult.updateMany({
+      where: {
+        submissionDetailId: req.params.detailId,
+        submissionId: req.params.submissionId,
+        ruleId,
+      },
+      data: {
+        passed,
+        score,
+        needsReview: false,
+      },
+    });
+
+    // 重新计算该题的总分
+    const allResults = await prisma.verificationResult.findMany({
+      where: {
+        submissionDetailId: req.params.detailId,
+      },
+    });
+
+    const questionScore = allResults.reduce((sum, r) => sum + (r.passed ? r.score : 0), 0);
+    const allPassed = allResults.every(r => r.passed);
+    const hasReview = allResults.some(r => r.needsReview);
+
+    await prisma.submissionDetail.update({
+      where: { id: req.params.detailId },
+      data: {
+        score: hasReview ? null : questionScore,
+        isCorrect: hasReview ? null : allPassed,
+      },
+    });
+
+    res.json({ message: '复核完成', score: questionScore, isCorrect: allPassed });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ message: '参数错误', errors: err.errors });
@@ -178,5 +257,3 @@ gradingRouter.post('/:submissionId/finalize', authorize('teacher', 'admin'), asy
     res.status(500).json({ message: '服务器错误' });
   }
 });
-
-

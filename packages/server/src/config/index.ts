@@ -17,5 +17,6 @@ export const config = {
   kingsoft: {
     apiBaseUrl: process.env.KINGSOFT_API_BASE_URL || '',
     apiKey: process.env.KINGSOFT_API_KEY || '',
+    apiSecret: process.env.KINGSOFT_API_SECRET || '',
   },
 };

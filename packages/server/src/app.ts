@@ -9,6 +9,7 @@ import { myExamRouter } from './routes/my-exams';
 import { gradingRouter } from './routes/grading';
 import { statisticsRouter } from './routes/statistics';
 import { demoRouter } from './routes/demo';
+import { kingsoftRouter } from './routes/kingsoft';
 import { errorHandler } from './middleware/error-handler';
 
 export function createApp() {
@@ -33,6 +34,7 @@ export function createApp() {
   app.use('/api/grading', gradingRouter);
   app.use('/api/statistics', statisticsRouter);
 app.use('/api/demo', demoRouter);
+  app.use('/api/kingsoft', kingsoftRouter);
 
   // Error handling
   app.use(errorHandler);
