@@ -129,6 +129,10 @@ export default function RoleManagement() {
       render: (v: string) => new Date(v).toLocaleString('zh-CN'),
     },
     {
+      title: '更新人', dataIndex: 'updatedBy', key: 'updatedBy', width: 100,
+      render: (v: string | null) => v || '—',
+    },
+    {
       title: '操作', key: 'actions', width: 160,
       render: (_: any, r: SystemRole) => (
         <Space>
