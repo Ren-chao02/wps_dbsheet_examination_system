@@ -58,7 +58,7 @@ const updateStudentSchema = z.object({
   phoneNumber: z.string().optional(),
   email: z.string().email().optional(),
   classRoomId: z.string().uuid().optional(),
-  accountStatus: z.enum(['ACTIVE', 'INACTIVE', 'PENDING_APPROVAL']).optional(),
+  accountStatus: z.enum(['ENABLED', 'DISABLED']).optional(),
 });
 
 // ============================================================

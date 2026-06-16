@@ -1,5 +1,5 @@
 /**
- * 账户管理路由 — 增强版用户管理（支持 systemRole、wpsId、批量导入）
+ * 账户管理路由 — 增强版用户管理（支持 systemRole、gender、remark）
  */
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
@@ -41,7 +41,7 @@ accountRouter.get('/', async (req: Request, res: Response) => {
         { username: { contains: String(search), mode: 'insensitive' } },
         { realName: { contains: String(search), mode: 'insensitive' } },
         { email: { contains: String(search), mode: 'insensitive' } },
-        { wpsId: { contains: String(search), mode: 'insensitive' } },
+        { remark: { contains: String(search), mode: 'insensitive' } },
       ];
     }
     if (systemRoleId) {
@@ -63,7 +63,8 @@ accountRouter.get('/', async (req: Request, res: Response) => {
           realName: true,
           role: true,
           email: true,
-          wpsId: true,
+          gender: true,
+          remark: true,
           employeeId: true,
           accountStatus: true,
           systemRoleId: true,
@@ -84,6 +85,45 @@ accountRouter.get('/', async (req: Request, res: Response) => {
 });
 
 // ============================================================
+// PUT /api/accounts/:id/disable — 禁用账户（须在 /:id 之前）
+// ============================================================
+accountRouter.put('/:id/disable', async (req: Request, res: Response) => {
+  try {
+    if (req.params.id === req.user!.userId) {
+      return res.status(400).json({ message: '不能禁用自己的账户' });
+    }
+    const user = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { accountStatus: 'DISABLED' },
+    });
+    res.json({ message: '账户已禁用', id: user.id });
+  } catch (err: any) {
+    if (err.code === 'P2025') {
+      return res.status(404).json({ message: '用户不存在' });
+    }
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// ============================================================
+// PUT /api/accounts/:id/enable — 启用账户（须在 /:id 之前）
+// ============================================================
+accountRouter.put('/:id/enable', async (req: Request, res: Response) => {
+  try {
+    const user = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { accountStatus: 'ENABLED' },
+    });
+    res.json({ message: '账户已启用', id: user.id });
+  } catch (err: any) {
+    if (err.code === 'P2025') {
+      return res.status(404).json({ message: '用户不存在' });
+    }
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// ============================================================
 // POST /api/accounts — 新增单个账户
 // ============================================================
 const createAccountSchema = z.object({
@@ -92,7 +132,8 @@ const createAccountSchema = z.object({
   realName: z.string().optional(),
   email: z.string().email().optional(),
   role: z.enum(['admin', 'teacher']).default('teacher'),
-  wpsId: z.string().max(128).optional(),
+  gender: z.enum(['MALE', 'FEMALE', 'UNSET']).optional(),
+  remark: z.string().max(512).optional(),
   systemRoleId: z.string().uuid().optional().nullable(),
 });
 
@@ -121,7 +162,8 @@ accountRouter.post('/', async (req: Request, res: Response) => {
         realName: data.realName,
         email: data.email,
         role: data.role,
-        wpsId: data.wpsId || null,
+        gender: data.gender || null,
+        remark: data.remark || null,
         systemRoleId: data.systemRoleId || null,
       },
       select: {
@@ -130,7 +172,8 @@ accountRouter.post('/', async (req: Request, res: Response) => {
         realName: true,
         role: true,
         email: true,
-        wpsId: true,
+        gender: true,
+        remark: true,
         systemRoleId: true,
         systemRole: { select: { roleCode: true, roleName: true } },
         accountStatus: true,
@@ -154,9 +197,10 @@ const updateAccountSchema = z.object({
   realName: z.string().optional(),
   email: z.string().email().optional().nullable(),
   role: z.enum(['admin', 'teacher', 'student']).optional(),
-  wpsId: z.string().max(128).optional().nullable(),
+  gender: z.enum(['MALE', 'FEMALE', 'UNSET']).optional().nullable(),
+  remark: z.string().max(512).optional().nullable(),
   systemRoleId: z.string().uuid().optional().nullable(),
-  accountStatus: z.enum(['ACTIVE', 'INACTIVE', 'PENDING_APPROVAL']).optional(),
+  accountStatus: z.enum(['ENABLED', 'DISABLED']).optional(),
 });
 
 accountRouter.put('/:id', async (req: Request, res: Response) => {
@@ -176,7 +220,8 @@ accountRouter.put('/:id', async (req: Request, res: Response) => {
         ...(data.realName !== undefined && { realName: data.realName }),
         ...(data.email !== undefined && { email: data.email }),
         ...(data.role !== undefined && { role: data.role }),
-        ...(data.wpsId !== undefined && { wpsId: data.wpsId }),
+        ...(data.gender !== undefined && { gender: data.gender }),
+        ...(data.remark !== undefined && { remark: data.remark }),
         ...(data.systemRoleId !== undefined && { systemRoleId: data.systemRoleId }),
         ...(data.accountStatus !== undefined && { accountStatus: data.accountStatus }),
       },
@@ -186,7 +231,8 @@ accountRouter.put('/:id', async (req: Request, res: Response) => {
         realName: true,
         role: true,
         email: true,
-        wpsId: true,
+        gender: true,
+        remark: true,
         systemRoleId: true,
         systemRole: { select: { roleCode: true, roleName: true } },
         accountStatus: true,
@@ -265,7 +311,6 @@ accountRouter.get('/import-template', async (_req: Request, res: Response) => {
       { header: '用户名(必填)', key: 'username', width: 18 },
       { header: '密码(必填)', key: 'password', width: 14 },
       { header: '姓名', key: 'realName', width: 12 },
-      { header: 'WPSID(企业账号ID)', key: 'wpsId', width: 20 },
       { header: '邮箱', key: 'email', width: 24 },
       { header: '角色编码(如TEACHER)', key: 'roleCode', width: 20 },
     ];
@@ -327,17 +372,17 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
       },
     });
 
+    // 模板列：1=用户名, 2=密码, 3=姓名, 4=邮箱, 5=角色编码
     for (let i = 2; i <= worksheet.rowCount; i++) {
       const row = worksheet.getRow(i);
       const username = String(row.getCell(1).value || '').trim();
       const password = String(row.getCell(2).value || '').trim();
       const realName = String(row.getCell(3).value || '').trim();
-      const wpsId = String(row.getCell(4).value || '').trim();
-      const email = String(row.getCell(5).value || '').trim();
-      const roleCode = String(row.getCell(6).value || '').trim() || 'TEACHER';
+      const email = String(row.getCell(4).value || '').trim();
+      const roleCode = String(row.getCell(5).value || '').trim() || 'TEACHER';
 
       if (!username || !password) {
-        if (username || password || realName || wpsId || email) {
+        if (username || password || realName || email) {
           totalRows++;
           failedRows++;
           errors.push({ row: i, username: username || `(第${i}行)`, error: '用户名和密码不能为空' });
@@ -366,7 +411,6 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
             username,
             passwordHash,
             realName: realName || null,
-            wpsId: wpsId || null,
             email: email || null,
             role: userRole,
             systemRoleId,
@@ -449,7 +493,8 @@ accountRouter.get('/export', async (req: Request, res: Response) => {
         username: true,
         realName: true,
         email: true,
-        wpsId: true,
+        gender: true,
+        remark: true,
         role: true,
         accountStatus: true,
         systemRole: { select: { roleName: true } },
@@ -463,11 +508,12 @@ accountRouter.get('/export', async (req: Request, res: Response) => {
     worksheet.columns = [
       { header: '用户名', key: 'username', width: 18 },
       { header: '姓名', key: 'realName', width: 12 },
-      { header: 'WPSID', key: 'wpsId', width: 20 },
+      { header: '性别', key: 'gender', width: 10 },
       { header: '邮箱', key: 'email', width: 24 },
       { header: '角色', key: 'role', width: 14 },
       { header: '系统角色', key: 'systemRole', width: 16 },
       { header: '状态', key: 'status', width: 10 },
+      { header: '备注', key: 'remark', width: 20 },
       { header: '创建时间', key: 'createdAt', width: 20 },
     ];
 
@@ -475,15 +521,18 @@ accountRouter.get('/export', async (req: Request, res: Response) => {
     headerRow.font = { bold: true };
     headerRow.commit();
 
+    const genderMap: Record<string, string> = { MALE: '男', FEMALE: '女', UNSET: '未设置' };
+
     for (const a of accounts) {
       worksheet.addRow({
         username: a.username,
         realName: a.realName || '',
-        wpsId: a.wpsId || '',
+        gender: genderMap[a.gender as string] || '',
         email: a.email || '',
         role: a.role,
         systemRole: a.systemRole?.roleName || '',
-        status: a.accountStatus === 'ACTIVE' ? '正常' : a.accountStatus === 'INACTIVE' ? '禁用' : '待审批',
+        status: a.accountStatus === 'ENABLED' ? '启用' : '禁用',
+        remark: a.remark || '',
         createdAt: new Date(a.createdAt).toLocaleString('zh-CN'),
       });
     }
