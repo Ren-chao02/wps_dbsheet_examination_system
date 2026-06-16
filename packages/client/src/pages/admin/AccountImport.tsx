@@ -115,7 +115,7 @@ export default function AccountImport() {
             <h3>第一步：下载导入模板</h3>
             <Paragraph type="secondary" style={{ maxWidth: 480, margin: '0 auto 24px' }}>
               请先下载标准导入模板，按照模板格式填写账户信息后上传。
-              模板包含字段：用户名(必填)、密码(必填)、姓名、WPSID、邮箱、角色编码。
+            模板包含字段：用户名(必填)、密码(必填)、姓名、邮箱、角色编码。
             </Paragraph>
             <Space>
               <Button type="primary" icon={<DownloadOutlined />} onClick={handleDownloadTemplate}>
