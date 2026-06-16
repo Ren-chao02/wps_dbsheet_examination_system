@@ -90,6 +90,8 @@ async function main() {
       realName: '系统管理员',
       role: 'admin',
       email: 'admin@example.com',
+      gender: 'UNSET',
+      remark: '系统预置管理员账户',
       systemRoleId: systemRoleAdmin.id,
     },
   });
@@ -101,6 +103,8 @@ async function main() {
       realName: '王老师',
       role: 'teacher',
       email: 'teacher@example.com',
+      gender: 'MALE',
+      remark: '预置教师账户',
       systemRoleId: systemRoleTeacher.id,
     },
   });
