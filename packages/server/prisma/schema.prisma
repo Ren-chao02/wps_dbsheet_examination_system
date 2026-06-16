@@ -60,12 +60,12 @@ enum SubmissionStatus {
 enum Gender {
   MALE
   FEMALE
+  UNSET
 }
 
 enum AccountStatus {
-  ACTIVE
-  INACTIVE
-  PENDING_APPROVAL
+  ENABLED
+  DISABLED
 }
 
 enum InvitationStatus {
@@ -99,8 +99,8 @@ model User {
   employeeId   String? @unique @map("employee_id") @db.VarChar(64)
   gender       Gender?
   phoneNumber  String? @map("phone_number") @db.VarChar(32)
-  accountStatus AccountStatus @default(ACTIVE) @map("account_status")
-  wpsId        String?       @map("wps_id") @db.VarChar(128)
+  accountStatus AccountStatus @default(ENABLED) @map("account_status")
+  remark       String?       @db.VarChar(512)
   systemRoleId String?       @map("system_role_id") @db.Uuid
   lastLoginAt  DateTime? @map("last_login_at")
   departmentId String? @map("department_id")
