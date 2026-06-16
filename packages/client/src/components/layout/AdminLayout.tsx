@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Layout, Menu, Typography, Avatar, Dropdown } from 'antd';
 import {
-  TeamOutlined,
   LogoutOutlined,
   UserOutlined,
+  SafetyCertificateOutlined,
+  UserSwitchOutlined,
+  CloudUploadOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 
@@ -23,7 +25,9 @@ export function AdminLayout() {
   };
 
   const menuItems = [
-    { key: '/admin/users', icon: <TeamOutlined />, label: '用户管理' },
+    { key: '/admin/accounts', icon: <UserSwitchOutlined />, label: '账户管理' },
+    { key: '/admin/roles', icon: <SafetyCertificateOutlined />, label: '角色权限管理' },
+    { key: '/admin/import-tasks', icon: <CloudUploadOutlined />, label: '导入导出任务' },
   ];
 
   const userMenu = {

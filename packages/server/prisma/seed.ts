@@ -16,8 +16,71 @@ async function main() {
   await prisma.question.deleteMany();
   await prisma.questionCategory.deleteMany();
   await prisma.user.deleteMany();
+  await prisma.systemRolePermission.deleteMany();
+  await prisma.systemRole.deleteMany();
+  await prisma.importTask.deleteMany();
 
   const passwordHash = await bcrypt.hash('123456', 10);
+
+  // ============================================================
+  // 创建预设 SystemRole
+  // ============================================================
+  console.log('🔧 创建预设角色...');
+
+  const systemRoleAdmin = await prisma.systemRole.create({
+    data: {
+      roleCode: 'ADMIN',
+      roleName: '学校管理员',
+      roleType: 'preset',
+      description: '拥有所有模块的操作权限',
+      permissions: {
+        create: [
+          { moduleCode: 'QUESTION_BANK' },
+          { moduleCode: 'EXAM_MANAGEMENT' },
+          { moduleCode: 'STUDENT_MANAGEMENT' },
+          { moduleCode: 'INVIGILATION' },
+          { moduleCode: 'GRADE_MANAGEMENT' },
+          { moduleCode: 'SYSTEM_MANAGEMENT' },
+          { moduleCode: 'IMPORT_EXPORT' },
+        ],
+      },
+    },
+  });
+
+  const systemRoleTeacher = await prisma.systemRole.create({
+    data: {
+      roleCode: 'TEACHER',
+      roleName: '老师',
+      roleType: 'preset',
+      description: '拥有除系统管理外的所有操作权限',
+      permissions: {
+        create: [
+          { moduleCode: 'QUESTION_BANK' },
+          { moduleCode: 'EXAM_MANAGEMENT' },
+          { moduleCode: 'STUDENT_MANAGEMENT' },
+          { moduleCode: 'INVIGILATION' },
+          { moduleCode: 'GRADE_MANAGEMENT' },
+          { moduleCode: 'IMPORT_EXPORT' },
+        ],
+      },
+    },
+  });
+
+  const systemRoleInvigilator = await prisma.systemRole.create({
+    data: {
+      roleCode: 'INVIGILATOR',
+      roleName: '监考员',
+      roleType: 'preset',
+      description: '仅拥有监考管理权限',
+      permissions: {
+        create: [
+          { moduleCode: 'INVIGILATION' },
+        ],
+      },
+    },
+  });
+
+  console.log('✅ 预设角色创建完成');
 
   // Create users
   const admin = await prisma.user.create({
@@ -27,6 +90,7 @@ async function main() {
       realName: '系统管理员',
       role: 'admin',
       email: 'admin@example.com',
+      systemRoleId: systemRoleAdmin.id,
     },
   });
 
@@ -37,6 +101,7 @@ async function main() {
       realName: '王老师',
       role: 'teacher',
       email: 'teacher@example.com',
+      systemRoleId: systemRoleTeacher.id,
     },
   });
 

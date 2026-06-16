@@ -57,6 +57,36 @@ enum SubmissionStatus {
   graded
 }
 
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum AccountStatus {
+  ACTIVE
+  INACTIVE
+  PENDING_APPROVAL
+}
+
+enum InvitationStatus {
+  ACTIVE
+  EXPIRED
+  DISABLED
+}
+
+enum ApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TaskStatus {
+  PENDING
+  PROCESSING
+  FINISHED
+  FAILED
+}
+
 model User {
   id           String  @id @default(uuid()) @db.Uuid
   username     String  @unique @db.VarChar(64)
@@ -65,15 +95,33 @@ model User {
   role         UserRole
   email        String? @db.VarChar(255)
   avatarUrl    String? @map("avatar_url") @db.VarChar(512)
+  studentId    String? @unique @map("student_id") @db.VarChar(64)
+  employeeId   String? @unique @map("employee_id") @db.VarChar(64)
+  gender       Gender?
+  phoneNumber  String? @map("phone_number") @db.VarChar(32)
+  accountStatus AccountStatus @default(ACTIVE) @map("account_status")
+  wpsId        String?       @map("wps_id") @db.VarChar(128)
+  systemRoleId String?       @map("system_role_id") @db.Uuid
+  lastLoginAt  DateTime? @map("last_login_at")
+  departmentId String? @map("department_id")
+  majorId      String? @map("major_id")
+  classRoomId  String? @map("class_room_id")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   // Relations
-  createdQuestions  Question[]       @relation("QuestionCreator")
-  createdExams      Exam[]           @relation("ExamCreator")
-  submissions       StudentSubmission[]
-  gradedSubmissions StudentSubmission[] @relation("Grader")
-  examSessions      ExamSession[]
+  createdQuestions      Question[]           @relation("QuestionCreator")
+  createdExams         Exam[]               @relation("ExamCreator")
+  submissions          StudentSubmission[]
+  gradedSubmissions    StudentSubmission[]  @relation("Grader")
+  examSessions         ExamSession[]
+  department           Department?          @relation(fields: [departmentId], references: [id])
+  major                Major?               @relation(fields: [majorId], references: [id])
+  classRoom            ClassRoom?           @relation(fields: [classRoomId], references: [id])
+  systemRole           SystemRole?          @relation(fields: [systemRoleId], references: [id])
+  createdInvitations   Invitation[]         @relation("InvitationCreator")
+  reviewedApplications StudentApplication[] @relation("ApplicationReviewer")
+  createdImportTasks   ImportTask[]         @relation("ImportTaskCreator")
 
   @@map("users")
 }
@@ -239,4 +287,132 @@ model ExamSession {
   exam       Exam              @relation(fields: [examId], references: [id])
 
   @@map("exam_sessions")
+}
+
+model Department {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  code        String    @unique
+  description String?
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  majors      Major[]
+  classRooms  ClassRoom[]
+  users       User[]
+}
+
+model Major {
+  id           String    @id @default(uuid())
+  name         String
+  code         String
+  departmentId String
+  description  String?
+  sortOrder    Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  classRooms   ClassRoom[]
+  users        User[]
+
+  @@unique([departmentId, code])
+}
+
+model ClassRoom {
+  id           String    @id @default(uuid())
+  name         String
+  code         String    @unique
+  academicYear String
+  gradeLevel   Int       @default(1)
+  departmentId String
+  majorId      String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  department   Department @relation(fields: [departmentId], references: [id])
+  major        Major      @relation(fields: [majorId], references: [id], onDelete: Cascade)
+  students     User[]
+  invitations  Invitation[]
+}
+
+model Invitation {
+  id          String           @id @default(uuid())
+  code        String           @unique
+  classRoomId String
+  createdBy   String   @db.Uuid
+  expiresAt   DateTime
+  maxUses     Int              @default(0)
+  usedCount   Int              @default(0)
+  status      InvitationStatus @default(ACTIVE)
+  createdAt   DateTime         @default(now())
+
+  classRoom    ClassRoom @relation(fields: [classRoomId], references: [id])
+  creator      User      @relation("InvitationCreator", fields: [createdBy], references: [id])
+  applications StudentApplication[]
+}
+
+model StudentApplication {
+  id           String            @id @default(uuid())
+  invitationId String
+  realName     String
+  studentId    String
+  phoneNumber  String?
+  gender       Gender?
+  status       ApplicationStatus @default(PENDING)
+  reviewedBy   String?  @db.Uuid
+  reviewedAt   DateTime?
+  rejectReason String?
+  createdAt    DateTime          @default(now())
+
+  invitation   Invitation @relation(fields: [invitationId], references: [id])
+  reviewer     User?      @relation("ApplicationReviewer", fields: [reviewedBy], references: [id])
+}
+
+model ImportTask {
+  id          String       @id @default(uuid())
+  type        String
+  fileName    String
+  taskName    String?      @map("task_name") @db.VarChar(256)
+  totalRows   Int          @default(0)
+  successRows Int          @default(0)
+  failedRows  Int          @default(0)
+  status      TaskStatus   @default(PENDING)
+  errorFile   String?
+  downloadUrl String?      @map("download_url") @db.VarChar(512)
+  createdBy   String   @db.Uuid
+  createdAt   DateTime     @default(now())
+  completedAt DateTime?
+
+  creator     User @relation("ImportTaskCreator", fields: [createdBy], references: [id])
+}
+
+model SystemRole {
+  id          String   @id @default(uuid()) @db.Uuid
+  roleCode    String   @unique @map("role_code") @db.VarChar(64)
+  roleName    String   @map("role_name") @db.VarChar(128)
+  roleType    String   @default("custom") @map("role_type") @db.VarChar(16)
+  description String?  @db.VarChar(512)
+  status      String   @default("ACTIVE") @db.VarChar(16)
+  createdBy   String?  @map("created_by") @db.Uuid
+  updatedBy   String?  @map("updated_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  permissions SystemRolePermission[]
+  users       User[]
+
+  @@map("system_roles")
+}
+
+model SystemRolePermission {
+  id         String @id @default(uuid()) @db.Uuid
+  roleId     String @map("role_id") @db.Uuid
+  moduleCode String @map("module_code") @db.VarChar(64)
+
+  role       SystemRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, moduleCode])
+  @@map("system_role_permissions")
 }

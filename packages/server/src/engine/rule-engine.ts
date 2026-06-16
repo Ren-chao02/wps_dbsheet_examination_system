@@ -39,6 +39,14 @@ export interface SchemaResponse {
   };
 }
 
+/** 记录数据：按表名索引的记录列表 */
+export interface RecordData {
+  [tableName: string]: {
+    records: { id: string; fields: Record<string, any> }[];
+    fieldsSchema?: { id: string; name: string; type: string }[];
+  };
+}
+
 interface SheetInfo {
   id: number;
   name: string;
@@ -52,8 +60,34 @@ interface FieldInfo {
   name: string;
   type: string;
   required?: boolean;
-  items?: { value: string; color?: number }[];
-  linkSheet?: string;
+  items?: { value: string; color?: number; id?: string }[];
+  linkSheet?: string | number;
+  linkView?: string;
+  multipleLinks?: boolean;
+  isAuto?: boolean;
+  linkFilter?: any;
+  linkField?: string;
+  lookupField?: string;
+  aggregation?: string;
+  baseType?: string;
+  lookupSheetId?: number;
+  numberFormat?: string;
+  formula?: string;
+  valueType?: string;
+  maxValue?: number;
+  uniqueValue?: boolean;
+  defaultValueType?: string;
+  defaultValue?: string;
+  displayText?: string;
+  multipleContacts?: boolean;
+  noticeNewContact?: boolean;
+  onlyUploadByCamera?: boolean;
+  addressLevel?: number;
+  detailedAddress?: boolean;
+  presetAddress?: { detail?: string; districts?: string[] };
+  watchAll?: boolean;
+  watchedField?: string[];
+  data?: Record<string, any>;
 }
 
 interface ViewInfo {
@@ -68,11 +102,12 @@ interface ViewInfo {
 
 const WPS_TYPE_TO_CANONICAL: Record<string, string> = {
   // 基础字段
-  SingleLineText: 'text',
+  SingleLineText: 'text',      // v3 旧版类型名，保留兼容
   MultiLineText: 'text',
   Number: 'number',
-  Currency: 'number',
-  Percentage: 'number',
+  Currency: 'currency',
+  Percent: 'percent',           // v7 正确名称（非 Percentage）
+  Percentage: 'percent',        // v3 兼容
   Date: 'date',
   Time: 'time',
   Checkbox: 'checkbox',
@@ -88,8 +123,9 @@ const WPS_TYPE_TO_CANONICAL: Record<string, string> = {
   // 复杂字段
   Attachment: 'attachment',
   Link: 'link',
+  Lookup: 'lookup',
   Contact: 'contact',
-  Note: 'note',
+  Note: 'note',                  // 富文本
   Address: 'address',
   Cascade: 'cascade',
   // 自动字段
@@ -100,7 +136,6 @@ const WPS_TYPE_TO_CANONICAL: Record<string, string> = {
   LastModifiedTime: 'last_modified_time',
   // 计算字段
   Formula: 'formula',
-  Lookup: 'lookup',
 };
 
 function canonicalType(wpsType: string): string {
@@ -129,7 +164,8 @@ function findView(sheet: SheetInfo, viewName: string): ViewInfo | undefined {
 
 type RuleHandler = (
   schema: SchemaResponse,
-  params: Record<string, any>
+  params: Record<string, any>,
+  records?: RecordData
 ) => Omit<RuleResult, 'ruleId' | 'action' | 'maxScore'>;
 
 const ruleHandlers: Record<string, RuleHandler> = {
@@ -553,36 +589,102 @@ const ruleHandlers: Record<string, RuleHandler> = {
     };
   },
 
-  check_record_exists(schema, params) {
+  check_record_exists(schema, params, records) {
+    const tableRecords = records?.[params.tableName];
+    if (!tableRecords) {
+      return {
+        passed: false,
+        score: 0,
+        expected: { tableName: params.tableName, recordExists: true },
+        actual: { tableName: params.tableName, recordData: '未获取到记录数据' },
+        errorMessage: `无法获取表「${params.tableName}」的记录数据`,
+        needsReview: false,
+      };
+    }
+    const hasRecords = tableRecords.records.length > 0;
     return {
-      passed: false,
+      passed: hasRecords,
       score: 0,
-      expected: params,
-      actual: null,
-      errorMessage: `记录验证需额外调用 record/list API（当前仅验证 Schema）`,
-      needsReview: true,
+      expected: { tableName: params.tableName, recordExists: true },
+      actual: { tableName: params.tableName, recordCount: tableRecords.records.length },
+      errorMessage: hasRecords ? undefined : `表「${params.tableName}」中没有任何记录`,
+      needsReview: false,
     };
   },
 
-  check_record_value(schema, params) {
+  check_record_value(schema, params, records) {
+    const tableRecords = records?.[params.tableName];
+    if (!tableRecords) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, recordData: '未获取到记录数据' },
+        errorMessage: `无法获取表「${params.tableName}」的记录数据`,
+        needsReview: false,
+      };
+    }
+
+    // params: { tableName, fieldName, value, matchType?: 'exact' | 'contains' }
+    const { fieldName, value, matchType = 'contains' } = params;
+    const matchedRecords = tableRecords.records.filter(r => {
+      const fieldValue = String(r.fields[fieldName] ?? '');
+      const targetValue = String(value);
+      if (matchType === 'exact') return fieldValue === targetValue;
+      return fieldValue.includes(targetValue);
+    });
+
+    const passed = matchedRecords.length > 0;
     return {
-      passed: false,
+      passed,
       score: 0,
-      expected: params,
-      actual: null,
-      errorMessage: `记录值验证需额外调用 record/list API（当前仅验证 Schema）`,
-      needsReview: true,
+      expected: { tableName: params.tableName, fieldName, value, matchType },
+      actual: {
+        tableName: params.tableName,
+        totalRecords: tableRecords.records.length,
+        matchedCount: matchedRecords.length,
+        sample: matchedRecords.slice(0, 3).map(r => r.fields[fieldName]),
+      },
+      errorMessage: passed
+        ? undefined
+        : `表「${params.tableName}」中未找到字段「${fieldName}」${matchType === 'exact' ? '等于' : '包含'}「${value}」的记录`,
+      needsReview: false,
     };
   },
 
-  check_record_count(schema, params) {
+  check_record_count(schema, params, records) {
+    const tableRecords = records?.[params.tableName];
+    if (!tableRecords) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, recordData: '未获取到记录数据' },
+        errorMessage: `无法获取表「${params.tableName}」的记录数据`,
+        needsReview: false,
+      };
+    }
+
+    // params: { tableName, count, operator?: 'gte' | 'eq' | 'lte' }
+    const actualCount = tableRecords.records.length;
+    const expectedCount = params.count;
+    const operator = params.operator || 'gte';
+
+    let passed = false;
+    let operatorLabel = '>=';
+    if (operator === 'eq') { passed = actualCount === expectedCount; operatorLabel = '='; }
+    else if (operator === 'lte') { passed = actualCount <= expectedCount; operatorLabel = '<='; }
+    else { passed = actualCount >= expectedCount; operatorLabel = '>='; }
+
     return {
-      passed: false,
+      passed,
       score: 0,
-      expected: params,
-      actual: null,
-      errorMessage: `记录数验证需额外调用 record/list API（当前仅验证 Schema）`,
-      needsReview: true,
+      expected: { tableName: params.tableName, count: expectedCount, operator },
+      actual: { tableName: params.tableName, recordCount: actualCount },
+      errorMessage: passed
+        ? undefined
+        : `表「${params.tableName}」记录数不满足要求：期望 ${operatorLabel} ${expectedCount}，实际 ${actualCount}`,
+      needsReview: false,
     };
   },
 };
@@ -594,7 +696,7 @@ const ruleHandlers: Record<string, RuleHandler> = {
 /**
  * 对单条规则进行判分
  */
-function evaluateRule(schema: SchemaResponse, rule: AnswerRule): RuleResult {
+function evaluateRule(schema: SchemaResponse, rule: AnswerRule, records?: RecordData): RuleResult {
   const handler = ruleHandlers[rule.action];
 
   if (!handler) {
@@ -611,7 +713,7 @@ function evaluateRule(schema: SchemaResponse, rule: AnswerRule): RuleResult {
     };
   }
 
-  const result = handler(schema, rule.params);
+  const result = handler(schema, rule.params, records);
   return {
     ruleId: rule.id,
     action: rule.action,
@@ -623,12 +725,14 @@ function evaluateRule(schema: SchemaResponse, rule: AnswerRule): RuleResult {
 
 /**
  * 对所有规则进行判分，返回汇总结果
+ * @param records 可选的记录数据，用于记录类规则验证
  */
 export function evaluateRules(
   schema: SchemaResponse,
-  rules: AnswerRule[]
+  rules: AnswerRule[],
+  records?: RecordData
 ): { totalScore: number; maxScore: number; results: RuleResult[] } {
-  const results = rules.map(rule => evaluateRule(schema, rule));
+  const results = rules.map(rule => evaluateRule(schema, rule, records));
   const maxScore = rules.reduce((sum, r) => sum + r.score, 0);
   const totalScore = results.reduce((sum, r) => sum + r.score, 0);
 

@@ -15,7 +15,8 @@ export const config = {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
   kingsoft: {
-    apiBaseUrl: process.env.KINGSOFT_API_BASE_URL || '',
+    apiBaseUrl: process.env.KINGSOFT_API_BASE_URL || 'https://openapi.wps.cn/v7/coop/dbsheet',
+    apiVersion: (process.env.KINGSOFT_API_VERSION || 'v7') as 'v3' | 'v7',
     apiKey: process.env.KINGSOFT_API_KEY || '',
     apiSecret: process.env.KINGSOFT_API_SECRET || '',
   },

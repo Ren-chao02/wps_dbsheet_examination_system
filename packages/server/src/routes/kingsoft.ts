@@ -16,13 +16,13 @@ kingsoftRouter.use(authorize('teacher', 'admin'));
 // POST /api/kingsoft/proxy — 通用代理
 kingsoftRouter.post('/proxy', async (req: Request, res: Response) => {
   try {
-    const { fileId, accessToken, action, params } = req.body;
+    const { fileId, accessToken, action, params, apiVersion } = req.body;
 
     if (!fileId || !accessToken || !action) {
       return res.status(400).json({ message: '缺少必要参数: fileId, accessToken, action' });
     }
 
-    const adapter = new KingsoftAdapter(fileId, accessToken);
+    const adapter = new KingsoftAdapter(fileId, accessToken, undefined, apiVersion || 'v7');
 
     // 路由到对应的 API 方法
     let result: any;
@@ -55,12 +55,13 @@ kingsoftRouter.get('/table/:file_id/tables', async (req: Request, res: Response)
   try {
     const { file_id } = req.params;
     const accessToken = req.query.access_token as string;
+    const apiVersion = (req.query.api_version as string) === 'v3' ? 'v3' : 'v7';
 
     if (!accessToken) {
       return res.status(400).json({ message: '缺少 access_token 参数' });
     }
 
-    const adapter = new KingsoftAdapter(file_id, accessToken);
+    const adapter = new KingsoftAdapter(file_id, accessToken, undefined, apiVersion as 'v3' | 'v7');
     const tables = await adapter.getTables();
     res.json({ tables });
   } catch (err: any) {
@@ -73,12 +74,13 @@ kingsoftRouter.get('/table/:file_id/:table_name/fields', async (req: Request, re
   try {
     const { file_id, table_name } = req.params;
     const accessToken = req.query.access_token as string;
+    const apiVersion = (req.query.api_version as string) === 'v3' ? 'v3' : 'v7';
 
     if (!accessToken) {
       return res.status(400).json({ message: '缺少 access_token 参数' });
     }
 
-    const adapter = new KingsoftAdapter(file_id, accessToken);
+    const adapter = new KingsoftAdapter(file_id, accessToken, undefined, apiVersion as 'v3' | 'v7');
     const fields = await adapter.getFields(decodeURIComponent(table_name));
     res.json({ fields });
   } catch (err: any) {
@@ -91,12 +93,13 @@ kingsoftRouter.get('/table/:file_id/:table_name/views', async (req: Request, res
   try {
     const { file_id, table_name } = req.params;
     const accessToken = req.query.access_token as string;
+    const apiVersion = (req.query.api_version as string) === 'v3' ? 'v3' : 'v7';
 
     if (!accessToken) {
       return res.status(400).json({ message: '缺少 access_token 参数' });
     }
 
-    const adapter = new KingsoftAdapter(file_id, accessToken);
+    const adapter = new KingsoftAdapter(file_id, accessToken, undefined, apiVersion as 'v3' | 'v7');
     const views = await adapter.getViews(decodeURIComponent(table_name));
     res.json({ views });
   } catch (err: any) {

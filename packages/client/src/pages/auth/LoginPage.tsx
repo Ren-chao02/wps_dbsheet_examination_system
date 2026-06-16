@@ -17,7 +17,7 @@ export function LoginPage() {
     setLoading(true);
     try {
       const res = await api.post<LoginResponse>('/auth/login', values);
-      login(res.data.user, res.data.token);
+      login(res.data.user, res.data.token, res.data.permissions);
 
       const role = res.data.user.role;
       if (role === 'student') navigate('/student');

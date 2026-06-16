@@ -19,18 +19,40 @@ import { ExamMonitor } from './pages/teacher/ExamMonitor';
 import { GradingPage } from './pages/teacher/GradingPage';
 import { StatisticsPage } from './pages/teacher/StatisticsPage';
 import { StudentProfilePage } from './pages/teacher/StudentProfile';
-import { UserManagement } from './pages/admin/UserManagement';
+import StudentManagement from './pages/teacher/StudentManagement';
+import StudentImport from './pages/teacher/StudentImport';
+import ImportTaskList from './pages/teacher/ImportTaskList';
+import DepartmentManagement from './pages/teacher/DepartmentManagement';
 import { DemoPage } from './pages/demo/DemoPage';
+import InvitationManagement from './pages/teacher/InvitationManagement';
+import ApplicationReview from './pages/teacher/ApplicationReview';
+import StudentJoinPage from './pages/public/StudentJoinPage';
+import ForbiddenPage from './pages/public/ForbiddenPage';
+import RoleManagement from './pages/admin/RoleManagement';
+import AccountManagement from './pages/admin/AccountManagement';
+import AccountImport from './pages/admin/AccountImport';
+import SystemImportTaskList from './pages/admin/SystemImportTaskList';
 
-function PrivateRoute({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
-  const { isAuthenticated, user } = useAuthStore();
+function PrivateRoute({ children, roles, permissions }: { children: React.ReactNode; roles?: string[]; permissions?: string[] }) {
+  const { isAuthenticated, isLoading, user, hasPermission } = useAuthStore();
+
+  if (isLoading) {
+    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>加载中...</div>;
+  }
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
 
   if (roles && user && !roles.includes(user.role)) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/forbidden" replace />;
+  }
+
+  if (permissions && permissions.length > 0) {
+    const allowed = permissions.some((p) => hasPermission(p));
+    if (!allowed) {
+      return <Navigate to="/forbidden" replace />;
+    }
   }
 
   return <>{children}</>;
@@ -76,14 +98,28 @@ export default function App() {
         <Route path="exams/:id/grading" element={<GradingPage />} />
         <Route path="exams/:id/statistics" element={<StatisticsPage />} />
         <Route path="students/:id/profile" element={<StudentProfilePage />} />
+        <Route path="departments" element={<DepartmentManagement />} />
+        <Route path="students" element={<StudentManagement />} />
+        <Route path="students/import" element={<StudentImport />} />
+        <Route path="invitations" element={<InvitationManagement />} />
+        <Route path="applications" element={<ApplicationReview />} />
+        <Route path="import-tasks" element={<ImportTaskList />} />
       </Route>
+
+      {/* Public - Student Join */}
+      <Route path="/join/:code" element={<StudentJoinPage />} />
+      <Route path="/forbidden" element={<ForbiddenPage />} />
 
       {/* Admin */}
       <Route path="/admin" element={
         <PrivateRoute roles={['admin']}><AdminLayout /></PrivateRoute>
       }>
-        <Route index element={<Navigate to="users" replace />} />
-        <Route path="users" element={<UserManagement />} />
+        <Route index element={<Navigate to="accounts" replace />} />
+        <Route path="users" element={<Navigate to="/admin/accounts" replace />} />
+        <Route path="accounts" element={<AccountManagement />} />
+        <Route path="accounts/import" element={<AccountImport />} />
+        <Route path="roles" element={<RoleManagement />} />
+        <Route path="import-tasks" element={<SystemImportTaskList />} />
       </Route>
 
       {/* Demo - 金山多维表格 API 测试 */}

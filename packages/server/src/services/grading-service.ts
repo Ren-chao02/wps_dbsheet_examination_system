@@ -12,7 +12,7 @@
  */
 
 import { prisma } from '../config/prisma';
-import { evaluateRules, type AnswerRule, type RuleResult, type SchemaResponse } from '../engine/rule-engine';
+import { evaluateRules, type AnswerRule, type RuleResult, type SchemaResponse, type RecordData } from '../engine/rule-engine';
 import { KingsoftAdapter, createAdapterFromSpaceId } from '../engine/adapters/kingsoft-adapter';
 import { MOCK_SCHEMAS } from '../engine/demo-schemas';
 
@@ -169,6 +169,7 @@ export async function gradeSubmission(submissionId: string): Promise<GradingResu
   // 2. 获取 Schema
   let schema: SchemaResponse;
   let autoGraded = false;
+  let recordData: RecordData | undefined;
 
   const adapter = createAdapterFromSpaceId(submission.tableSpaceId);
 
@@ -177,6 +178,33 @@ export async function gradeSubmission(submissionId: string): Promise<GradingResu
     try {
       schema = await adapter.getSchema();
       autoGraded = true;
+
+      // 检查是否有记录类规则，若有则预获取记录数据
+      const allRules = submission.details.flatMap(
+        d => (d.question.answerRules as unknown as AnswerRule[]) || []
+      );
+      const recordActions = new Set(['check_record_exists', 'check_record_value', 'check_record_count']);
+      const tablesNeedingRecords = new Set<string>();
+      for (const rule of allRules) {
+        if (recordActions.has(rule.action) && rule.params.tableName) {
+          tablesNeedingRecords.add(rule.params.tableName);
+        }
+      }
+
+      if (tablesNeedingRecords.size > 0) {
+        recordData = {};
+        for (const tableName of tablesNeedingRecords) {
+          try {
+            const result = await adapter.getRecordsByTableName(tableName);
+            recordData[tableName] = {
+              records: result.records,
+              fieldsSchema: result.fieldsSchema,
+            };
+          } catch (err: any) {
+            console.warn(`[GradingService] 获取表「${tableName}」记录失败: ${err.message}`);
+          }
+        }
+      }
     } catch (err: any) {
       // API 调用失败时降级为 mock
       console.warn(`[GradingService] API 调用失败，降级为 Mock 模式: ${err.message}`);
@@ -203,7 +231,7 @@ export async function gradeSubmission(submissionId: string): Promise<GradingResu
     const rules = detail.question.answerRules as unknown as AnswerRule[];
     if (!rules || rules.length === 0) continue;
 
-    const { totalScore: qScore, maxScore: qMaxScore, results } = evaluateRules(schema, rules);
+    const { totalScore: qScore, maxScore: qMaxScore, results } = evaluateRules(schema, rules, recordData);
 
     const needsReviewCount = results.filter(r => r.needsReview).length;
     totalNeedsReview += needsReviewCount;

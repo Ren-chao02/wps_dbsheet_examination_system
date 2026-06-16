@@ -5,6 +5,10 @@ export interface User {
   role: 'admin' | 'teacher' | 'student';
   email: string | null;
   avatarUrl: string | null;
+  wpsId?: string | null;
+  systemRoleId?: string | null;
+  systemRole?: { roleCode: string; roleName: string } | null;
+  permissions?: string[];
   createdAt: string;
   updatedAt?: string;
 }
@@ -17,6 +21,7 @@ export interface LoginRequest {
 export interface LoginResponse {
   token: string;
   user: User;
+  permissions?: string[];
 }
 
 export interface QuestionCategory {
@@ -202,4 +207,148 @@ export interface OverviewStats {
   gradedSubmissions: number;
   gradingRate: number;
   recentExams: Exam[];
+}
+
+// ========== 学生信息管理模块类型 ==========
+
+// 组织架构类型
+export interface Department {
+  id: string;
+  name: string;
+  code: string;
+  description?: string;
+  sortOrder?: number;
+  majors?: Major[];
+  createdAt?: string;
+}
+
+export interface Major {
+  id: string;
+  name: string;
+  code: string;
+  departmentId: string;
+  description?: string;
+  sortOrder?: number;
+  department?: Department;
+  classRooms?: ClassRoom[];
+  createdAt?: string;
+}
+
+export interface ClassRoom {
+  id: string;
+  name: string;
+  code: string;
+  academicYear: string;
+  gradeLevel: number;
+  majorId: string;
+  departmentId: string;
+  major?: Major;
+  department?: Department;
+  studentCount?: number;
+  createdAt?: string;
+}
+
+// 邀请与审批类型
+export interface Invitation {
+  id: string;
+  code: string;
+  classRoomId: string;
+  classRoom?: ClassRoom;
+  createdBy: string;
+  expiresAt: string;
+  maxUses: number;
+  usedCount: number;
+  status: 'ACTIVE' | 'EXPIRED' | 'DISABLED';
+  createdAt: string;
+}
+
+export interface StudentApplication {
+  id: string;
+  invitationId: string;
+  realName: string;
+  studentId: string;
+  phoneNumber?: string;
+  gender?: 'MALE' | 'FEMALE';
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  rejectReason?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  createdAt: string;
+  invitation?: Invitation;
+}
+
+// 导入导出任务类型
+export interface ImportTask {
+  id: string;
+  type: string;
+  fileName: string;
+  taskName?: string;
+  totalRows: number;
+  successRows: number;
+  failedRows: number;
+  status: 'PENDING' | 'PROCESSING' | 'FINISHED' | 'FAILED';
+  errorFile?: string;
+  downloadUrl?: string;
+  createdBy: string;
+  creator?: { realName?: string; username: string };
+  createdAt: string;
+  completedAt?: string;
+}
+
+// 扩展 User 类型（如果现有 User 接口需要扩展字段）
+export interface StudentInfo {
+  id: string;
+  username: string;
+  realName?: string;
+  studentId?: string;
+  employeeId?: string;
+  gender?: 'MALE' | 'FEMALE';
+  phoneNumber?: string;
+  email?: string;
+  accountStatus: 'ACTIVE' | 'INACTIVE' | 'PENDING_APPROVAL';
+  departmentId?: string;
+  majorId?: string;
+  classRoomId?: string;
+  department?: Department;
+  major?: Major;
+  classRoom?: ClassRoom;
+  lastLoginAt?: string;
+  createdAt: string;
+}
+
+// ========== 系统管理模块类型 ==========
+
+export interface SystemRole {
+  id: string;
+  roleCode: string;
+  roleName: string;
+  roleType: 'preset' | 'custom';
+  description?: string;
+  status: 'ACTIVE' | 'DISABLED';
+  permissions: string[];
+  userCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SystemModule {
+  code: string;
+  name: string;
+  description?: string;
+}
+
+// 扩展 Account 类型（用于账户管理页面）
+export interface Account {
+  id: string;
+  username: string;
+  realName?: string;
+  email?: string;
+  role: 'admin' | 'teacher' | 'student';
+  wpsId?: string;
+  employeeId?: string;
+  systemRoleId?: string;
+  systemRole?: { roleCode: string; roleName: string };
+  accountStatus: 'ACTIVE' | 'INACTIVE' | 'PENDING_APPROVAL';
+  lastLoginAt?: string;
+  createdAt: string;
 }

@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { config } from '../config';
-import { authenticate, JwtPayload } from '../middleware/auth';
+import { authenticate, JwtPayload, getUserPermissions } from '../middleware/auth';
 
 export const authRouter = Router();
 
@@ -36,10 +36,13 @@ authRouter.post('/login', async (req: Request, res: Response) => {
       return res.status(401).json({ message: '用户名或密码错误' });
     }
 
+    const permissions = await getUserPermissions(user.id);
+
     const payload: JwtPayload = {
       userId: user.id,
       username: user.username,
       role: user.role,
+      permissions,
     };
 
     const token = jwt.sign(payload, config.jwt.secret, {
@@ -56,6 +59,7 @@ authRouter.post('/login', async (req: Request, res: Response) => {
         email: user.email,
         avatarUrl: user.avatarUrl,
       },
+      permissions,
     });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
@@ -113,6 +117,14 @@ authRouter.get('/me', authenticate, async (req: Request, res: Response) => {
         role: true,
         email: true,
         avatarUrl: true,
+        systemRoleId: true,
+        systemRole: {
+          select: {
+            roleCode: true,
+            roleName: true,
+            permissions: { select: { moduleCode: true } },
+          },
+        },
         createdAt: true,
       },
     });
@@ -121,7 +133,15 @@ authRouter.get('/me', authenticate, async (req: Request, res: Response) => {
       return res.status(404).json({ message: '用户不存在' });
     }
 
-    res.json(user);
+    const permissions = user.systemRole?.permissions.map((p) => p.moduleCode) || [];
+    // admin 角色返回全部权限
+    if (user.role === 'admin') {
+      const { SYSTEM_MODULES } = await import('../constants/modules');
+      const allPerms = SYSTEM_MODULES.map((m) => m.code);
+      return res.json({ ...user, permissions: allPerms });
+    }
+
+    res.json({ ...user, permissions });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
@@ -135,17 +155,20 @@ authRouter.post('/refresh', authenticate, async (req: Request, res: Response) =>
       return res.status(404).json({ message: '用户不存在' });
     }
 
+    const permissions = await getUserPermissions(user.id);
+
     const payload: JwtPayload = {
       userId: user.id,
       username: user.username,
       role: user.role,
+      permissions,
     };
 
     const token = jwt.sign(payload, config.jwt.secret, {
       expiresIn: config.jwt.expiresIn as any,
     });
 
-    res.json({ token });
+    res.json({ token, permissions });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }

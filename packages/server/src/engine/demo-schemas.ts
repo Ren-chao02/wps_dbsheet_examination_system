@@ -20,7 +20,7 @@ export const DEMO_SCHEMA_Q1: SchemaResponse = {
         name: '学生档案',
         primaryFieldId: 'fld_name',
         fields: [
-          { id: 'fld_name', name: '姓名', type: 'SingleLineText', required: true },
+          { id: 'fld_name', name: '姓名', type: 'MultiLineText', required: true },
           { id: 'fld_age', name: '年龄', type: 'Number', required: false },
           { id: 'fld_gender', name: '性别', type: 'SingleSelect', required: false,
             items: [{ value: '男', color: 4283466178 }, { value: '女', color: 4281378020 }],
@@ -48,7 +48,7 @@ export const DEMO_SCHEMA_Q1_PARTIAL: SchemaResponse = {
         name: '学生档案',
         primaryFieldId: 'fld_name',
         fields: [
-          { id: 'fld_name', name: '姓名', type: 'SingleLineText', required: true },
+          { id: 'fld_name', name: '姓名', type: 'MultiLineText', required: true },
           // 缺少：年龄(Number)、性别(SingleSelect)、出生日期(Date)
         ],
         views: [],
@@ -71,7 +71,7 @@ export const DEMO_SCHEMA_Q2: SchemaResponse = {
         name: '任务表',
         primaryFieldId: 'fld_task_name',
         fields: [
-          { id: 'fld_task_name', name: '任务名称', type: 'SingleLineText', required: true },
+          { id: 'fld_task_name', name: '任务名称', type: 'MultiLineText', required: true },
           { id: 'fld_status', name: '状态', type: 'SingleSelect', required: false,
             items: [
               { value: '待办', color: 4283466178 },
@@ -110,7 +110,7 @@ export const DEMO_SCHEMA_Q3: SchemaResponse = {
         name: '报名表',
         primaryFieldId: 'fld_reg_name',
         fields: [
-          { id: 'fld_reg_name', name: '姓名', type: 'SingleLineText', required: true },
+          { id: 'fld_reg_name', name: '姓名', type: 'MultiLineText', required: true },
           { id: 'fld_reg_phone', name: '联系电话', type: 'Phone', required: true },
           { id: 'fld_reg_email', name: '邮箱', type: 'Email', required: false },
           { id: 'fld_reg_note', name: '内部备注', type: 'MultiLineText', required: false },
@@ -144,9 +144,9 @@ export const DEMO_SCHEMA_Q4: SchemaResponse = {
         name: '图书表',
         primaryFieldId: 'fld_book_name',
         fields: [
-          { id: 'fld_book_name', name: '书名', type: 'SingleLineText', required: true },
-          { id: 'fld_author', name: '作者', type: 'SingleLineText', required: true },
-          { id: 'fld_isbn', name: 'ISBN', type: 'SingleLineText', required: false },
+          { id: 'fld_book_name', name: '书名', type: 'MultiLineText', required: true },
+          { id: 'fld_author', name: '作者', type: 'MultiLineText', required: true },
+          { id: 'fld_isbn', name: 'ISBN', type: 'MultiLineText', required: false },
           { id: 'fld_book_status', name: '状态', type: 'SingleSelect', required: false,
             items: [
               { value: '在馆' },
@@ -164,7 +164,7 @@ export const DEMO_SCHEMA_Q4: SchemaResponse = {
         name: '借阅表',
         primaryFieldId: 'fld_borrower',
         fields: [
-          { id: 'fld_borrower', name: '借阅人', type: 'SingleLineText', required: true },
+          { id: 'fld_borrower', name: '借阅人', type: 'MultiLineText', required: true },
           { id: 'fld_borrow_book', name: '图书', type: 'Link', required: true, linkSheet: '图书表' },
           { id: 'fld_borrow_date', name: '借阅日期', type: 'Date', required: true },
           { id: 'fld_return_date', name: '归还日期', type: 'Date', required: false },
