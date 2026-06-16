@@ -33,6 +33,16 @@ roleRouter.get('/', async (_req: Request, res: Response) => {
       },
     });
 
+    // 批量查询更新人名称
+    const updatedByIds = [...new Set(roles.map((r) => r.updatedBy).filter(Boolean))] as string[];
+    const updatedByUsers = updatedByIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: updatedByIds } },
+          select: { id: true, realName: true, username: true },
+        })
+      : [];
+    const userMap = new Map(updatedByUsers.map((u) => [u.id, u.realName || u.username]));
+
     res.json({
       data: roles.map((r) => ({
         id: r.id,
@@ -43,6 +53,7 @@ roleRouter.get('/', async (_req: Request, res: Response) => {
         status: r.status,
         permissions: r.permissions.map((p) => p.moduleCode),
         userCount: r._count.users,
+        updatedBy: r.updatedBy ? (userMap.get(r.updatedBy) || null) : null,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
       })),
@@ -69,6 +80,16 @@ roleRouter.get('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ message: '角色不存在' });
     }
 
+    // 查询更新人名称
+    let updatedByName: string | null = null;
+    if (role.updatedBy) {
+      const updater = await prisma.user.findUnique({
+        where: { id: role.updatedBy },
+        select: { realName: true, username: true },
+      });
+      updatedByName = updater ? (updater.realName || updater.username) : null;
+    }
+
     res.json({
       id: role.id,
       roleCode: role.roleCode,
@@ -78,6 +99,7 @@ roleRouter.get('/:id', async (req: Request, res: Response) => {
       status: role.status,
       permissions: role.permissions.map((p) => p.moduleCode),
       userCount: role._count.users,
+      updatedBy: updatedByName,
       createdAt: role.createdAt,
       updatedAt: role.updatedAt,
     });
