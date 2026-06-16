@@ -7,6 +7,8 @@ import {
   SafetyCertificateOutlined,
   UserSwitchOutlined,
   CloudUploadOutlined,
+  DatabaseOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 
@@ -24,10 +26,20 @@ export function AdminLayout() {
     navigate('/login');
   };
 
+  const selectedKey = location.pathname.startsWith('/admin/') ? location.pathname : '/admin/accounts';
+
   const menuItems = [
-    { key: '/admin/accounts', icon: <UserSwitchOutlined />, label: '账户管理' },
-    { key: '/admin/roles', icon: <SafetyCertificateOutlined />, label: '角色权限管理' },
-    { key: '/admin/import-tasks', icon: <CloudUploadOutlined />, label: '导入导出任务' },
+    {
+      key: 'system-mgmt',
+      icon: <SettingOutlined />,
+      label: '系统管理',
+      children: [
+        { key: '/admin/accounts', icon: <UserSwitchOutlined />, label: '账户管理' },
+        { key: '/admin/roles', icon: <SafetyCertificateOutlined />, label: '角色权限管理' },
+        { key: '/admin/import-tasks', icon: <CloudUploadOutlined />, label: '导入导出任务' },
+        { key: '/admin/cache', icon: <DatabaseOutlined />, label: '缓存管理' },
+      ],
+    },
   ];
 
   const userMenu = {
@@ -47,9 +59,12 @@ export function AdminLayout() {
         <Menu
           theme="dark"
           mode="inline"
-          selectedKeys={[location.pathname]}
+          selectedKeys={[selectedKey]}
+          defaultOpenKeys={['system-mgmt']}
           items={menuItems}
-          onClick={({ key }) => navigate(key)}
+          onClick={({ key }) => {
+            if (!key.startsWith('system-')) navigate(key);
+          }}
         />
       </Sider>
       <Layout>

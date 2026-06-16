@@ -316,6 +316,20 @@ export interface StudentInfo {
   createdAt: string;
 }
 
+// ========== 缓存管理模块类型 ==========
+
+export interface CacheEntry {
+  key: string;
+  createdAt: string;
+  age: number;
+  size: number;
+}
+
+export interface CacheInfo {
+  totalEntries: number;
+  entries: CacheEntry[];
+}
+
 // ========== 系统管理模块类型 ==========
 
 export interface SystemRole {
@@ -327,6 +341,7 @@ export interface SystemRole {
   status: 'ACTIVE' | 'DISABLED';
   permissions: string[];
   userCount?: number;
+  updatedBy?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -344,11 +359,12 @@ export interface Account {
   realName?: string;
   email?: string;
   role: 'admin' | 'teacher' | 'student';
-  wpsId?: string;
+  gender?: 'MALE' | 'FEMALE' | 'UNSET';
+  remark?: string;
   employeeId?: string;
   systemRoleId?: string;
   systemRole?: { roleCode: string; roleName: string };
-  accountStatus: 'ACTIVE' | 'INACTIVE' | 'PENDING_APPROVAL';
+  accountStatus: 'ENABLED' | 'DISABLED';
   lastLoginAt?: string;
   createdAt: string;
 }

@@ -32,6 +32,7 @@ import RoleManagement from './pages/admin/RoleManagement';
 import AccountManagement from './pages/admin/AccountManagement';
 import AccountImport from './pages/admin/AccountImport';
 import SystemImportTaskList from './pages/admin/SystemImportTaskList';
+import CacheManagement from './pages/admin/CacheManagement';
 
 function PrivateRoute({ children, roles, permissions }: { children: React.ReactNode; roles?: string[]; permissions?: string[] }) {
   const { isAuthenticated, isLoading, user, hasPermission } = useAuthStore();
@@ -120,6 +121,7 @@ export default function App() {
         <Route path="accounts/import" element={<AccountImport />} />
         <Route path="roles" element={<RoleManagement />} />
         <Route path="import-tasks" element={<SystemImportTaskList />} />
+        <Route path="cache" element={<CacheManagement />} />
       </Route>
 
       {/* Demo - 金山多维表格 API 测试 */}
