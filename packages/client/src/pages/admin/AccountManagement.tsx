@@ -14,9 +14,8 @@ import type { Account, SystemRole, PaginatedResponse } from '../../types';
 const { Text } = Typography;
 
 const statusMap: Record<string, { color: string; text: string }> = {
-  ACTIVE: { color: 'green', text: '正常' },
-  INACTIVE: { color: 'red', text: '禁用' },
-  PENDING_APPROVAL: { color: 'orange', text: '待审批' },
+  ENABLED: { color: 'green', text: '启用' },
+  DISABLED: { color: 'red', text: '禁用' },
 };
 
 const roleColorMap: Record<string, string> = {
@@ -65,7 +64,8 @@ export default function AccountManagement() {
     setEditingAccount(account);
     form.setFieldsValue({
       realName: account.realName,
-      wpsId: account.wpsId,
+      gender: account.gender,
+      remark: account.remark,
       email: account.email,
       role: account.role,
       systemRoleId: account.systemRoleId,
@@ -80,7 +80,8 @@ export default function AccountManagement() {
       if (editingAccount) {
         await api.put(`/accounts/${editingAccount.id}`, {
           realName: values.realName,
-          wpsId: values.wpsId || null,
+          gender: values.gender || null,
+          remark: values.remark || null,
           email: values.email || null,
           role: values.role,
           systemRoleId: values.systemRoleId || null,
@@ -92,7 +93,8 @@ export default function AccountManagement() {
           username: values.username,
           password: values.password,
           realName: values.realName,
-          wpsId: values.wpsId || null,
+          gender: values.gender || null,
+          remark: values.remark || null,
           email: values.email || null,
           role: values.role,
           systemRoleId: values.systemRoleId || null,
@@ -126,6 +128,21 @@ export default function AccountManagement() {
     }
   };
 
+  const handleToggleStatus = async (account: Account) => {
+    try {
+      if (account.accountStatus === 'ENABLED') {
+        await api.put(`/accounts/${account.id}/disable`);
+        message.success('账户已禁用');
+      } else {
+        await api.put(`/accounts/${account.id}/enable`);
+        message.success('账户已启用');
+      }
+      fetchAccounts(data.page);
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '操作失败');
+    }
+  };
+
   const handleExport = async () => {
     try {
       const response = await api.get('/accounts/export', { responseType: 'blob' });
@@ -154,8 +171,12 @@ export default function AccountManagement() {
       render: (v: string | null) => v || '—',
     },
     {
-      title: 'WPSID', dataIndex: 'wpsId', key: 'wpsId', width: 140,
-      render: (v: string | null) => v || '—',
+      title: '性别', dataIndex: 'gender', key: 'gender', width: 80,
+      render: (v: string | null) => {
+        if (v === 'MALE') return '男';
+        if (v === 'FEMALE') return '女';
+        return '—';
+      },
     },
     {
       title: '系统角色', dataIndex: 'systemRole', key: 'systemRole', width: 120,
@@ -178,11 +199,15 @@ export default function AccountManagement() {
       },
     },
     {
+      title: '备注', dataIndex: 'remark', key: 'remark', width: 120, ellipsis: true,
+      render: (v: string | null) => v || '—',
+    },
+    {
       title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', width: 160,
       render: (v: string) => new Date(v).toLocaleString('zh-CN'),
     },
     {
-      title: '操作', key: 'actions', width: 200,
+      title: '操作', key: 'actions', width: 300,
       render: (_: any, r: Account) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(r)}>编辑</Button>
@@ -192,6 +217,21 @@ export default function AccountManagement() {
           >
             <Button size="small" icon={<KeyOutlined />}>重置密码</Button>
           </Popconfirm>
+          {r.accountStatus === 'ENABLED' ? (
+            <Popconfirm
+              title={`确定禁用账户 ${r.username}？`}
+              onConfirm={() => handleToggleStatus(r)}
+            >
+              <Button size="small" danger>禁用</Button>
+            </Popconfirm>
+          ) : (
+            <Popconfirm
+              title={`确定启用账户 ${r.username}？`}
+              onConfirm={() => handleToggleStatus(r)}
+            >
+              <Button size="small" style={{ color: '#52c41a', borderColor: '#52c41a' }}>启用</Button>
+            </Popconfirm>
+          )}
           <Popconfirm title="确定删除？" onConfirm={() => handleDelete(r.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
@@ -208,38 +248,39 @@ export default function AccountManagement() {
           <Button icon={<ImportOutlined />} onClick={() => navigate('/admin/accounts/import')}>
             批量导入
           </Button>
-          <Button icon={<ExportOutlined />} onClick={handleExport}>
-            导出账户
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-            新建账户
-          </Button>
+          <Button icon={<ExportOutlined />} onClick={handleExport}>导出</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增账户</Button>
         </Space>
       </div>
+
+      <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+        管理系统账户信息，支持创建、编辑、禁用/启用、重置密码和批量导入导出操作。
+      </Text>
 
       <Table
         dataSource={data.data}
         columns={columns}
         rowKey="id"
         loading={loading}
+        scroll={{ x: 1300 }}
         pagination={{
           current: data.page,
           total: data.total,
           pageSize: data.pageSize,
-          showSizeChanger: true,
-          pageSizeOptions: ['10', '20', '50'],
-          onChange: (page, pageSize) => fetchAccounts(page, pageSize),
+          showSizeChanger: false,
+          onChange: (page) => fetchAccounts(page),
         }}
       />
 
+      {/* 创建/编辑 Modal */}
       <Modal
-        title={editingAccount ? '编辑账户' : '新建账户'}
+        title={editingAccount ? '编辑账户' : '新增账户'}
         open={modalOpen}
         onOk={handleSubmit}
         onCancel={() => setModalOpen(false)}
         okText="保存"
         cancelText="取消"
-        width={520}
+        width={560}
         destroyOnClose
       >
         <Form form={form} layout="vertical">
@@ -249,42 +290,41 @@ export default function AccountManagement() {
                 <Input placeholder="登录用户名" />
               </Form.Item>
               <Form.Item name="password" label="密码" rules={[{ required: true, min: 6 }]}>
-                <Input.Password placeholder="登录密码" />
+                <Input.Password placeholder="至少6位" />
               </Form.Item>
             </>
           )}
           <Form.Item name="realName" label="姓名">
             <Input placeholder="真实姓名" />
           </Form.Item>
-          <Form.Item name="wpsId" label="WPSID (企业账号ID)">
-            <Input placeholder="WPS 企业账号 ID" />
+          <Form.Item name="gender" label="性别">
+            <Select allowClear placeholder="请选择性别">
+              <Select.Option value="MALE">男</Select.Option>
+              <Select.Option value="FEMALE">女</Select.Option>
+              <Select.Option value="UNSET">未设置</Select.Option>
+            </Select>
           </Form.Item>
-          <Form.Item name="email" label="邮箱" rules={[{ type: 'email', message: '请输入有效邮箱' }]}>
-            <Input placeholder="邮箱地址" />
+          <Form.Item name="email" label="邮箱" rules={[{ type: 'email', message: '邮箱格式不正确' }]}>
+            <Input placeholder="电子邮箱" />
           </Form.Item>
-          <Form.Item name="role" label="账户角色" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: 'teacher', label: '教师' },
-                { value: 'admin', label: '管理员' },
-              ]}
-            />
+          <Form.Item name="remark" label="备注">
+            <Input.TextArea rows={2} placeholder="备注信息" maxLength={512} />
           </Form.Item>
-          <Form.Item name="systemRoleId" label="系统角色（权限）">
-            <Select
-              allowClear
-              placeholder="选择系统角色（可选）"
-              options={roleOptions}
-            />
+          <Form.Item name="role" label="角色类型" rules={[{ required: true }]}>
+            <Select>
+              <Select.Option value="teacher">教师</Select.Option>
+              <Select.Option value="admin">管理员</Select.Option>
+            </Select>
+          </Form.Item>
+          <Form.Item name="systemRoleId" label="系统角色">
+            <Select allowClear placeholder="选择系统角色" options={roleOptions} />
           </Form.Item>
           {editingAccount && (
             <Form.Item name="accountStatus" label="状态">
-              <Select
-                options={[
-                  { value: 'ACTIVE', label: '正常' },
-                  { value: 'INACTIVE', label: '禁用' },
-                ]}
-              />
+              <Select>
+                <Select.Option value="ENABLED">启用</Select.Option>
+                <Select.Option value="DISABLED">禁用</Select.Option>
+              </Select>
             </Form.Item>
           )}
         </Form>
