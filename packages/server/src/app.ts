@@ -16,6 +16,7 @@ import { importTaskRouter } from './routes/import-tasks';
 import { invitationRouter, applicationRouter } from './routes/invitations';
 import { roleRouter } from './routes/roles';
 import { accountRouter } from './routes/accounts';
+import { cacheRouter } from './routes/cache';
 import { errorHandler } from './middleware/error-handler';
 
 export function createApp() {
@@ -48,6 +49,7 @@ export function createApp() {
   app.use('/api/applications', applicationRouter);
   app.use('/api/roles', roleRouter);
   app.use('/api/accounts', accountRouter);
+  app.use('/api/cache', cacheRouter);
 
   // Error handling
   app.use(errorHandler);
