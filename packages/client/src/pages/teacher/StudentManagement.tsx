@@ -14,9 +14,8 @@ import type { StudentInfo, Department, Major, ClassRoom, PaginatedResponse } fro
 const genderMap: Record<string, string> = { MALE: '男', FEMALE: '女' };
 
 const statusConfig: Record<string, { color: string; text: string }> = {
-  ACTIVE: { color: 'green', text: '正常' },
-  INACTIVE: { color: 'default', text: '禁用' },
-  PENDING_APPROVAL: { color: 'orange', text: '待审批' },
+  ENABLED: { color: 'green', text: '启用' },
+  DISABLED: { color: 'default', text: '禁用' },
 };
 
 export default function StudentManagement() {
@@ -203,9 +202,9 @@ export default function StudentManagement() {
   // ---------- Toggle status (enable/disable) ----------
   const handleToggleStatus = async (student: StudentInfo) => {
     try {
-      const newStatus = student.accountStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+      const newStatus = student.accountStatus === 'ENABLED' ? 'DISABLED' : 'ENABLED';
       await api.put(`/students/${student.id}`, { accountStatus: newStatus });
-      message.success(newStatus === 'ACTIVE' ? '已启用' : '已禁用');
+      message.success(newStatus === 'ENABLED' ? '已启用' : '已禁用');
       fetchStudents();
     } catch (err: any) {
       message.error(err.response?.data?.message || '操作失败');
@@ -285,12 +284,12 @@ export default function StudentManagement() {
             <Button size="small">重置密码</Button>
           </Popconfirm>
           <Popconfirm
-            title={r.accountStatus === 'ACTIVE' ? '确定禁用该账号？' : '确定启用该账号？'}
+            title={r.accountStatus === 'ENABLED' ? '确定禁用该账号？' : '确定启用该账号？'}
             onConfirm={() => handleToggleStatus(r)}
             okText="确定" cancelText="取消"
           >
-            <Button size="small" danger={r.accountStatus === 'ACTIVE'}>
-              {r.accountStatus === 'ACTIVE' ? '禁用' : '启用'}
+            <Button size="small" danger={r.accountStatus === 'ENABLED'}>
+              {r.accountStatus === 'ENABLED' ? '禁用' : '启用'}
             </Button>
           </Popconfirm>
           {user?.role === 'admin' && (

@@ -54,7 +54,16 @@ async function validateInvitation(code: string) {
     return { valid: false as const, error: '邀请已被禁用', status: 400 };
   }
 
-  if (new Date(invitation.expiresAt) < new Date()) {
+  // 自动更新过期状态：如果邀请已过期但状态仍为ACTIVE，则更新为EXPIRED
+  if (invitation.status === 'ACTIVE' && new Date(invitation.expiresAt) < new Date()) {
+    await prisma.invitation.update({
+      where: { id: invitation.id },
+      data: { status: 'EXPIRED' },
+    });
+    invitation.status = 'EXPIRED'; // 更新内存中的对象
+  }
+
+  if (invitation.status === 'EXPIRED') {
     return { valid: false as const, error: '邀请已过期', status: 400 };
   }
 
@@ -76,14 +85,18 @@ invitationRouter.get('/:code/info', async (req: Request, res: Response) => {
       return res.status(result.status).json({ message: result.error });
     }
 
-    const { classRoom } = result.invitation;
+    const { classRoom, expiresAt, status, code } = result.invitation;
 
     res.json({
-      className: classRoom.name,
-      majorName: classRoom.major.name,
-      departmentName: classRoom.department.name,
-      academicYear: classRoom.academicYear,
-      gradeLevel: classRoom.gradeLevel,
+      code,
+      status,
+      expiresAt,
+      classRoom: {
+        name: classRoom.name,
+        academicYear: classRoom.academicYear,
+        major: { name: classRoom.major.name },
+        department: { name: classRoom.department.name },
+      },
     });
   } catch {
     res.status(500).json({ message: '服务器错误' });
@@ -214,6 +227,15 @@ invitationRouter.get(
       const { page = '1', pageSize = '20', status } = req.query;
       const skip = (Number(page) - 1) * Number(pageSize);
       const take = Number(pageSize);
+
+      // 批量修正过期状态：将所有已过期但状态仍为ACTIVE的邀请更新为EXPIRED
+      await prisma.invitation.updateMany({
+        where: {
+          status: 'ACTIVE',
+          expiresAt: { lt: new Date() },
+        },
+        data: { status: 'EXPIRED' },
+      });
 
       const where: any = { createdBy: req.user!.userId };
       if (status) {
@@ -403,7 +425,7 @@ applicationRouter.put('/batch-approve', async (req: Request, res: Response) => {
               classRoomId: application.invitation.classRoomId,
               majorId: classRoom.majorId,
               departmentId: classRoom.departmentId,
-              accountStatus: 'ACTIVE',
+              accountStatus: 'ENABLED',
             },
           });
 
@@ -487,7 +509,7 @@ applicationRouter.put('/:id/approve', async (req: Request, res: Response) => {
           classRoomId: application.invitation.classRoomId,
           majorId: classRoom.majorId,
           departmentId: classRoom.departmentId,
-          accountStatus: 'ACTIVE',
+          accountStatus: 'ENABLED',
         },
         select: {
           id: true,

@@ -64,11 +64,6 @@ interface GradingResponse {
 // 常量
 // ============================================================
 
-const typeLabels: Record<string, string> = {
-  create_table: '建表', add_field: '字段', config_view: '视图',
-  create_form: '表单', comprehensive: '综合',
-};
-
 const difficultyLabels: Record<string, { text: string; color: string }> = {
   easy: { text: '简单', color: 'green' },
   medium: { text: '中等', color: 'orange' },
@@ -248,9 +243,6 @@ export function DemoPage() {
                 <Space>
                   <FileTextOutlined />
                   <Text strong style={{ fontSize: 16 }}>{currentQuestion.title}</Text>
-                  <Tag color={typeLabels[currentQuestion.type] ? 'blue' : 'default'}>
-                    {typeLabels[currentQuestion.type] || currentQuestion.type}
-                  </Tag>
                   <Tag color={difficultyLabels[currentQuestion.difficulty]?.color}>
                     {difficultyLabels[currentQuestion.difficulty]?.text || currentQuestion.difficulty}
                   </Tag>

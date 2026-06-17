@@ -10,10 +10,6 @@ import type { Question } from '../../types';
 const { Text, Paragraph } = Typography;
 const { Countdown } = Statistic;
 
-const typeLabels: Record<string, string> = {
-  create_table: '建表', add_field: '字段', config_view: '视图', create_form: '表单', comprehensive: '综合',
-};
-
 export function ExamDoingPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -189,7 +185,6 @@ export function ExamDoingPage() {
           title={
             <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <Text strong>第 {currentStep + 1} 题</Text>
-              <Tag color="blue">{typeLabels[currentQuestion.type] || currentQuestion.type}</Tag>
               <Tag>{currentQuestion.difficulty === 'easy' ? '简单' : currentQuestion.difficulty === 'medium' ? '中等' : '困难'}</Tag>
               <Text type="secondary">{currentQuestion.score} 分</Text>
             </div>

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Form, Input, Select, InputNumber, Button, Card, Space, Divider, Tag, message, Spin, Row, Col } from 'antd';
-import { PlusOutlined, DeleteOutlined, SaveOutlined } from '@ant-design/icons';
+import { Form, Input, Select, InputNumber, Button, Card, Space, Divider, Tag, message, Spin, Row, Col, Tooltip } from 'antd';
+import { PlusOutlined, DeleteOutlined, SaveOutlined, SettingOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import type { Question, QuestionCategory, AnswerRule } from '../../types';
+import { CategoryManagerModal } from '../../components/CategoryManagerModal';
 
 const { TextArea } = Input;
 
@@ -123,15 +124,27 @@ export function QuestionEditor() {
   const [rules, setRules] = useState<AnswerRule[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const isEdit = !!id;
+  const primaryCategoryId = Form.useWatch('primaryCategoryId', form);
 
   useEffect(() => {
-    api.get('/categories').then(res => setCategories(res.data)).catch(() => {});
+    // ✅ 更新：获取分类列表（用于两级分类选择）
+    api.get('/categories?mode=tree')
+      .then(res => setCategories(res.data?.data || []))
+      .catch(() => {});
+
     if (isEdit) {
       setLoading(true);
       api.get(`/questions/${id}`).then(res => {
         const q = res.data;
-        form.setFieldsValue(q);
+        form.setFieldsValue({
+          ...q,
+          // 确保新字段正确映射
+          primaryCategoryId: q.primaryCategoryId,
+          secondaryCategoryId: q.secondaryCategoryId,
+          teacherName: q.teacherName,
+        });
         setRules(q.answerRules || []);
       }).catch(() => message.error('加载失败')).finally(() => setLoading(false));
     }
@@ -168,23 +181,12 @@ export function QuestionEditor() {
         </Space>
       </div>
 
-      <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ type: 'create_table', difficulty: 'medium', score: 10, tags: [] }}>
+      <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ difficulty: 'medium', score: 10, tags: [] }}>
         <Card title="基本信息" style={{ marginBottom: 16 }}>
           <Form.Item name="title" label="题目标题" rules={[{ required: true, message: '请输入标题' }]}>
             <Input placeholder="如：创建学生档案表" />
           </Form.Item>
           <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item name="type" label="题目类型" rules={[{ required: true }]}>
-                <Select options={[
-                  { value: 'create_table', label: '建表操作' },
-                  { value: 'add_field', label: '字段操作' },
-                  { value: 'config_view', label: '视图操作' },
-                  { value: 'create_form', label: '表单操作' },
-                  { value: 'comprehensive', label: '综合题' },
-                ]} />
-              </Form.Item>
-            </Col>
             <Col span={8}>
               <Form.Item name="difficulty" label="难度" rules={[{ required: true }]}>
                 <Select options={[{ value: 'easy', label: '简单' }, { value: 'medium', label: '中等' }, { value: 'hard', label: '困难' }]} />
@@ -196,8 +198,84 @@ export function QuestionEditor() {
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item name="categoryId" label="分类">
-            <Select allowClear placeholder="选择分类" options={categories.map(c => ({ value: c.id, label: c.name }))} />
+          {/* ✅ 替换为两级分类选择（带编辑按钮） */}
+          <Row gutter={16} align="middle">
+            <Col span={10}>
+              <Form.Item name="primaryCategoryId" label="一级分类" style={{ marginBottom: 0 }}>
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder="选择一级分类"
+                  onChange={() => {
+                    // 清空二级分类
+                    form.setFieldsValue({ secondaryCategoryId: undefined });
+                  }}
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  options={categories.map(c => ({
+                    value: c.id,
+                    label: c.name,
+                  }))}
+                />
+              </Form.Item>
+            </Col>
+
+            <Col span={2}>
+              <div style={{ paddingTop: 29 }}>
+                <Tooltip title="编辑知识点分类">
+                  <Button
+                    type="text"
+                    icon={<SettingOutlined />}
+                    onClick={() => setCategoryModalVisible(true)}
+                    style={{
+                      color: '#667eea',
+                      border: '1px solid #667eea33',
+                      borderRadius: 6,
+                      height: 32,
+                      width: 32,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  />
+                </Tooltip>
+              </div>
+            </Col>
+
+            <Col span={12}>
+              <Form.Item name="secondaryCategoryId" label="二级分类" style={{ marginBottom: 0 }}>
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder="先选择一级分类"
+                  disabled={!primaryCategoryId}
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  options={
+                    categories
+                      .filter(cat => cat.parentId === primaryCategoryId)
+                      .map(sub => ({
+                        value: sub.id,
+                        label: sub.name,
+                      }))
+                  }
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          {/* ✅ 新增：出题老师字段 */}
+          <Form.Item
+            name="teacherName"
+            label="出题老师"
+            tooltip="留空则自动使用当前登录用户姓名"
+          >
+            <Input
+              placeholder="输入出题老师姓名（可选）"
+              maxLength={64}
+            />
           </Form.Item>
           <Form.Item name="tags" label="标签">
             <Select mode="tags" placeholder="输入标签后回车" />
@@ -217,6 +295,35 @@ export function QuestionEditor() {
           <RuleEditor rules={rules} onChange={setRules} />
         </Card>
       </Form>
+
+      {/* ✨ 知识点分类管理弹窗 */}
+      <CategoryManagerModal
+        visible={categoryModalVisible}
+        onClose={() => {
+          setCategoryModalVisible(false);
+          // 刷新分类列表
+          api.get('/categories?mode=tree')
+            .then(res => {
+              // 转换为扁平列表格式
+              const treeData = res.data?.data || [];
+              const flattenCategories = (cats: any[], level: number = 1): QuestionCategory[] => {
+                return cats.reduce((acc: QuestionCategory[], cat: any) => {
+                  acc.push({
+                    ...cat,
+                    level,
+                    children: cat.children || [],
+                  });
+                  if (cat.children && cat.children.length > 0) {
+                    acc.push(...flattenCategories(cat.children, level + 1));
+                  }
+                  return acc;
+                }, []);
+              };
+              setCategories(flattenCategories(treeData));
+            })
+            .catch(() => {});
+        }}
+      />
     </div>
   );
 }

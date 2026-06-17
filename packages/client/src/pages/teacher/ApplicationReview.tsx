@@ -50,7 +50,7 @@ export default function ApplicationReview() {
   const fetchApplications = useCallback(async (p = page, tab = activeTab) => {
     setLoading(true);
     try {
-      const res = await api.get('/api/applications', {
+      const res = await api.get('/applications', {
         params: { status: tab, page: p, pageSize },
       });
       const d = res.data;
@@ -71,7 +71,7 @@ export default function ApplicationReview() {
 
   const handleApprove = async (app: StudentApplication) => {
     try {
-      await api.put(`/api/applications/${app.id}/approve`);
+      await api.put(`/applications/${app.id}/approve`);
       message.success('已通过申请');
       fetchApplications(page, activeTab);
     } catch (e: any) {
@@ -90,7 +90,7 @@ export default function ApplicationReview() {
       const values = await rejectForm.validateFields();
       if (!rejectTarget) return;
       setRejectLoading(true);
-      await api.put(`/api/applications/${rejectTarget.id}/reject`, {
+      await api.put(`/applications/${rejectTarget.id}/reject`, {
         rejectReason: values.rejectReason,
       });
       message.success('已拒绝申请');
@@ -111,7 +111,7 @@ export default function ApplicationReview() {
     }
     setBatchLoading(true);
     try {
-      await api.put('/api/applications/batch-approve', { ids: selectedRowKeys });
+      await api.put('/applications/batch-approve', { ids: selectedRowKeys });
       message.success(`已批量通过 ${selectedRowKeys.length} 条申请`);
       setSelectedRowKeys([]);
       fetchApplications(page, activeTab);

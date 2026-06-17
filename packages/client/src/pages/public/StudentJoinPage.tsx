@@ -38,7 +38,7 @@ export default function StudentJoinPage() {
       setErrorMsg('无效的邀请链接');
       return;
     }
-    api.get(`/api/invitations/${code}/info`)
+    api.get(`/invitations/${code}/info`)
       .then((res) => {
         const info: InvitationInfo = res.data;
         if (info.status !== 'ACTIVE') {
@@ -61,7 +61,7 @@ export default function StudentJoinPage() {
     try {
       const values = await form.validateFields();
       setSubmitting(true);
-      await api.post(`/api/invitations/${code}/apply`, {
+      await api.post(`/invitations/${code}/apply`, {
         realName: values.realName,
         studentId: values.studentId,
         gender: values.gender,
