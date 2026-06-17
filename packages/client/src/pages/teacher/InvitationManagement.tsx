@@ -59,7 +59,7 @@ export default function InvitationManagement() {
   const fetchInvitations = useCallback(async (p = page) => {
     setLoading(true);
     try {
-      const res = await api.get('/api/invitations', { params: { page: p, pageSize } });
+      const res = await api.get('/invitations', { params: { page: p, pageSize } });
       const d = res.data;
       setInvitations(d.data || d);
       setTotal(d.total || (d.data || d).length);
@@ -94,7 +94,7 @@ export default function InvitationManagement() {
     try {
       const values = await form.validateFields();
       setSubmitting(true);
-      await api.post('/api/invitations', {
+      await api.post('/invitations', {
         classRoomId: values.classRoomId,
         expiresAt: values.expiresAt?.toISOString(),
         maxUses: values.maxUses ?? 0,
@@ -128,7 +128,7 @@ export default function InvitationManagement() {
       okType: 'danger',
       onOk: async () => {
         try {
-          await api.put(`/api/invitations/${inv.id}/disable`);
+          await api.put(`/invitations/${inv.id}/disable`);
           message.success('已禁用');
           fetchInvitations();
         } catch (e: any) {

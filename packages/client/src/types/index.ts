@@ -29,6 +29,7 @@ export interface QuestionCategory {
   name: string;
   parentId: string | null;
   sortOrder: number;
+  level: number;
   createdAt: string;
   children?: QuestionCategory[];
 }
@@ -46,7 +47,16 @@ export interface AnswerRule {
 
 export interface Question {
   id: string;
-  categoryId: string | null;
+
+  // ✅ 新增字段：两级分类体系
+  primaryCategoryId: string | null;
+  secondaryCategoryId: string | null;
+
+  // ✅ 新增字段：元数据信息
+  teacherName: string | null;
+  updatedBy: string | null;
+
+  // 保留现有字段
   title: string;
   description: string | null;
   type: QuestionType;
@@ -59,7 +69,15 @@ export interface Question {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
-  category?: { id: string; name: string } | null;
+
+  // ✅ 更新关联关系：两级分类
+  primaryCategory?: { id: string; name: string } | null;
+  secondaryCategory?: { id: string; name: string } | null;
+
+  // ❌ 删除原有关联
+  // category?: { id: string; name: string } | null;
+
+  // 保留现有关联
   creator?: { id: string; realName: string } | null;
 }
 
@@ -305,7 +323,7 @@ export interface StudentInfo {
   gender?: 'MALE' | 'FEMALE';
   phoneNumber?: string;
   email?: string;
-  accountStatus: 'ACTIVE' | 'INACTIVE' | 'PENDING_APPROVAL';
+  accountStatus: 'ENABLED' | 'DISABLED';
   departmentId?: string;
   majorId?: string;
   classRoomId?: string;

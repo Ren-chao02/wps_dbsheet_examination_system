@@ -199,7 +199,7 @@ async function main() {
       categoryId: catForm.id,
       title: '创建报名表单',
       description: '请为「报名表」创建一个表单视图，具体要求：\n1. 表单名称：「报名入口」\n2. 隐藏「内部备注」字段\n3. 设置提交提示语为「报名成功！」',
-      type: 'create_form',
+      type: 'comprehensive',
       difficulty: 'medium',
       score: 15,
       answerRules: [

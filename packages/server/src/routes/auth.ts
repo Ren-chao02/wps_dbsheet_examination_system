@@ -31,6 +31,14 @@ authRouter.post('/login', async (req: Request, res: Response) => {
       return res.status(401).json({ message: '用户名或密码错误' });
     }
 
+    // ✅ 新增：检查账号状态
+    if (user.accountStatus === 'DISABLED') {
+      return res.status(403).json({
+        message: '账号已被禁用，请联系管理员',
+        code: 'ACCOUNT_DISABLED',
+      });
+    }
+
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
       return res.status(401).json({ message: '用户名或密码错误' });
@@ -42,6 +50,7 @@ authRouter.post('/login', async (req: Request, res: Response) => {
       userId: user.id,
       username: user.username,
       role: user.role,
+      realName: user.realName || undefined,  // ✅ 新增：包含真实姓名
       permissions,
     };
 
@@ -58,6 +67,7 @@ authRouter.post('/login', async (req: Request, res: Response) => {
         role: user.role,
         email: user.email,
         avatarUrl: user.avatarUrl,
+        accountStatus: user.accountStatus,  // ✅ 返回状态信息
       },
       permissions,
     });

@@ -129,39 +129,75 @@ model User {
 model QuestionCategory {
   id        String    @id @default(uuid()) @db.Uuid
   name      String    @db.VarChar(128)
+  
+  // ✅ 基础树形结构
   parentId  String?   @map("parent_id") @db.Uuid
   sortOrder Int       @default(0) @map("sort_order")
+  
+  // ✅ 扩展性字段：支持多级分类体系
+  description String?     @db.VarChar(512)           // 分类描述
+  icon        String?     @db.VarChar(64)            // 图标标识
+  status      CategoryStatus @default(ACTIVE)         // 启用/禁用状态
+  level       Int          @default(1)               // 层级深度（1=一级，2=二级，3+=扩展）
+  path        String?      @map("path") @db.VarChar(1024)  // 完整路径 "rootId/parentId/currentId"
+  metadata    Json         @default("{}")             // 扩展元数据（JSON格式，支持自定义属性）
+  
   createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at")
 
   // Relations
-  parent    QuestionCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
-  children  QuestionCategory[] @relation("CategoryTree")
-  questions Question[]
+  parent           QuestionCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children         QuestionCategory[] @relation("CategoryTree")
 
+  // 两级分类的反向关联
+  primaryQuestions   Question[] @relation("QuestionPrimaryCategory")
+  secondaryQuestions Question[] @relation("QuestionSecondaryCategory")
+
+  @@index([parentId])
+  @@index([status])
+  @@index([level])
   @@map("question_categories")
 }
 
-model Question {
-  id          String         @id @default(uuid()) @db.Uuid
-  categoryId  String?        @map("category_id") @db.Uuid
-  title       String         @db.VarChar(512)
-  description String?        @db.Text
-  type        QuestionType
-  difficulty  Difficulty     @default(medium)
-  score       Int            @default(10)
-  answerRules Json           @default("[]") @map("answer_rules")
-  hints       String?        @db.Text
-  tags        String[]       @default([])
-  status      QuestionStatus @default(draft)
-  createdBy   String?        @map("created_by") @db.Uuid
-  createdAt   DateTime       @default(now()) @map("created_at")
-  updatedAt   DateTime       @updatedAt @map("updated_at")
+// ✅ 新增枚举：分类状态
+enum CategoryStatus {
+  ACTIVE    // 正常使用
+  INACTIVE  // 已禁用（保留历史数据引用）
+}
 
-  // Relations
-  category            QuestionCategory?  @relation(fields: [categoryId], references: [id])
-  creator             User?              @relation("QuestionCreator", fields: [createdBy], references: [id])
-  examQuestions       ExamQuestion[]
-  submissionDetails   SubmissionDetail[]
+model Question {
+  id                    String           @id @default(uuid()) @db.Uuid
+
+  // ✅ 新增字段：两级分类体系
+  primaryCategoryId     String?          @map("primary_category_id") @db.Uuid
+  secondaryCategoryId   String?          @map("secondary_category_id") @db.Uuid
+  
+  // ✅ 新增字段：元数据信息
+  teacherName           String?          @map("teacher_name") @db.VarChar(64)
+  updatedBy             String?          @map("updated_by") @db.VarChar(64)
+
+  // 保留现有字段（不变）
+  title                 String           @db.VarChar(512)
+  description           String?          @db.Text
+  type                  QuestionType     @default(comprehensive)
+  difficulty            Difficulty       @default(medium)
+  score                 Int              @default(10)
+  answerRules           Json             @default("[]") @map("answer_rules")
+  hints                 String?          @db.Text
+  tags                  String[]         @default([])
+  status                QuestionStatus   @default(draft)
+  createdBy             String?          @map("created_by") @db.Uuid
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @updatedAt @map("updated_at")
+
+  // ✅ 新增关联关系：两级分类
+  primaryCategory       QuestionCategory? @relation("QuestionPrimaryCategory", fields: [primaryCategoryId], references: [id])
+  secondaryCategory     QuestionCategory? @relation("QuestionSecondaryCategory", fields: [secondaryCategoryId], references: [id])
+
+  // 保留现有关联（不变）
+  creator               User?            @relation("QuestionCreator", fields: [createdBy], references: [id])
+  examQuestions         ExamQuestion[]
+  submissionDetails     SubmissionDetail[]
 
   @@map("questions")
 }

@@ -7,6 +7,7 @@ export interface JwtPayload {
   userId: string;
   username: string;
   role: string;
+  realName?: string;  // ✅ 新增：支持用户真实姓名
   permissions?: string[];
 }
 
@@ -18,7 +19,7 @@ declare global {
   }
 }
 
-export function authenticate(req: Request, res: Response, next: NextFunction) {
+export async function authenticate(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ message: '未提供认证令牌' });
@@ -27,10 +28,34 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
   const token = authHeader.split(' ')[1];
   try {
     const payload = jwt.verify(token, config.jwt.secret) as JwtPayload;
+
+    // ✅ 新增：实时查询数据库验证账号状态
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: { id: true, accountStatus: true },
+    });
+
+    if (!user) {
+      return res.status(401).json({ message: '用户不存在' });
+    }
+
+    if (user.accountStatus === 'DISABLED') {
+      return res.status(403).json({
+        message: '账号已被禁用，请联系管理员',
+        code: 'ACCOUNT_DISABLED',
+      });
+    }
+
     req.user = payload;
     next();
-  } catch {
-    return res.status(401).json({ message: '认证令牌无效或已过期' });
+  } catch (err) {
+    if (err instanceof jwt.TokenExpiredError) {
+      return res.status(401).json({ message: '认证令牌已过期，请重新登录' });
+    }
+    if (err instanceof jwt.JsonWebTokenError) {
+      return res.status(401).json({ message: '认证令牌无效' });
+    }
+    return res.status(401).json({ message: '认证令牌验证失败' });
   }
 }
 

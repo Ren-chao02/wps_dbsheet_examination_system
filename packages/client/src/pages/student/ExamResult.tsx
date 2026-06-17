@@ -94,7 +94,6 @@ export function ExamResultPage() {
               ),
               children: (
                 <div>
-                  <p><strong>题目类型：</strong>{detail.question?.type}</p>
                   <p><strong>得分：</strong>{detail.score}/{detail.question?.score}</p>
 
                   {vrs.length > 0 && (

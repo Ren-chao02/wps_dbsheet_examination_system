@@ -49,7 +49,7 @@ const createStudentSchema = z.object({
   gender: z.enum(['MALE', 'FEMALE']).optional(),
   phoneNumber: z.string().optional(),
   email: z.string().email().optional(),
-  classRoomId: z.string().uuid(),
+  classRoomId: z.string().uuid().optional(),
 });
 
 const updateStudentSchema = z.object({
@@ -218,10 +218,16 @@ studentRouter.post('/', async (req: Request, res: Response) => {
       return res.status(409).json({ message: '学号已存在' });
     }
 
-    // 查询班级，获取 departmentId / majorId
-    const classRoom = await prisma.classRoom.findUnique({ where: { id: data.classRoomId } });
-    if (!classRoom) {
-      return res.status(400).json({ message: '班级不存在' });
+    // 查询班级，获取 departmentId / majorId（仅当提供了 classRoomId 时）
+    let departmentId: string | undefined;
+    let majorId: string | undefined;
+    if (data.classRoomId) {
+      const classRoom = await prisma.classRoom.findUnique({ where: { id: data.classRoomId } });
+      if (!classRoom) {
+        return res.status(400).json({ message: '班级不存在' });
+      }
+      departmentId = classRoom.departmentId;
+      majorId = classRoom.majorId;
     }
 
     const password = data.password || generateDefaultPassword(data.studentId);
@@ -238,8 +244,8 @@ studentRouter.post('/', async (req: Request, res: Response) => {
         email: data.email,
         role: 'student',
         classRoomId: data.classRoomId,
-        departmentId: classRoom.departmentId,
-        majorId: classRoom.majorId,
+        departmentId,
+        majorId,
       },
       select: {
         id: true,
