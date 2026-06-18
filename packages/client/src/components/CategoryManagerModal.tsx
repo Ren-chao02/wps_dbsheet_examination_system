@@ -190,7 +190,7 @@ export function CategoryManagerModal({ visible, onClose }: CategoryModalProps) {
         await api.post('/categories', {
           name: newCategoryName.trim(),
           parentId: editingNode.id,
-          sortOrder: editingNode.children?.length || 0 + 1,
+          sortOrder: (editingNode.children?.length || 0) + 1,
         });
         message.success('添加成功');
       } else if (editingNode) {

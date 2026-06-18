@@ -85,6 +85,31 @@ export type ExamMode = 'practice' | 'quiz' | 'exam';
 export type ExamStatus = 'draft' | 'published' | 'in_progress' | 'ended' | 'archived';
 export type SubmissionStatus = 'pending' | 'in_progress' | 'submitted' | 'grading' | 'graded';
 
+export interface Paper {
+  id: string;
+  name: string;
+  description: string | null;
+  source: string;
+  difficulty: string | null;
+  passScore: number | null;
+  totalScore: number;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+  creator?: { id: string; realName: string } | null;
+  paperQuestions?: PaperQuestion[];
+  _count?: { paperQuestions: number; exams: number };
+}
+
+export interface PaperQuestion {
+  id: string;
+  paperId: string;
+  questionId: string;
+  sortOrder: number;
+  score: number;
+  question: Question;
+}
+
 export interface Exam {
   id: string;
   title: string;
@@ -101,6 +126,8 @@ export interface Exam {
   createdAt: string;
   updatedAt: string;
   creator?: { id: string; realName: string } | null;
+  paperId?: string | null;
+  paper?: { id: string; name: string; totalScore: number; passScore: number | null } | null;
   examQuestions?: ExamQuestion[];
   _count?: { examQuestions: number; submissions: number };
 }

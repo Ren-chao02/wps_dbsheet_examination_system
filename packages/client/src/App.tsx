@@ -7,6 +7,8 @@ import { StudentLayout } from './components/layout/StudentLayout';
 import { TeacherLayout } from './components/layout/TeacherLayout';
 import { AdminLayout } from './components/layout/AdminLayout';
 import { StudentDashboard } from './pages/student/Dashboard';
+import { PracticeList } from './pages/student/PracticeList';
+import { PracticeDoing } from './pages/student/PracticeDoing';
 import { ExamIntroPage } from './pages/student/ExamIntro';
 import { ExamDoingPage } from './pages/student/ExamDoing';
 import { ExamResultPage } from './pages/student/ExamResult';
@@ -15,10 +17,22 @@ import { QuestionBank } from './pages/teacher/QuestionBank';
 import { QuestionEditor } from './pages/teacher/QuestionEditor';
 import { ExamManager } from './pages/teacher/ExamManager';
 import { ExamForm } from './pages/teacher/ExamForm';
+import { PaperBank } from './pages/teacher/PaperBank';
+import { PaperEditor } from './pages/teacher/PaperEditor';
 import { ExamMonitor } from './pages/teacher/ExamMonitor';
 import { GradingPage } from './pages/teacher/GradingPage';
 import { StatisticsPage } from './pages/teacher/StatisticsPage';
 import { StudentProfilePage } from './pages/teacher/StudentProfile';
+// ✅ 新增：批次管理和考场管理组件
+import { BatchManager } from './pages/teacher/BatchManager';
+import { RoomManager } from './pages/teacher/RoomManager';
+// ✅ 新增：向导式考试创建组件
+import { ExamWizard } from './pages/teacher/ExamWizard';
+// ✅ 新增：增强版监控组件
+import { EnhancedExamMonitor } from './pages/teacher/EnhancedExamMonitor';
+// ✅ 新增：监控中心和统计列表页
+import { MonitoringList } from './pages/teacher/MonitoringList';
+import { StatisticsList } from './pages/teacher/StatisticsList';
 import StudentManagement from './pages/teacher/StudentManagement';
 import StudentImport from './pages/teacher/StudentImport';
 import ImportTaskList from './pages/teacher/ImportTaskList';
@@ -78,6 +92,8 @@ export default function App() {
       }>
         <Route index element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard" element={<StudentDashboard />} />
+        <Route path="practice" element={<PracticeList />} />
+        <Route path="practice/:paperId" element={<PracticeDoing />} />
         <Route path="exam/:id" element={<ExamIntroPage />} />
         <Route path="exam/:id/doing" element={<ExamDoingPage />} />
         <Route path="exam/:id/result" element={<ExamResultPage />} />
@@ -93,9 +109,17 @@ export default function App() {
         <Route path="questions/new" element={<QuestionEditor />} />
         <Route path="questions/:id/edit" element={<QuestionEditor />} />
         <Route path="exams" element={<ExamManager />} />
+        <Route path="batches" element={<BatchManager />} /> {/* ✅ 新增：批次管理 */}
+        <Route path="rooms" element={<RoomManager />} /> {/* ✅ 新增：考场管理 */}
+        <Route path="exams/new/wizard" element={<ExamWizard />} /> {/* ✅ 新增：向导式创建 */}
+        <Route path="papers" element={<PaperBank />} />
+        <Route path="papers/new" element={<PaperEditor />} />
+        <Route path="papers/:id/edit" element={<PaperEditor />} />
         <Route path="exams/new" element={<ExamForm />} />
         <Route path="exams/:id/edit" element={<ExamForm />} />
-        <Route path="exams/:id/monitor" element={<ExamMonitor />} />
+        <Route path="exams/:id/monitor" element={<EnhancedExamMonitor />} /> {/* ✅ 使用增强版监控 */}
+        <Route path="monitoring" element={<MonitoringList />} /> {/* ✅ 实时监控中心列表 */}
+        <Route path="statistics" element={<StatisticsList />} /> {/* ✅ 成绩统计分析列表 */}
         <Route path="exams/:id/grading" element={<GradingPage />} />
         <Route path="exams/:id/statistics" element={<StatisticsPage />} />
         <Route path="students/:id/profile" element={<StudentProfilePage />} />

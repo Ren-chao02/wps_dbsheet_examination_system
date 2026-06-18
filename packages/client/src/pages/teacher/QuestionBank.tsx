@@ -131,13 +131,8 @@ export function QuestionBank() {
   // 获取教师列表（用于下拉筛选）
   const fetchTeachers = async () => {
     try {
-      // 从题目中提取唯一的教师名称
-      const res = await api.get('/questions?pageSize=1000');
-      const questions = res.data?.data || [];
-      const uniqueTeachers = Array.from(
-        new Set(questions.map((q: Question) => q.teacherName).filter(Boolean))
-      ).map((name) => ({ id: name as string, realName: name as string }));
-      setTeachers(uniqueTeachers);
+      const res = await api.get('/users/teachers');
+      setTeachers(res.data || []);
     } catch (error) {
       console.error('Error fetching teachers:', error);
     }

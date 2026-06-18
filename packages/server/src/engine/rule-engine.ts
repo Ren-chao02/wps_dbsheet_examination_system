@@ -567,17 +567,6 @@ const ruleHandlers: Record<string, RuleHandler> = {
     };
   },
 
-  check_form_fields(schema, params) {
-    return {
-      passed: false,
-      score: 0,
-      expected: params,
-      actual: null,
-      errorMessage: `表单字段配置需教师人工复核（Schema 不含表单字段详情）`,
-      needsReview: true,
-    };
-  },
-
   check_form_settings(schema, params) {
     return {
       passed: false,
@@ -586,6 +575,393 @@ const ruleHandlers: Record<string, RuleHandler> = {
       actual: null,
       errorMessage: `表单设置需教师人工复核（Schema 不含表单设置详情）`,
       needsReview: true,
+    };
+  },
+
+  /**
+   * 验证选择字段的选项值
+   * params: { tableName, fieldName, options[], matchMode?: 'exact' | 'contains' }
+   */
+  check_field_options(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+    const field = findField(sheet, params.fieldName);
+    if (!field) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, fieldName: params.fieldName, found: false },
+        errorMessage: `字段「${params.fieldName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const fieldItems = field.items || (field.data?.items as any[]) || [];
+    const actualOptions = fieldItems.map((item: any) => item.value);
+    const expectedOptions = params.options as string[];
+    const matchMode = params.matchMode || 'exact';
+
+    let passed: boolean;
+    if (matchMode === 'exact') {
+      passed = actualOptions.length === expectedOptions.length &&
+        expectedOptions.every(opt => actualOptions.includes(opt));
+    } else {
+      passed = expectedOptions.every(opt => actualOptions.includes(opt));
+    }
+
+    return {
+      passed,
+      score: 0,
+      expected: { tableName: params.tableName, fieldName: params.fieldName, options: expectedOptions },
+      actual: { tableName: params.tableName, fieldName: params.fieldName, options: actualOptions },
+      errorMessage: passed ? undefined : `字段「${params.fieldName}」选项不匹配：期望 ${JSON.stringify(expectedOptions)}，实际 ${JSON.stringify(actualOptions)}`,
+      needsReview: false,
+    };
+  },
+
+  /**
+   * 验证字段格式（数字/日期/时间）
+   * params: { tableName, fieldName, format }
+   */
+  check_field_format(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+    const field = findField(sheet, params.fieldName);
+    if (!field) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, fieldName: params.fieldName, found: false },
+        errorMessage: `字段「${params.fieldName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const actualFormat = field.numberFormat || field.data?.number_format || '';
+    const expectedFormat = params.format as string;
+    const passed = actualFormat.includes(expectedFormat) || expectedFormat.includes(actualFormat);
+
+    return {
+      passed,
+      score: 0,
+      expected: { tableName: params.tableName, fieldName: params.fieldName, format: expectedFormat },
+      actual: { tableName: params.tableName, fieldName: params.fieldName, format: actualFormat },
+      errorMessage: passed ? undefined : `字段「${params.fieldName}」格式不匹配：期望 ${expectedFormat}，实际 ${actualFormat}`,
+      needsReview: false,
+    };
+  },
+
+  /**
+   * 验证字段唯一约束
+   * params: { tableName, fieldName }
+   */
+  check_field_unique(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+    const field = findField(sheet, params.fieldName);
+    if (!field) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, fieldName: params.fieldName, found: false },
+        errorMessage: `字段「${params.fieldName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const isUnique = field.uniqueValue === true || field.data?.unique_value === true;
+
+    return {
+      passed: isUnique,
+      score: 0,
+      expected: { tableName: params.tableName, fieldName: params.fieldName, unique: true },
+      actual: { tableName: params.tableName, fieldName: params.fieldName, unique: isUnique },
+      errorMessage: isUnique ? undefined : `字段「${params.fieldName}」未开启唯一约束`,
+      needsReview: false,
+    };
+  },
+
+  /**
+   * 验证关联目标表
+   * params: { tableName, fieldName, targetTable }
+   */
+  check_field_link_target(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+    const field = findField(sheet, params.fieldName);
+    if (!field) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, fieldName: params.fieldName, found: false },
+        errorMessage: `字段「${params.fieldName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const linkSheetId = field.linkSheet || field.data?.link_sheet;
+    if (!linkSheetId) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, fieldName: params.fieldName, type: field.type, linkSheet: null },
+        errorMessage: `字段「${params.fieldName}」不是关联字段`,
+        needsReview: false,
+      };
+    }
+
+    const targetSheet = schema.detail.sheets.find(s => s.id === Number(linkSheetId));
+    const targetTableName = targetSheet?.name;
+    const expectedTarget = params.targetTable as string;
+    const passed = targetTableName === expectedTarget || String(linkSheetId) === expectedTarget;
+
+    return {
+      passed,
+      score: 0,
+      expected: { tableName: params.tableName, fieldName: params.fieldName, targetTable: expectedTarget },
+      actual: { tableName: params.tableName, fieldName: params.fieldName, linkSheetId, targetTableName },
+      errorMessage: passed ? undefined : `关联字段「${params.fieldName}」目标表不匹配：期望 ${expectedTarget}，实际 ${targetTableName || 'ID: ' + linkSheetId}`,
+      needsReview: false,
+    };
+  },
+
+  /**
+   * 验证表单字段配置（使用表单字段API返回的数据）
+   * params: { tableName, formName, fields[] }
+   * 注意：需要 grading-service 通过 KingsoftAdapter.getFormFields() 预获取表单字段数据
+   */
+  check_form_fields(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const formViews = (sheet.views || []).filter(v => v.type === 'Form');
+    const targetForm = params.formName
+      ? formViews.find(v => v.name === params.formName)
+      : formViews[0];
+
+    if (!targetForm) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, formName: params.formName, availableForms: formViews.map(v => v.name) },
+        errorMessage: `未找到表单「${params.formName || '(任意)'}`,
+        needsReview: false,
+      };
+    }
+
+    const formFields = params.formFields as any[] | undefined;
+    if (!formFields) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, formName: targetForm.name, formId: targetForm.id },
+        errorMessage: `表单字段配置需通过额外API获取，标记为待复核`,
+        needsReview: true,
+      };
+    }
+
+    const expectedFields = params.fields as string[];
+    const actualFieldTitles = formFields.map((f: any) => f.title);
+    const actualFieldIds = formFields.map((f: any) => f.field_id);
+    const allFieldsPresent = expectedFields.every((ef: string) =>
+      actualFieldTitles.includes(ef) || actualFieldIds.includes(ef)
+    );
+
+    return {
+      passed: allFieldsPresent,
+      score: 0,
+      expected: { tableName: params.tableName, formName: targetForm.name, fields: expectedFields },
+      actual: { tableName: params.tableName, formName: targetForm.name, fields: actualFieldTitles },
+      errorMessage: allFieldsPresent ? undefined : `表单「${targetForm.name}」缺少字段：${expectedFields.filter((ef: string) => !actualFieldTitles.includes(ef) && !actualFieldIds.includes(ef)).join(', ')}`,
+      needsReview: false,
+    };
+  },
+
+  /**
+   * 验证表单字段必填设置
+   * params: { tableName, formName, fieldName, required }
+   */
+  check_form_field_required(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const formViews = (sheet.views || []).filter(v => v.type === 'Form');
+    const targetForm = params.formName
+      ? formViews.find(v => v.name === params.formName)
+      : formViews[0];
+
+    if (!targetForm) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, formName: params.formName },
+        errorMessage: `未找到表单「${params.formName || '(任意)'}`,
+        needsReview: false,
+      };
+    }
+
+    const formFields = params.formFields as any[] | undefined;
+    if (!formFields) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, formName: targetForm.name },
+        errorMessage: `表单字段数据需通过额外API获取`,
+        needsReview: true,
+      };
+    }
+
+    const targetField = formFields.find((f: any) => f.title === params.fieldName || f.field_id === params.fieldName);
+    if (!targetField) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, formName: targetForm.name, fieldName: params.fieldName, availableFields: formFields.map((f: any) => f.title) },
+        errorMessage: `表单中未找到字段「${params.fieldName}」`,
+        needsReview: false,
+      };
+    }
+
+    const isRequired = targetField.required === true;
+    const expectedRequired = params.required === true;
+
+    return {
+      passed: isRequired === expectedRequired,
+      score: 0,
+      expected: { tableName: params.tableName, formName: targetForm.name, fieldName: params.fieldName, required: expectedRequired },
+      actual: { tableName: params.tableName, formName: targetForm.name, fieldName: params.fieldName, required: isRequired },
+      errorMessage: isRequired === expectedRequired ? undefined : `表单字段「${params.fieldName}」必填设置不匹配：期望 ${expectedRequired}，实际 ${isRequired}`,
+      needsReview: false,
+    };
+  },
+
+  /**
+   * 验证记录值精确匹配
+   * params: { tableName, fieldName, value }
+   */
+  check_record_value_exact(schema, params, records) {
+    const tableRecords = records?.[params.tableName];
+    if (!tableRecords) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, recordData: '未获取到记录数据' },
+        errorMessage: `无法获取表「${params.tableName}」的记录数据`,
+        needsReview: false,
+      };
+    }
+
+    const { fieldName, value } = params;
+    const matchedRecords = tableRecords.records.filter(r => {
+      const fieldValue = r.fields[fieldName];
+      return String(fieldValue ?? '') === String(value);
+    });
+
+    const passed = matchedRecords.length > 0;
+    return {
+      passed,
+      score: 0,
+      expected: { tableName: params.tableName, fieldName, value },
+      actual: { tableName: params.tableName, fieldName, matchedCount: matchedRecords.length, totalRecords: tableRecords.records.length },
+      errorMessage: passed ? undefined : `表「${params.tableName}」中未找到字段「${fieldName}」值为「${value}」的记录`,
+      needsReview: false,
+    };
+  },
+
+  /**
+   * 验证表包含所有指定字段
+   * params: { tableName, fields[] }
+   */
+  check_table_fields(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const expectedFields = params.fields as string[];
+    const actualFieldNames = (sheet.fields || []).map(f => f.name);
+    const missingFields = expectedFields.filter(ef => !actualFieldNames.includes(ef));
+    const passed = missingFields.length === 0;
+
+    return {
+      passed,
+      score: 0,
+      expected: { tableName: params.tableName, fields: expectedFields },
+      actual: { tableName: params.tableName, fields: actualFieldNames, missingFields },
+      errorMessage: passed ? undefined : `表「${params.tableName}」缺少字段：${missingFields.join(', ')}`,
+      needsReview: false,
     };
   },
 
@@ -751,6 +1127,11 @@ export function getActionLabel(action: string): string {
     check_field_count: '验证字段数量',
     check_field_required: '验证必填设置',
     check_field_formula: '验证公式字段',
+    check_field_options: '验证字段选项',
+    check_field_format: '验证字段格式',
+    check_field_unique: '验证唯一约束',
+    check_field_link_target: '验证关联目标表',
+    check_table_fields: '验证表字段完整性',
     check_view_exists: '验证视图存在',
     check_view_type: '验证视图类型',
     check_view_filter: '验证视图筛选',
@@ -758,10 +1139,12 @@ export function getActionLabel(action: string): string {
     check_view_group: '验证视图分组',
     check_form_exists: '验证表单存在',
     check_form_fields: '验证表单字段',
+    check_form_field_required: '验证表单字段必填',
     check_form_settings: '验证表单设置',
     check_linked_record: '验证关联记录',
     check_record_exists: '验证记录存在',
     check_record_value: '验证记录值',
+    check_record_value_exact: '验证记录值精确匹配',
     check_record_count: '验证记录数',
   };
   return labels[action] || action;

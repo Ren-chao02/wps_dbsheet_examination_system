@@ -67,6 +67,20 @@ userRouter.get('/', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/users/teachers - 获取教师列表（轻量，用于下拉筛选）
+userRouter.get('/teachers', async (_req: Request, res: Response) => {
+  try {
+    const teachers = await prisma.user.findMany({
+      where: { role: 'teacher' },
+      select: { id: true, realName: true },
+      orderBy: { realName: 'asc' },
+    });
+    res.json(teachers);
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
 // GET /api/users/:id
 userRouter.get('/:id', async (req: Request, res: Response) => {
   try {

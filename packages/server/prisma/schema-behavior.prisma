@@ -1,0 +1,108 @@
+/**
+ * ✅ Prisma Schema扩展 - 考生行为日志模型
+ *
+ * 用于记录线上考试过程中的学生行为数据，
+ * 为防作弊、纠纷处理、教学分析提供完整证据链。
+ */
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 1️⃣ 枚举定义：行为类型分类
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+enum BehaviorType {
+  TAB_SWITCH       // 切屏/离开页面
+  COPY_PASTE       // 复制粘贴操作
+  WINDOW_BLUR      // 窗口失焦（可能切换应用）
+  FULLSCREEN_EXIT  // 退出全屏模式
+  KEYBOARD_SHORTCUT // 可疑快捷键（如PrintScreen）
+  MOUSE_SUSPICIOUS // 异常鼠标行为（如频繁点击）
+  QUESTION_NAVIGATE // 题目跳转（正常行为）
+  ANSWER_SUBMIT    // 提交答案（正常行为）
+  EXAM_START       // 开始考试
+  EXAM_END         // 结束考试/提交试卷
+}
+
+enum RiskLevel {
+  LOW        // 低风险（正常操作）
+  MEDIUM     // 中等风险（需关注）
+  HIGH       // 高风险（疑似作弊）
+  CRITICAL   // 严重违规（明确作弊）
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 2️⃣ 模型定义：考生行为日志表
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+model StudentBehaviorLog {
+  id            String      @id @default(uuid()) @db.Uuid
+  studentId     String      @map("student_id") @db.Uuid
+  examId        String      @map("exam_id") @db.Uuid
+  submissionId  String?     @map("submission_id") @db.Uuid
+
+  // 行为数据
+  behaviorType  BehaviorType @map("behavior_type")
+  riskLevel     RiskLevel    @map("risk_level") @default(LOW)
+
+  // 详细信息（JSON格式，灵活存储不同类型的元数据）
+  metadata      Json         @default("{}")
+  // 示例metadata结构:
+  // {
+  //   "tabSwitch": { "count": 5, "duration": 3000 },
+  //   "copyPaste": { "source": "clipboard", "target": "question-3" },
+  //   "questionNavigate": { "from": 2, "to": 5 },
+  //   "screenshotDetected": true,
+  //   "deviceInfo": { "userAgent": "...", "screenResolution": "1920x1080" }
+  // }
+
+  // 时间戳
+  occurredAt    DateTime    @map("occurred_at") @default(now()) // 行为发生时间
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  // 关联关系
+  student       User        @relation("StudentBehavior", fields: [studentId], references: [id])
+  exam          Exam        @relation("ExamBehavior", fields: [examId], references: [id])
+  submission     Submission? @relation("SubmissionBehavior", fields: [submissionId], references: [id])
+
+  @@index([studentId, examId, behaviorType]) // 按学生+考试+类型查询
+  @@index([examId, riskLevel])               // 按考试+风险等级查询
+  @@index([occurredAt])                      // 按时间范围查询
+  @@map("student_behavior_logs")
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 3️⃣ 模型定义：行为分析报告（聚合统计）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+model BehaviorAnalysisReport {
+  id              String   @id @default(uuid()) @db.Uuid
+  examId          String   @map("exam_id") @db.Uuid
+  studentId       String   @map("student_id") @db.Uuid
+
+  // 统计指标
+  totalBehaviors Int      @map("total_behaviors")
+  tabSwitchCount  Int      @map("tab_switch_count") @default(0)
+  copyPasteCount Int      @map("copy_paste_count") @default(0)
+  blurCount       Int      @map("blur_count") @default(0)
+  highRiskCount   Int      @map("high_risk_count") @default(0)
+  criticalCount   Int      @map("critical_count") @default(0)
+
+  // 综合评分（0-100，越高越可疑）
+  suspiciousScore Float    @map("suspicious_score") @default(0)
+
+  // 结论
+  conclusion      String?  @map("conclusion") // 如："正常"、"需人工复核"、"疑似作弊"
+  reviewedBy      String?  @map("reviewed_by") @db.Uuid // 审核人ID
+  reviewedAt      DateTime? @map("reviewed_at") // 审核时间
+  reviewNote      String?  @map("review_note")  // 审核备注
+
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // 关联
+  exam            Exam     @relation("ExamReport", fields: [examId], references: [id])
+  student         User     @relation("StudentReport", fields: [studentId], references: [id])
+
+  @@unique([examId, studentId]) // 每个学生对每场考试只有一个报告
+  @@index([examId, suspiciousScore]) // 按可疑度排序
+  @@map("behavior_analysis_reports")
+}

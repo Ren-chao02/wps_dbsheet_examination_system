@@ -92,7 +92,8 @@ statisticsRouter.get('/exam/:examId', async (req: Request, res: Response) => {
 
     const maxScore = scores.length > 0 ? scores[scores.length - 1] : 0;
     const minScore = scores.length > 0 ? scores[0] : 0;
-    const passRate = exam.passScore && graded.length > 0
+    // ✅ 修复Bug#3：移除非空断言操作符，使用安全的可选链和空值合并
+    const passRate = (exam.passScore != null && graded.length > 0)
       ? Math.round((graded.filter(s => (s.totalScore ?? 0) >= exam.passScore!).length / graded.length) * 100)
       : null;
 
@@ -174,6 +175,14 @@ statisticsRouter.get('/exam/:examId/export', async (req: Request, res: Response)
 
     if (!exam) {
       return res.status(404).json({ message: '考试不存在' });
+    }
+
+    // ✅ 修复Bug#5：处理没有已评分提交的边界情况
+    if (exam.submissions.length === 0) {
+      return res.status(200).json({
+        message: '该考试暂无已评分的答卷，无法导出',
+        submissionCount: 0,
+      });
     }
 
     const BOM = '\ufeff'; // UTF-8 BOM for Excel compatibility

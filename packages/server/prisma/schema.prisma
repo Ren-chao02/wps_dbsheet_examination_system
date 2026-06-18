@@ -49,6 +49,19 @@ enum ExamStatus {
   archived
 }
 
+enum BatchStatus {
+  draft       // 草稿
+  active      // 进行中
+  completed   // 已完成
+  archived    // 已归档
+}
+
+enum ExamRoomStatus {
+  available   // 可用
+  occupied    // 使用中
+  maintenance // 维护中
+}
+
 enum SubmissionStatus {
   pending
   in_progress
@@ -112,9 +125,13 @@ model User {
   // Relations
   createdQuestions      Question[]           @relation("QuestionCreator")
   createdExams         Exam[]               @relation("ExamCreator")
+  createdPapers        Paper[]              @relation("PaperCreator")
+  createdBatches       ExamBatch[]          @relation("BatchCreator") // ✅ 新增：批次创建者
   submissions          StudentSubmission[]
   gradedSubmissions    StudentSubmission[]  @relation("Grader")
   examSessions         ExamSession[]
+  invigilatedRooms     ExamRoom[]           @relation("RoomInvigilators") // ✅ 新增：监考的考场
+  roomAssignments      ExamRoomStudent[]    // ✅ 新增：考场座位分配
   department           Department?          @relation(fields: [departmentId], references: [id])
   major                Major?               @relation(fields: [majorId], references: [id])
   classRoom            ClassRoom?           @relation(fields: [classRoomId], references: [id])
@@ -122,6 +139,11 @@ model User {
   createdInvitations   Invitation[]         @relation("InvitationCreator")
   reviewedApplications StudentApplication[] @relation("ApplicationReviewer")
   createdImportTasks   ImportTask[]         @relation("ImportTaskCreator")
+  behaviorLogs         StudentBehaviorLog[] @relation("StudentBehavior") // ✅ Phase 3: 行为日志
+  behaviorReports      BehaviorAnalysisReport[] @relation("StudentReport") // ✅ Phase 3: 分析报告
+  auditLogs            AuditLog[] @relation("AuditOperator") // ✅ Phase 3.2: 审计日志
+  notifications        Notification[] @relation("UserNotifications") // ✅ Phase 3.4: 通知消息
+  notificationPreference NotificationPreference? @relation("UserNotificationPrefs") // ✅ Phase 3.4: 偏好设置
 
   @@map("users")
 }
@@ -198,8 +220,42 @@ model Question {
   creator               User?            @relation("QuestionCreator", fields: [createdBy], references: [id])
   examQuestions         ExamQuestion[]
   submissionDetails     SubmissionDetail[]
+  paperQuestions        PaperQuestion[]
 
   @@map("questions")
+}
+
+model Paper {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @db.VarChar(256)
+  description String?   @db.Text
+  source      String    @default("local") @db.VarChar(32)
+  difficulty  String?   @db.VarChar(32)
+  passScore   Int?      @map("pass_score")
+  totalScore  Int       @default(0) @map("total_score")
+  createdBy   String?   @map("created_by") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  creator       User?           @relation("PaperCreator", fields: [createdBy], references: [id])
+  paperQuestions PaperQuestion[]
+  exams         Exam[]
+
+  @@map("papers")
+}
+
+model PaperQuestion {
+  id         String  @id @default(uuid()) @db.Uuid
+  paperId    String  @map("paper_id") @db.Uuid
+  questionId String  @map("question_id") @db.Uuid
+  sortOrder  Int     @default(0) @map("sort_order")
+  score      Int     @default(10)
+
+  paper    Paper    @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id])
+
+  @@unique([paperId, questionId])
+  @@map("paper_questions")
 }
 
 model Exam {
@@ -218,13 +274,83 @@ model Exam {
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")
 
+  paperId         String?    @map("paper_id") @db.Uuid
+  batchId         String?    @map("batch_id") @db.Uuid // 关联批次
+
   // Relations
   creator       User?               @relation("ExamCreator", fields: [createdBy], references: [id])
+  paper         Paper?              @relation(fields: [paperId], references: [id])
+  batch         ExamBatch?          @relation(fields: [batchId], references: [id]) // 批次关联
   examQuestions ExamQuestion[]
   submissions   StudentSubmission[]
   sessions      ExamSession[]
+  rooms         ExamRoom[]          @relation("ExamRooms") // ✅ 新增：该考试的所有考场
+  behaviorLogs  StudentBehaviorLog[] @relation("ExamBehavior") // ✅ Phase 3: 行为日志
+  behaviorReports BehaviorAnalysisReport[] @relation("ExamReport") // ✅ Phase 3: 分析报告
 
+  @@index([batchId])
   @@map("exams")
+}
+
+// ✅ 批次管理模型 - 统一管理多场考试的公共参数
+model ExamBatch {
+  id            String       @id @default(uuid()) @db.Uuid
+  name          String       @db.VarChar(256)           // 批次名称（如：2026春季期末考试）
+  description   String?      @db.Text                   // 批次说明
+  examDuration  Int          @map("exam_duration")       // 考试时长（分钟），所有考试统一时长
+  waitingTime   Int          @map("waiting_time")        // 候考时间（分钟）
+  lateTolerance Int          @map("late_tolerance")      // 迟到容忍（分钟）
+  status        BatchStatus  @default(draft)             // 批次状态
+  settings      Json         @default("{}")              // 批次级配置（如：是否允许切屏、是否全屏等）
+  createdBy     String       @map("created_by") @db.Uuid
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  creator User    @relation("BatchCreator", fields: [createdBy], references: [id])
+  exams   Exam[]  // 该批次下的所有考试
+
+  @@index([status, createdAt])
+  @@map("exam_batches")
+}
+
+// ✅ 考场管理模型 - 管理物理考场信息
+model ExamRoom {
+  id           String          @id @default(uuid()) @db.Uuid
+  code         String          @unique @db.VarChar(64)    // 考场编码（如：A101、B203）
+  name         String          @db.VarChar(128)            // 考场名称（如：第一机房、第二实验室）
+  capacity     Int                                        // 容纳人数上限
+  location     String?         @db.VarChar(256)            // 物理位置描述
+  equipment    Json            @default("[]")              // 设备列表（电脑编号等）
+  status       ExamRoomStatus  @default(available)         // 考场状态
+  examId       String          @map("exam_id") @db.Uuid    // 所属考试ID
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  exam         Exam                 @relation("ExamRooms", fields: [examId], references: [id], onDelete: Cascade)
+  invigilators User[]               @relation("RoomInvigilators") // 监考老师
+  students     ExamRoomStudent[]    // 已分配学生
+
+  @@index([examId, status])
+  @@map("exam_rooms")
+}
+
+// ✅ 考场-学生关联表 - 支持批量分配
+model ExamRoomStudent {
+  id        String @id @default(uuid()) @db.Uuid
+  roomId    String @map("room_id") @db.Uuid
+  studentId String @map("student_id") @db.Uuid
+  seatNumber Int    @map("seat_number") // 座位号
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  // Relations
+  room    ExamRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  student User     @relation(fields: [studentId], references: [id])
+
+  @@unique([roomId, studentId])
+  @@unique([roomId, seatNumber])
+  @@map("exam_room_students")
 }
 
 model ExamQuestion {
@@ -263,6 +389,7 @@ model StudentSubmission {
   details          SubmissionDetail[]
   verificationResults VerificationResult[]
   session          ExamSession?
+  behaviorLogs     StudentBehaviorLog[] @relation("SubmissionBehavior") // ✅ Phase 3: 行为日志
 
   @@unique([examId, studentId])
   @@map("student_submissions")
@@ -452,3 +579,221 @@ model SystemRolePermission {
   @@unique([roleId, moduleCode])
   @@map("system_role_permissions")
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ✅ Phase 3 新增：考生行为日志系统
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 枚举：行为类型
+enum BehaviorType {
+  TAB_SWITCH       // 切屏/离开页面
+  COPY_PASTE       // 复制粘贴操作
+  WINDOW_BLUR      // 窗口失焦（可能切换应用）
+  FULLSCREEN_EXIT  // 退出全屏模式
+  KEYBOARD_SHORTCUT // 可疑快捷键（如PrintScreen）
+  MOUSE_SUSPICIOUS // 异常鼠标行为（如频繁点击）
+  QUESTION_NAVIGATE // 题目跳转（正常行为）
+  ANSWER_SUBMIT    // 提交答案（正常行为）
+  EXAM_START       // 开始考试
+  EXAM_END         // 结束考试/提交试卷
+}
+
+// 枚举：风险等级
+enum RiskLevel {
+  LOW        // 低风险（正常操作）
+  MEDIUM     // 中等风险（需关注）
+  HIGH       // 高风险（疑似作弊）
+  CRITICAL   // 严重违规（明确作弊）
+}
+
+// 模型：考生行为日志表
+model StudentBehaviorLog {
+  id            String      @id @default(uuid()) @db.Uuid
+  studentId     String      @map("student_id") @db.Uuid
+  examId        String      @map("exam_id") @db.Uuid
+  submissionId  String?     @map("submission_id") @db.Uuid
+
+  behaviorType  BehaviorType @map("behavior_type")
+  riskLevel     RiskLevel    @map("risk_level") @default(LOW)
+  metadata      Json         @default("{}")
+
+  occurredAt    DateTime    @map("occurred_at") @default(now())
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  student       User        @relation("StudentBehavior", fields: [studentId], references: [id])
+  exam          Exam        @relation("ExamBehavior", fields: [examId], references: [id])
+  submission     StudentSubmission? @relation("SubmissionBehavior", fields: [submissionId], references: [id])
+
+  @@index([studentId, examId, behaviorType])
+  @@index([examId, riskLevel])
+  @@index([occurredAt])
+  @@map("student_behavior_logs")
+}
+
+// 模型：行为分析报告（聚合统计）
+model BehaviorAnalysisReport {
+  id              String   @id @default(uuid()) @db.Uuid
+  examId          String   @map("exam_id") @db.Uuid
+  studentId       String   @map("student_id") @db.Uuid
+
+  totalBehaviors Int      @map("total_behaviors")
+  tabSwitchCount  Int      @map("tab_switch_count") @default(0)
+  copyPasteCount Int      @map("copy_paste_count") @default(0)
+  blurCount       Int      @map("blur_count") @default(0)
+  highRiskCount   Int      @map("high_risk_count") @default(0)
+  criticalCount   Int      @map("critical_count") @default(0)
+
+  suspiciousScore Float    @map("suspicious_score") @default(0)
+  conclusion      String?  @map("conclusion")
+  reviewedBy      String?  @map("reviewed_by") @db.Uuid
+  reviewedAt      DateTime? @map("reviewed_at")
+  reviewNote      String?  @map("review_note")
+
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  exam            Exam     @relation("ExamReport", fields: [examId], references: [id])
+  student         User     @relation("StudentReport", fields: [studentId], references: [id])
+
+  @@unique([examId, studentId])
+  @@index([examId, suspiciousScore])
+  @@map("behavior_analysis_reports")
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ✅ Phase 3.2: 操作审计日志模型 (Audit Log)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 枚举：操作类型
+enum AuditAction {
+  CREATE    // 创建
+  UPDATE    // 更新
+  DELETE    // 删除
+  LOGIN     // 登录
+  LOGOUT    // 登出
+  EXPORT    // 导出
+  IMPORT    // 导入
+  REVIEW    // 审核
+}
+
+// 模型：操作审计日志表
+model AuditLog {
+  id          String      @id @default(uuid()) @db.Uuid
+
+  // 操作信息
+  action      AuditAction @map("action")           // 操作类型
+  entityType  String      @map("entity_type") @db.VarChar(128) // 实体类型（如Exam, User, Batch）
+  entityId    String?     @map("entity_id") @db.Uuid // 实体ID（可选，用于关联具体记录）
+
+  // 变更数据（JSON快照）
+  oldData     Json?       @map("old_data")         // 变更前数据（UPDATE/DELETE时）
+  newData     Json?       @map("new_data")         // 变更后数据（CREATE/UPDATE时）
+  changedFields String?   @map("changed_fields")   // 变更字段列表（JSON数组）
+
+  // 操作者信息
+  userId      String?     @map("user_id") @db.Uuid // 操作人ID
+  username    String?     @map("username") @db.VarChar(64) // 操作人用户名（冗余存储）
+  userRole    String?     @map("user_role") @db.VarChar(32) // 操作人角色
+
+  // 环境信息
+  ipAddress   String?     @map("ip_address") @db.VarChar(45) // IPv4/IPv6地址
+  userAgent   String?     @map("user_agent") @db.Text // 浏览器UA
+  requestUrl  String?     @map("request_url") @db.VarChar(512) // 请求URL
+
+  // 时间戳
+  occurredAt  DateTime    @map("occurred_at") @default(now())
+
+  // 关联
+  operator    User?       @relation("AuditOperator", fields: [userId], references: [id])
+
+  @@index([action, entityType, entityId])
+  @@index([userId, occurredAt])
+  @@index([occurredAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ✅ Phase 3.4: 实时通知推送模型 (Notification)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 枚举：通知类型
+enum NotificationType {
+  SYSTEM       // 系统公告
+  EXAM         // 考试相关（开始、结束、异常）
+  GRADE        // 成绩发布
+  ALERT        // 告警提醒（行为异常、系统告警）
+  AUDIT        // 审计通知（操作审核结果）
+}
+
+// 枚举：通知优先级
+enum NotificationPriority {
+  LOW          // 低优先级（普通信息）
+  MEDIUM       // 中等（需要关注）
+  HIGH         // 高（重要事项）
+  URGENT       // 紧急（需立即处理）
+}
+
+// 模型：通知消息表
+model Notification {
+  id            String               @id @default(uuid()) @db.Uuid
+
+  // 基本信息
+  type          NotificationType     @map("type")
+  priority      NotificationPriority @map("priority") @default(MEDIUM)
+  title         String               @db.VarChar(256)
+  content       String?              @db.Text
+
+  // 接收者
+  userId        String               @map("user_id") @db.Uuid
+  isRead        Boolean              @map("is_read") @default(false)
+
+  // 关联数据（可选）
+  entityType    String?              @map("entity_type") @db.VarChar(128) // 关联实体类型
+  entityId      String?              @map("entity_id") @db.Uuid // 关联实体ID
+  actionUrl     String?              @map("action_url") @db.VarChar(512) // 点击跳转链接
+
+  // 发送渠道记录
+  sentViaWeb    Boolean              @map("sent_via_web") @default(false)
+  sentViaEmail  Boolean              @map("sent_via_email") @default(false)
+
+  // 时间戳
+  createdAt     DateTime             @default(now()) @map("created_at")
+  readAt        DateTime?            @map("read_at")
+
+  // 关联
+  user          User                 @relation("UserNotifications", fields: [userId], references: [id])
+
+  @@index([userId, isRead, createdAt])
+  @@index([userId, type, createdAt])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// 模型：用户通知偏好设置表
+model NotificationPreference {
+  id            String               @id @default(uuid()) @db.Uuid
+  userId        String               @map("user_id") @unique @db.Uuid
+
+  // 全局开关
+  enableWebPush Boolean              @map("enable_web_push") @default(true)
+  enableEmail   Boolean              @map("enable_email") @default(false)
+
+  // 分类开关
+  enableSystem  Boolean              @map("enable_system") @default(true)
+  enableExam    Boolean              @map("enable_exam") @default(true)
+  enableGrade   Boolean              @map("enable_grade") @default(true)
+  enableAlert   Boolean              @map("enable_alert") @default(true)
+  enableAudit   Boolean              @map("enable_audit") @default(true)
+
+  // 邮件频率控制
+  emailFrequency String              @map("email_frequency") @default("realtime") @db.VarChar(32) // realtime/daily/hourly
+
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+
+  user          User                 @relation("UserNotificationPrefs", fields: [userId], references: [id])
+
+  @@map("notification_preferences")
+}
+
+

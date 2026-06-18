@@ -183,7 +183,7 @@ export async function gradeSubmission(submissionId: string): Promise<GradingResu
       const allRules = submission.details.flatMap(
         d => (d.question.answerRules as unknown as AnswerRule[]) || []
       );
-      const recordActions = new Set(['check_record_exists', 'check_record_value', 'check_record_count']);
+      const recordActions = new Set(['check_record_exists', 'check_record_value', 'check_record_count', 'check_record_value_exact']);
       const tablesNeedingRecords = new Set<string>();
       for (const rule of allRules) {
         if (recordActions.has(rule.action) && rule.params.tableName) {
@@ -202,6 +202,34 @@ export async function gradeSubmission(submissionId: string): Promise<GradingResu
             };
           } catch (err: any) {
             console.warn(`[GradingService] 获取表「${tableName}」记录失败: ${err.message}`);
+          }
+        }
+      }
+
+      // 检查是否有表单字段规则，若有则预获取表单字段数据
+      const formFieldActions = new Set(['check_form_fields', 'check_form_field_required']);
+      const formFieldsData = new Map<string, any[]>();
+      for (const rule of allRules) {
+        if (formFieldActions.has(rule.action) && rule.params.tableName) {
+          const sheet = schema.detail.sheets.find(s => s.name === rule.params.tableName);
+          if (sheet) {
+            const formViews = (sheet.views || []).filter(v => v.type === 'Form');
+            const targetForm = rule.params.formName
+              ? formViews.find(v => v.name === rule.params.formName)
+              : formViews[0];
+            if (targetForm) {
+              const cacheKey = `${rule.params.tableName}:${targetForm.id}`;
+              if (!formFieldsData.has(cacheKey)) {
+                try {
+                  const fields = await adapter.getFormFields(sheet.id, targetForm.id);
+                  formFieldsData.set(cacheKey, fields);
+                } catch (err: any) {
+                  console.warn(`[GradingService] 获取表单字段失败: ${err.message}`);
+                }
+              }
+              // 将表单字段数据注入规则params中，供rule-engine使用
+              rule.params.formFields = formFieldsData.get(cacheKey);
+            }
           }
         }
       }
