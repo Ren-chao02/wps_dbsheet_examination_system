@@ -37,6 +37,16 @@ export function ExamManager() {
   const columns = [
     { title: '名称', dataIndex: 'title', key: 'title' },
     { title: '模式', dataIndex: 'mode', key: 'mode', render: (v: string) => modeLabels[v] },
+    {
+      title: '绑定试卷', key: 'paper',
+      render: (_: any, r: Exam) => (
+        r.paper ? (
+          <Tag color="blue">{r.paper.name}</Tag>
+        ) : (
+          <Tag color="default">未绑定</Tag>
+        )
+      ),
+    },
     { title: '题目数', key: 'questions', render: (_: any, r: Exam) => r._count?.examQuestions ?? 0 },
     { title: '提交数', key: 'submissions', render: (_: any, r: Exam) => r._count?.submissions ?? 0 },
     { title: '总分', dataIndex: 'totalScore', key: 'totalScore' },

@@ -155,7 +155,7 @@ export class KingsoftAdapter {
     this.fileId = fileId;
     this.accessToken = accessToken;
     this.apiSecret = apiSecret || config.kingsoft.apiSecret;
-    this.apiVersion = apiVersion || config.kingsoft.apiVersion || 'v7';
+    this.apiVersion = apiVersion || 'v7';
   }
 
   /** 获取完整 Schema（核心方法） */
@@ -382,6 +382,51 @@ export class KingsoftAdapter {
       records: response.detail.records,
       fieldsSchema: response.detail.fieldsSchema,
     };
+  }
+
+  /**
+   * 获取表单字段配置
+   * GET /v7/dbsheet/{file_id}/sheets/{sheet_id}/forms/{view_id}/fields
+   * 返回: { form_fields: [{ field_id, title, description, required }] }
+   */
+  async getFormFields(sheetId: number, viewId: string): Promise<{ field_id: string; title: string; description: string; required: boolean }[]> {
+    const baseUrl = config.kingsoft.apiBaseUrl || V7_API_BASE;
+    // 注意：表单字段API不在 /coop/ 路径下，使用 /dbsheet/ 路径
+    const dbsheetBaseUrl = baseUrl.replace('/coop/dbsheet', '/dbsheet');
+    const url = `${dbsheetBaseUrl}/${this.fileId}/sheets/${sheetId}/forms/${viewId}/fields`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`API 请求失败 [/forms/${viewId}/fields]: ${response.status} ${response.statusText} - ${text}`);
+    }
+
+    const raw = await response.json() as any;
+    if (raw.code !== undefined && raw.code !== 0) {
+      throw new Error(`API 返回错误 [/forms/${viewId}/fields]: code=${raw.code}, msg=${raw.msg}`);
+    }
+
+    const v7data = raw.data || {};
+    return v7data.form_fields || [];
+  }
+
+  /**
+   * 获取 sheet ID 到表名的映射
+   */
+  async getSheetIdToNameMap(): Promise<Map<number, string>> {
+    const tables = await this.getTables();
+    const map = new Map<number, string>();
+    for (const table of tables) {
+      map.set(table.id, table.name);
+    }
+    return map;
   }
 
   // ============================================================

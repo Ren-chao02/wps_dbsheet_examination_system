@@ -16,6 +16,7 @@ const examSchema = z.object({
   endTime: z.string().datetime().nullable().optional(),
   passScore: z.number().int().min(0).nullable().optional(),
   settings: z.record(z.any()).default({}),
+  paperId: z.string().uuid().nullable().optional(),
 });
 
 const examQuestionSchema = z.object({
@@ -45,6 +46,7 @@ examRouter.get('/', async (req: Request, res: Response) => {
         orderBy: { updatedAt: 'desc' },
         include: {
           creator: { select: { id: true, realName: true } },
+          paper: { select: { id: true, name: true, totalScore: true, passScore: true } },
           _count: { select: { examQuestions: true, submissions: true } },
         },
       }),
@@ -64,11 +66,13 @@ examRouter.get('/:id', async (req: Request, res: Response) => {
       where: { id: req.params.id },
       include: {
         creator: { select: { id: true, realName: true } },
+        paper: { select: { id: true, name: true, totalScore: true, passScore: true } },
         examQuestions: {
           include: {
             question: {
               include: {
-                category: { select: { id: true, name: true } },
+                primaryCategory: { select: { id: true, name: true } },
+                secondaryCategory: { select: { id: true, name: true } },
               },
             },
           },
@@ -92,12 +96,14 @@ examRouter.post('/', async (req: Request, res: Response) => {
   try {
     const data = examSchema.parse(req.body);
 
+    const { paperId, ...rest } = data;
     const exam = await prisma.exam.create({
       data: {
-        ...data,
+        ...rest,
         startTime: data.startTime ? new Date(data.startTime) : null,
         endTime: data.endTime ? new Date(data.endTime) : null,
         createdBy: req.user!.userId,
+        paperId: paperId ?? null,
       },
     });
 
@@ -122,12 +128,14 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
     }
 
     const data = examSchema.parse(req.body);
+    const { paperId, ...rest } = data;
     const updated = await prisma.exam.update({
       where: { id: req.params.id },
       data: {
-        ...data,
+        ...rest,
         startTime: data.startTime ? new Date(data.startTime) : null,
         endTime: data.endTime ? new Date(data.endTime) : null,
+        paperId: paperId ?? null,
       },
     });
 
@@ -225,13 +233,14 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
   try {
     const exam = await prisma.exam.findUnique({
       where: { id: req.params.id },
-      include: { _count: { select: { examQuestions: true } } },
+      include: { _count: { select: { examQuestions: true } }, paper: { select: { _count: { select: { paperQuestions: true } } } } },
     });
 
     if (!exam) {
       return res.status(404).json({ message: '考试不存在' });
     }
-    if (exam._count.examQuestions === 0) {
+    const hasQuestions = exam._count.examQuestions > 0 || (exam.paper?._count.paperQuestions ?? 0) > 0;
+    if (!hasQuestions) {
       return res.status(400).json({ message: '考试没有题目，无法发布' });
     }
 

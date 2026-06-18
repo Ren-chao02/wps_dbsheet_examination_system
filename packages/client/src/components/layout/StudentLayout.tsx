@@ -25,6 +25,7 @@ export function StudentLayout() {
 
   const menuItems = [
     { key: '/student/dashboard', icon: <DashboardOutlined />, label: '我的考试' },
+    { key: '/student/practice', icon: <BookOutlined />, label: '题库练习' },
   ];
 
   const userMenu = {
@@ -34,8 +35,14 @@ export function StudentLayout() {
   };
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} theme="dark">
+    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
+      <Sider
+        collapsible
+        collapsed={collapsed}
+        onCollapse={setCollapsed}
+        theme="dark"
+        style={{ height: '100vh', position: 'fixed', left: 0, top: 0, zIndex: 100 }}
+      >
         <div style={{ height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Text style={{ color: '#fff', fontSize: collapsed ? 14 : 18, fontWeight: 'bold' }}>
             {collapsed ? '考试' : '考试系统'}
@@ -49,8 +56,8 @@ export function StudentLayout() {
           onClick={({ key }) => navigate(key)}
         />
       </Sider>
-      <Layout>
-        <Header style={{ background: '#fff', padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
+      <Layout style={{ marginLeft: collapsed ? 80 : 200, height: '100vh', transition: 'margin-left 0.2s' }}>
+        <Header style={{ position: 'sticky', top: 0, zIndex: 99, background: '#fff', padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
           <Text strong style={{ fontSize: 16 }}>学生端</Text>
           <Dropdown menu={userMenu} placement="bottomRight">
             <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -59,7 +66,7 @@ export function StudentLayout() {
             </div>
           </Dropdown>
         </Header>
-        <Content style={{ margin: 24 }}>
+        <Content style={{ margin: 24, overflow: 'auto' }}>
           <Outlet />
         </Content>
       </Layout>

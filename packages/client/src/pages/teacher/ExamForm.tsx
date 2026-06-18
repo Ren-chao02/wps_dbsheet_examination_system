@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Form, Input, Select, InputNumber, Button, Card, Table, Transfer, message, Spin, Space, Row, Col, Switch } from 'antd';
-import { SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { Form, Input, Select, InputNumber, Button, Card, message, Spin, Space, Row, Col, Switch, Table, Tag, Modal } from 'antd';
+import { SaveOutlined, ArrowLeftOutlined, BookOutlined, EyeOutlined, LinkOutlined } from '@ant-design/icons';
 import api from '../../services/api';
-import type { Question } from '../../types';
+import type { Paper, PaperQuestion } from '../../types';
 
 const { TextArea } = Input;
 
@@ -11,15 +11,15 @@ export function ExamForm() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [form] = Form.useForm();
-  const [allQuestions, setAllQuestions] = useState<Question[]>([]);
-  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [paperModalOpen, setPaperModalOpen] = useState(false);
+  const [papers, setPapers] = useState<Paper[]>([]);
+  const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
+  const [paperQuestions, setPaperQuestions] = useState<PaperQuestion[]>([]);
   const isEdit = !!id;
 
   useEffect(() => {
-    // Load published questions
-    api.get('/questions?status=published&pageSize=100').then(res => setAllQuestions(res.data.data)).catch(() => {});
     if (isEdit) {
       setLoading(true);
       api.get(`/exams/${id}`).then(res => {
@@ -31,13 +31,33 @@ export function ExamForm() {
           durationMinutes: e.durationMinutes,
           passScore: e.passScore,
           shuffleQuestions: e.settings?.shuffleQuestions || false,
+          paperId: e.paperId,
         });
-        if (e.examQuestions) {
-          setSelectedKeys(e.examQuestions.map((eq: any) => eq.questionId));
+        if (e.paperId) {
+          loadPaper(e.paperId);
         }
       }).catch(() => message.error('加载失败')).finally(() => setLoading(false));
     }
   }, [id]);
+
+  const loadPaper = async (paperId: string) => {
+    try {
+      const res = await api.get(`/papers/${paperId}`);
+      setSelectedPaper(res.data);
+      setPaperQuestions(res.data.paperQuestions || []);
+    } catch {
+      console.error('Error loading paper');
+    }
+  };
+
+  const fetchPapers = async () => {
+    try {
+      const res = await api.get('/papers?pageSize=100');
+      setPapers(res.data?.data || []);
+    } catch {
+      message.error('加载试卷列表失败');
+    }
+  };
 
   const onFinish = async (values: any) => {
     setSaving(true);
@@ -51,18 +71,9 @@ export function ExamForm() {
       delete payload.shuffleQuestions;
       if (isEdit) {
         await api.put(`/exams/${id}`, payload);
-        // Update questions
-        await api.put(`/exams/${id}/questions`, {
-          questionIds: selectedKeys.map((qid, i) => ({ questionId: qid, sortOrder: i })),
-        });
         message.success('更新成功');
       } else {
         const res = await api.post('/exams', payload);
-        if (selectedKeys.length > 0) {
-          await api.put(`/exams/${res.data.id}/questions`, {
-            questionIds: selectedKeys.map((qid, i) => ({ questionId: qid, sortOrder: i })),
-          });
-        }
         message.success('创建成功');
         navigate(`/teacher/exams/${res.data.id}/edit`);
       }
@@ -71,6 +82,22 @@ export function ExamForm() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSelectPaper = (paper: Paper) => {
+    setSelectedPaper(paper);
+    form.setFieldsValue({ paperId: paper.id });
+    setPaperModalOpen(false);
+    // Load paper questions
+    api.get(`/papers/${paper.id}`).then(res => {
+      setPaperQuestions(res.data.paperQuestions || []);
+    });
+  };
+
+  const handleClearPaper = () => {
+    setSelectedPaper(null);
+    form.setFieldsValue({ paperId: null });
+    setPaperQuestions([]);
   };
 
   if (loading) return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>;
@@ -116,27 +143,47 @@ export function ExamForm() {
           </Form.Item>
         </Card>
 
-        <Card title="选择题目" style={{ marginBottom: 16 }}>
-          <Transfer
-            dataSource={allQuestions.map(q => ({
-              key: q.id,
-              title: q.title,
-              description: `${q.type} | ${q.score}分 | ${q.difficulty}`,
-            }))}
-            targetKeys={selectedKeys}
-            onChange={keys => setSelectedKeys(keys as string[])}
-            render={item => item.title}
-            listStyle={{ width: '100%', height: 400 }}
-            showSearch
-            filterOption={(inputValue, item) => item.title.toLowerCase().includes(inputValue.toLowerCase())}
-          />
-          <div style={{ marginTop: 12 }}>
-            已选择 <strong>{selectedKeys.length}</strong> 道题目，
-            总分：<strong>{selectedKeys.reduce((sum, qid) => {
-              const q = allQuestions.find(q => q.id === qid);
-              return sum + (q?.score || 0);
-            }, 0)}</strong> 分
-          </div>
+        <Card title="绑定试卷" style={{ marginBottom: 16 }}
+          extra={
+            <Space>
+              {selectedPaper && (
+                <Button icon={<EyeOutlined />} onClick={() => navigate(`/teacher/papers/${selectedPaper.id}/edit?tab=preview`)}>查看试卷</Button>
+              )}
+              <Button type="primary" icon={<LinkOutlined />} onClick={() => { fetchPapers(); setPaperModalOpen(true); }}>
+                {selectedPaper ? '更换试卷' : '选择试卷'}
+              </Button>
+              {selectedPaper && (
+                <Button danger onClick={handleClearPaper}>清除绑定</Button>
+              )}
+            </Space>
+          }
+        >
+          <Form.Item name="paperId" hidden>
+            <Input />
+          </Form.Item>
+          {selectedPaper ? (
+            <div>
+              <div style={{ marginBottom: 12 }}>
+                <strong>试卷名称：</strong>{selectedPaper.name}
+                <Tag color="blue" style={{ marginLeft: 8 }}>{selectedPaper.difficulty || '未设置难度'}</Tag>
+                <Tag color="green">{paperQuestions.length} 题</Tag>
+                <Tag color="orange">总分 {selectedPaper.totalScore} 分</Tag>
+                {selectedPaper.passScore && <Tag color="red">及格 {selectedPaper.passScore} 分</Tag>}
+              </div>
+              <Table dataSource={paperQuestions} rowKey="questionId" pagination={false} size="small">
+                <Table.Column title="序号" width={60} render={(_, __, i) => i + 1} />
+                <Table.Column title="题型" width={100} dataIndex={['question', 'type']} render={(v: string) => <Tag>{v}</Tag>} />
+                <Table.Column title="题目" dataIndex={['question', 'title']} ellipsis />
+                <Table.Column title="分值" width={80} dataIndex="score" />
+              </Table>
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '40px 0', color: '#999' }}>
+              <BookOutlined style={{ fontSize: 48, marginBottom: 16 }} />
+              <div>暂未绑定试卷</div>
+              <div>请从试卷库选择一份试卷，或先前往试卷库创建试卷</div>
+            </div>
+          )}
         </Card>
 
         {isEdit && (
@@ -158,6 +205,26 @@ export function ExamForm() {
           </Card>
         )}
       </Form>
+
+      <Modal
+        title="选择试卷"
+        open={paperModalOpen}
+        onCancel={() => setPaperModalOpen(false)}
+        footer={null}
+        width={800}
+      >
+        <Table dataSource={papers} rowKey="id" pagination={{ pageSize: 10 }}
+          columns={[
+            { title: '试卷名称', dataIndex: 'name' },
+            { title: '难度', dataIndex: 'difficulty', render: (v: string) => v || '-' },
+            { title: '题目数', key: 'count', render: (_: any, r: Paper) => r._count?.paperQuestions ?? 0 },
+            { title: '总分', dataIndex: 'totalScore' },
+            { title: '操作', width: 100, render: (_: any, r: Paper) => (
+              <Button type="primary" size="small" onClick={() => handleSelectPaper(r)}>选择</Button>
+            )},
+          ]}
+        />
+      </Modal>
     </div>
   );
 }

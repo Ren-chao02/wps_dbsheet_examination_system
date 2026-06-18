@@ -1,19 +1,35 @@
-import { useState, useMemo } from 'react';
+/**
+ * ✅ 模块化教师端布局 (Module-based Teacher Layout)
+ *
+ * 架构设计:
+ * ┌──────────────────────────────────────────────────────┐
+ * │  Header (顶栏) - 一级大模块Tab导航                     │
+ * │  [工作台] [题库与试卷] [监考管理★] [查询统计★] [...]    │
+ * ├────────┬─────────────────────────────────────────────┤
+ * │        │  Content (内容区)                            │
+ * │ Sider  │                                             │
+ * │ (侧边) │  <Outlet />                                 │
+ * │ - 二级 │                                             │
+ * │  菜单  │                                             │
+ * │ - 动态 │                                             │
+ * │  加载  │                                             │
+ * └────────┴─────────────────────────────────────────────┘
+ */
+
+import { useState, useMemo, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Typography, Avatar, Dropdown } from 'antd';
+import { Layout, Menu, Typography, Avatar, Dropdown, Tabs, Tooltip, Badge } from 'antd';
 import {
-  DashboardOutlined,
-  QuestionCircleOutlined,
-  FileTextOutlined,
   LogoutOutlined,
   UserOutlined,
-  TeamOutlined,
-  BankOutlined,
-  LinkOutlined,
-  AuditOutlined,
-  CloudUploadOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
+import {
+  MODULE_NAVIGATION_CONFIG,
+  filterAccessibleModules,
+  findModuleByPath,
+  TopModuleItem,
+} from '../../config/moduleNavigation'; // ✅ 自动解析为.tsx
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -24,51 +40,100 @@ export function TeacherLayout() {
   const location = useLocation();
   const { user, logout, hasPermission } = useAuthStore();
 
+  // ✅ 状态：当前选中的一级模块
+  const [activeTopModuleKey, setActiveTopModuleKey] = useState<string>('dashboard');
+
+  // ✅ 过滤用户有权限访问的模块
+  const accessibleModules = useMemo(() => {
+    return filterAccessibleModules(hasPermission);
+  }, [hasPermission]);
+
+  // ✅ 获取当前选中模块的子菜单项
+  const currentModuleSubItems = useMemo((): TopModuleItem['subItems'] => {
+    const module = accessibleModules.find(m => m.key === activeTopModuleKey);
+    return module?.subItems || [];
+  }, [accessibleModules, activeTopModuleKey]);
+
+  // ✅ 根据当前URL自动定位到对应的一级模块
+  useEffect(() => {
+    const matchedModule = findModuleByPath(location.pathname);
+    if (matchedModule && accessibleModules.some(m => m.key === matchedModule.key)) {
+      setActiveTopModuleKey(matchedModule.key);
+    }
+  }, [location.pathname, accessibleModules]);
+
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
-  // 学生管理子菜单动态生成
-  const studentSubItems: any[] = [];
-  if (hasPermission('STUDENT_MANAGEMENT')) {
-    studentSubItems.push(
-      { key: '/teacher/departments', icon: <BankOutlined />, label: '院系架构' },
-      { key: '/teacher/students', icon: <UserOutlined />, label: '学生列表' },
-      { key: '/teacher/invitations', icon: <LinkOutlined />, label: '邀请管理' },
-      { key: '/teacher/applications', icon: <AuditOutlined />, label: '审批队列' },
-    );
-  }
-  if (hasPermission('IMPORT_EXPORT')) {
-    studentSubItems.push(
-      { key: '/teacher/import-tasks', icon: <CloudUploadOutlined />, label: '导入导出任务' },
-    );
-  }
+  // ✅ 处理一级模块切换
+  const handleTopModuleChange = (moduleKey: string) => {
+    setActiveTopModuleKey(moduleKey);
 
-  const menuItems = useMemo(() => {
-    const items: any[] = [
-      { key: '/teacher/dashboard', icon: <DashboardOutlined />, label: '工作台' },
-    ];
-
-    if (hasPermission('QUESTION_BANK')) {
-      items.push({ key: '/teacher/questions', icon: <QuestionCircleOutlined />, label: '题库管理' });
+    // 自动导航到该模块的默认子页面
+    const targetModule = accessibleModules.find(m => m.key === moduleKey);
+    if (targetModule?.defaultSubKey) {
+      navigate(targetModule.defaultSubKey);
     }
+  };
 
-    if (hasPermission('EXAM_MANAGEMENT')) {
-      items.push({ key: '/teacher/exams', icon: <FileTextOutlined />, label: '考试管理' });
-    }
+  // ✅ 渲染顶部Tab导航栏
+  const renderTopNavigation = () => (
+    <Tabs
+      activeKey={activeTopModuleKey}
+      onChange={handleTopModuleChange}
+      type="card"
+      size="middle"
+      style={{
+        marginBottom: 0,
+        background: '#fff',
+        padding: '0 16px',
+      }}
+      items={accessibleModules.map(module => ({
+        key: module.key,
+        label: (
+          <Tooltip title={module.description} placement="bottom">
+            <span>
+              {module.icon} {module.label}
+            </span>
+          </Tooltip>
+        ),
+      }))}
+    />
+  );
 
-    if (studentSubItems.length > 0) {
-      items.push({
-        key: 'student-management',
-        icon: <TeamOutlined />,
-        label: '学生管理',
-        children: studentSubItems,
-      });
-    }
-
-    return items;
-  }, [hasPermission]);
+  // ✅ 渲染左侧二级菜单
+  const renderSideMenu = () => (
+    <Menu
+      theme="dark"
+      mode="inline"
+      selectedKeys={[location.pathname]}
+      items={currentModuleSubItems.map(item => ({
+        key: item.key,
+        icon: item.icon,
+        label: (
+          <span>
+            {item.label}
+            {item.badge && (
+              <Badge
+                count={
+                  typeof item.badge === 'number' ? item.badge :
+                  item.badge === 'dot' ? 'dot' :
+                  <Text style={{ fontSize: 10, color: '#1890ff', marginLeft: 4 }}>
+                    {item.badge}
+                  </Text>
+                }
+                size="small"
+                style={{ marginLeft: 8 }}
+              />
+            )}
+          </span>
+        ),
+      }))}
+      onClick={({ key }) => navigate(key)}
+    />
+  );
 
   const userMenu = {
     items: [
@@ -77,33 +142,79 @@ export function TeacherLayout() {
   };
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} theme="dark">
-        <div style={{ height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
+      {/* ✅ 左侧固定侧边栏 */}
+      <Sider
+        collapsible
+        collapsed={collapsed}
+        onCollapse={setCollapsed}
+        theme="dark"
+        width={220}
+        collapsedWidth={80}
+        style={{ height: '100vh', position: 'fixed', left: 0, top: 0, zIndex: 100 }}
+      >
+        {/* Logo区域 */}
+        <div style={{
+          height: 64,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderBottom: '1px solid rgba(255,255,255,0.1)',
+        }}>
           <Text style={{ color: '#fff', fontSize: collapsed ? 14 : 18, fontWeight: 'bold' }}>
             {collapsed ? '考试' : '考试系统'}
           </Text>
         </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          defaultOpenKeys={location.pathname.startsWith('/teacher/departments') || location.pathname.startsWith('/teacher/students') || location.pathname.startsWith('/teacher/invitations') || location.pathname.startsWith('/teacher/applications') || location.pathname.startsWith('/teacher/import-tasks') ? ['student-management'] : undefined}
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-        />
+
+        {/* ✅ 动态加载的二级菜单 */}
+        {renderSideMenu()}
       </Sider>
-      <Layout>
-        <Header style={{ background: '#fff', padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
-          <Text strong style={{ fontSize: 16 }}>教师端</Text>
-          <Dropdown menu={userMenu} placement="bottomRight">
-            <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Avatar size="small" icon={<UserOutlined />} />
-              <Text>{user?.realName || user?.username}</Text>
-            </div>
-          </Dropdown>
+
+      {/* ✅ 右侧主内容区 */}
+      <Layout style={{ marginLeft: collapsed ? 80 : 220, height: '100vh', transition: 'margin-left 0.2s' }}>
+        {/* 顶部Header：用户信息 + 一级模块Tab */}
+        <Header style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 99,
+          background: '#f0f2f5',
+          padding: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+        }}>
+          {/* 第一行：用户信息栏 */}
+          <div style={{
+            height: 48,
+            padding: '0 24px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            borderBottom: '1px solid #e8e8e8',
+          }}>
+            <Text strong style={{ fontSize: 15, color: '#333' }}>教师工作台</Text>
+
+            <Dropdown menu={userMenu} placement="bottomRight">
+              <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Avatar size="small" icon={<UserOutlined />} />
+                <Text style={{ fontSize: 13 }}>{user?.realName || user?.username}</Text>
+              </div>
+            </Dropdown>
+          </div>
+
+          {/* 第二行：一级模块Tab导航 */}
+          {renderTopNavigation()}
         </Header>
-        <Content style={{ margin: 24 }}>
+
+        {/* 内容区 */}
+        <Content style={{
+          margin: 24,
+          overflow: 'auto',
+          background: '#fff',
+          borderRadius: 8,
+          padding: 24,
+          minHeight: 400,
+        }}>
           <Outlet />
         </Content>
       </Layout>
