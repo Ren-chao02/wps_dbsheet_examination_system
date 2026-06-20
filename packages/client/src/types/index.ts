@@ -128,6 +128,9 @@ export interface Exam {
   creator?: { id: string; realName: string } | null;
   paperId?: string | null;
   paper?: { id: string; name: string; totalScore: number; passScore: number | null } | null;
+  batchId?: string | null;
+  batch?: { id: string; name: string } | null;
+  rooms?: { id: string; code: string; name: string; _count?: { students: number } }[];
   examQuestions?: ExamQuestion[];
   _count?: { examQuestions: number; submissions: number };
 }
