@@ -17,6 +17,7 @@ const examSchema = z.object({
   passScore: z.number().int().min(0).nullable().optional(),
   settings: z.record(z.any()).default({}),
   paperId: z.string().uuid().nullable().optional(),
+  batchId: z.string().uuid().nullable().optional(),
 });
 
 const examQuestionSchema = z.object({
@@ -47,6 +48,15 @@ examRouter.get('/', async (req: Request, res: Response) => {
         include: {
           creator: { select: { id: true, realName: true } },
           paper: { select: { id: true, name: true, totalScore: true, passScore: true } },
+          batch: { select: { id: true, name: true } },
+          rooms: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              _count: { select: { students: true } },
+            },
+          },
           _count: { select: { examQuestions: true, submissions: true } },
         },
       }),
@@ -96,7 +106,7 @@ examRouter.post('/', async (req: Request, res: Response) => {
   try {
     const data = examSchema.parse(req.body);
 
-    const { paperId, ...rest } = data;
+    const { paperId, batchId, ...rest } = data;
     const exam = await prisma.exam.create({
       data: {
         ...rest,
@@ -104,6 +114,7 @@ examRouter.post('/', async (req: Request, res: Response) => {
         endTime: data.endTime ? new Date(data.endTime) : null,
         createdBy: req.user!.userId,
         paperId: paperId ?? null,
+        batchId: batchId ?? null,
       },
     });
 
@@ -128,7 +139,7 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
     }
 
     const data = examSchema.parse(req.body);
-    const { paperId, ...rest } = data;
+    const { paperId, batchId, ...rest } = data;
     const updated = await prisma.exam.update({
       where: { id: req.params.id },
       data: {
@@ -136,6 +147,7 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
         startTime: data.startTime ? new Date(data.startTime) : null,
         endTime: data.endTime ? new Date(data.endTime) : null,
         paperId: paperId ?? null,
+        batchId: batchId ?? null,
       },
     });
 
@@ -312,6 +324,31 @@ examRouter.get('/:id/submissions', async (req: Request, res: Response) => {
     });
 
     res.json(submissions);
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// GET /api/exams/:id/room-assignments
+examRouter.get('/:id/room-assignments', async (req: Request, res: Response) => {
+  try {
+    const assignments = await prisma.examRoomStudent.findMany({
+      where: { room: { examId: req.params.id } },
+      include: {
+        room: { select: { id: true, code: true, name: true } },
+        student: { select: { id: true, username: true, realName: true } },
+      },
+    });
+
+    res.json(
+      assignments.map(a => ({
+        studentId: a.studentId,
+        roomId: a.roomId,
+        roomCode: a.room.code,
+        roomName: a.room.name,
+        seatNumber: a.seatNumber,
+      }))
+    );
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
