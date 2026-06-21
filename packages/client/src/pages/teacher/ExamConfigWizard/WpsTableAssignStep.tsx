@@ -6,7 +6,7 @@ import { SaveOutlined, ImportOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/auth';
 
-const { Text, TextArea } = Typography;
+const { Text } = Typography;
 
 interface WpsTableAssignStepProps {
   exam: { id: string; title: string };
@@ -44,7 +44,7 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
         api.get(`/exam-table-assignments/${exam.id}`),
       ]);
 
-      const assignedMap = new Map(
+      const assignedMap = new Map<string, any>(
         (assignmentsRes.data.assignments || []).map((a: any) => [a.studentId, a])
       );
 
@@ -173,7 +173,7 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
                 <Text type="secondary">
                   每行格式：学号/用户名 + 空格/逗号 + 分享链接
                 </Text>
-                <TextArea
+                <Input.TextArea
                   rows={10}
                   value={bulkText}
                   onChange={(e) => setBulkText(e.target.value)}
