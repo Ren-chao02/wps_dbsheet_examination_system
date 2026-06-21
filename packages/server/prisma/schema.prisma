@@ -144,6 +144,12 @@ model User {
   auditLogs            AuditLog[] @relation("AuditOperator") // ✅ Phase 3.2: 审计日志
   notifications        Notification[] @relation("UserNotifications") // ✅ Phase 3.4: 通知消息
   notificationPreference NotificationPreference? @relation("UserNotificationPrefs") // ✅ Phase 3.4: 偏好设置
+  practiceRecords      PracticeRecord[]
+  wrongQuestions       WrongQuestion[]
+  favoriteQuestions    FavoriteQuestion[]
+  questionFeedback     QuestionFeedback[]
+  tableAssignmentsAsStudent  ExamTableAssignment[] @relation("ExamTableAssignmentStudent") // ✅ 作为考生的表格分配
+  tableAssignmentsAsAssigner ExamTableAssignment[] @relation("ExamTableAssignmentAssigner") // ✅ 作为分配人的表格分配
 
   @@map("users")
 }
@@ -221,6 +227,9 @@ model Question {
   examQuestions         ExamQuestion[]
   submissionDetails     SubmissionDetail[]
   paperQuestions        PaperQuestion[]
+  wrongQuestions        WrongQuestion[]
+  favoriteQuestions     FavoriteQuestion[]
+  questionFeedback      QuestionFeedback[]
 
   @@map("questions")
 }
@@ -240,6 +249,7 @@ model Paper {
   creator       User?           @relation("PaperCreator", fields: [createdBy], references: [id])
   paperQuestions PaperQuestion[]
   exams         Exam[]
+  practiceRecords PracticeRecord[]
 
   @@map("papers")
 }
@@ -287,6 +297,7 @@ model Exam {
   rooms         ExamRoom[]          @relation("ExamRooms") // ✅ 新增：该考试的所有考场
   behaviorLogs  StudentBehaviorLog[] @relation("ExamBehavior") // ✅ Phase 3: 行为日志
   behaviorReports BehaviorAnalysisReport[] @relation("ExamReport") // ✅ Phase 3: 分析报告
+  tableAssignments ExamTableAssignment[] @relation("ExamTableAssignments") // ✅ 考试表格分配
 
   @@index([batchId])
   @@map("exams")
@@ -294,17 +305,28 @@ model Exam {
 
 // ✅ 批次管理模型 - 统一管理多场考试的公共参数
 model ExamBatch {
-  id            String       @id @default(uuid()) @db.Uuid
-  name          String       @db.VarChar(256)           // 批次名称（如：2026春季期末考试）
-  description   String?      @db.Text                   // 批次说明
-  examDuration  Int          @map("exam_duration")       // 考试时长（分钟），所有考试统一时长
-  waitingTime   Int          @map("waiting_time")        // 候考时间（分钟）
-  lateTolerance Int          @map("late_tolerance")      // 迟到容忍（分钟）
-  status        BatchStatus  @default(draft)             // 批次状态
-  settings      Json         @default("{}")              // 批次级配置（如：是否允许切屏、是否全屏等）
-  createdBy     String       @map("created_by") @db.Uuid
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
+  id               String       @id @default(uuid()) @db.Uuid
+  name             String       @db.VarChar(256)           // 批次名称（如：2026春季期末考试）
+  description      String?      @db.Text                   // 批次说明
+  examMode         String       @default("unified") @map("exam_mode") @db.VarChar(32) // 考试模式：unified(集中统一) | flexible(随到随考)
+  startTime        DateTime?    @map("start_time")          // 批次开始时间
+  endTime          DateTime?    @map("end_time")            // 批次结束时间
+  examDuration     Int          @map("exam_duration")       // 考试时长（分钟），所有考试统一时长
+  waitingTime      Int          @map("waiting_time")        // 候考时间（分钟）
+  lateTolerance    Int          @map("late_tolerance")      // 迟到容忍（分钟）
+  ipLimitEnabled   Boolean      @default(false) @map("ip_limit_enabled") // 是否启用IP限制
+  allowedIps       Json         @default("[]") @map("allowed_ips") // CIDR白名单列表，如 ["192.168.1.0/24", "10.0.0.5"]
+  freezeMinutes    Int          @default(30) @map("freeze_minutes") // 考生自主交卷后的冻结时间（分钟）
+  exitPolicy       String       @default("finite") @map("exit_policy") @db.VarChar(32) // 中途退出处理：finite(有限续考) | unlimited(无限续考) | none(不可续考)
+  exitMaxCount     Int          @default(10) @map("exit_max_count") // 退出次数上限
+  exitMaxMinutes   Int          @default(20) @map("exit_max_minutes") // 单次退出时间上限（分钟）
+  rulesContent     String?      @map("rules_content") @db.Text // 考试须知内容
+  rulesReadSeconds Int          @default(15) @map("rules_read_seconds") // 考试须知强制阅读时长（秒）
+  status           BatchStatus  @default(draft)             // 批次状态
+  settings         Json         @default("{}")              // 扩展配置
+  createdBy        String       @map("created_by") @db.Uuid
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
 
   // Relations
   creator User    @relation("BatchCreator", fields: [createdBy], references: [id])
@@ -372,7 +394,7 @@ model StudentSubmission {
   id            String           @id @default(uuid()) @db.Uuid
   examId        String           @map("exam_id") @db.Uuid
   studentId     String           @map("student_id") @db.Uuid
-  tableSpaceId  String?          @map("table_space_id") @db.VarChar(256)
+  tableSpaceId  String?          @map("table_space_id") @db.Text
   status        SubmissionStatus @default(pending)
   startedAt     DateTime?        @map("started_at")
   submittedAt   DateTime?        @map("submitted_at")
@@ -794,6 +816,96 @@ model NotificationPreference {
   user          User                 @relation("UserNotificationPrefs", fields: [userId], references: [id])
 
   @@map("notification_preferences")
+}
+
+model PracticeRecord {
+  id          String    @id @default(uuid()) @db.Uuid
+  studentId   String    @map("student_id") @db.Uuid
+  paperId     String    @map("paper_id") @db.Uuid
+  score       Int?
+  maxScore    Int       @map("max_score")
+  passed      Boolean?
+  answers     Json      @default("{}")
+  details     Json?
+  startedAt   DateTime  @map("started_at")
+  submittedAt DateTime? @map("submitted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  student User  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  paper   Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, createdAt])
+  @@index([paperId])
+  @@map("practice_records")
+}
+
+model WrongQuestion {
+  id          String   @id @default(uuid()) @db.Uuid
+  studentId   String   @map("student_id") @db.Uuid
+  questionId  String   @map("question_id") @db.Uuid
+  sourceType  String   @map("source_type")
+  sourceId    String   @map("source_id")
+  wrongCount  Int      @default(1) @map("wrong_count")
+  lastWrongAt DateTime @map("last_wrong_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  student  User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, questionId])
+  @@index([studentId, lastWrongAt])
+  @@map("wrong_questions")
+}
+
+model FavoriteQuestion {
+  id         String   @id @default(uuid()) @db.Uuid
+  studentId  String   @map("student_id") @db.Uuid
+  questionId String   @map("question_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  student  User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, questionId])
+  @@index([studentId, createdAt])
+  @@map("favorite_questions")
+}
+
+model QuestionFeedback {
+  id           String   @id @default(uuid()) @db.Uuid
+  studentId    String   @map("student_id") @db.Uuid
+  questionId   String   @map("question_id") @db.Uuid
+  feedbackType String   @map("feedback_type")
+  content      String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  student  User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, createdAt])
+  @@index([questionId])
+  @@map("question_feedback")
+}
+
+model ExamTableAssignment {
+  id          String   @id @default(uuid()) @db.Uuid
+  examId      String   @map("exam_id") @db.Uuid
+  studentId   String   @map("student_id") @db.Uuid
+  fileId      String   @map("file_id") @db.Text
+  shareUrl    String?  @map("share_url") @db.Text
+  accessToken String?  @map("access_token") @db.Text
+  assignedBy  String   @map("assigned_by") @db.Uuid
+  assignedAt  DateTime @default(now()) @map("assigned_at")
+
+  exam     Exam @relation("ExamTableAssignments", fields: [examId], references: [id], onDelete: Cascade)
+  student  User @relation("ExamTableAssignmentStudent", fields: [studentId], references: [id])
+  assigner User @relation("ExamTableAssignmentAssigner", fields: [assignedBy], references: [id])
+
+  @@unique([examId, studentId])
+  @@unique([examId, fileId])
+  @@index([examId])
+  @@map("exam_table_assignments")
 }
 
 
