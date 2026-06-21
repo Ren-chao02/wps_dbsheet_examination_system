@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { hashString, shuffleWithSeed } from '../utils/helpers';
+import { isIpAllowed } from '../utils/ip-utils';
 
 export const myExamRouter = Router();
 myExamRouter.use(authenticate);
@@ -35,6 +36,7 @@ myExamRouter.get('/', async (req: Request, res: Response) => {
         passScore: true,
         status: true,
         creator: { select: { realName: true } },
+        batch: { select: { name: true } },
         _count: { select: { examQuestions: true } },
       },
     });
@@ -49,8 +51,22 @@ myExamRouter.get('/', async (req: Request, res: Response) => {
 
     const subMap = new Map(submissions.map(s => [s.examId, s]));
 
+    // Get the student's assigned room for each exam
+    const examIds = exams.map(e => e.id);
+    const roomAssignments = await prisma.examRoomStudent.findMany({
+      where: {
+        studentId: req.user!.userId,
+        room: { examId: { in: examIds } },
+      },
+      include: {
+        room: { select: { examId: true, name: true } },
+      },
+    });
+    const roomMap = new Map(roomAssignments.map(r => [r.room.examId, r.room.name]));
+
     res.json(exams.map(exam => ({
       ...exam,
+      roomName: roomMap.get(exam.id) || null,
       mySubmission: subMap.get(exam.id) ? {
         id: subMap.get(exam.id)!.id,
         status: subMap.get(exam.id)!.status,
@@ -82,6 +98,23 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
         status: true,
         settings: true,
         creator: { select: { realName: true } },
+        batch: {
+          select: {
+            name: true,
+            examMode: true,
+            startTime: true,
+            endTime: true,
+            waitingTime: true,
+            lateTolerance: true,
+            ipLimitEnabled: true,
+            freezeMinutes: true,
+            exitPolicy: true,
+            exitMaxCount: true,
+            exitMaxMinutes: true,
+            rulesContent: true,
+            rulesReadSeconds: true,
+          },
+        },
       },
     });
 
@@ -147,6 +180,7 @@ myExamRouter.post('/:id/start', async (req: Request, res: Response) => {
     const exam = await prisma.exam.findUnique({
       where: { id: req.params.id },
       include: {
+        batch: { select: { ipLimitEnabled: true, allowedIps: true } },
         examQuestions: {
           include: { question: true },
           orderBy: { sortOrder: 'asc' },
@@ -159,6 +193,20 @@ myExamRouter.post('/:id/start', async (req: Request, res: Response) => {
     }
     if (exam.status !== 'published' && exam.status !== 'in_progress') {
       return res.status(400).json({ message: '考试未发布或已结束' });
+    }
+
+    // IP 白名单校验
+    if (exam.batch?.ipLimitEnabled) {
+      const clientIp = ((req.headers['x-forwarded-for'] as string) || req.ip || req.socket.remoteAddress || '')
+        .split(',')[0]
+        .trim();
+      const allowed = isIpAllowed(clientIp, (exam.batch.allowedIps as string[]) || []);
+      if (!allowed) {
+        return res.status(403).json({
+          message: '当前 IP 不在允许访问范围内，请联系管理员确认白名单配置',
+          clientIp,
+        });
+      }
     }
 
     // Get sorted questions
@@ -221,6 +269,102 @@ myExamRouter.post('/:id/start', async (req: Request, res: Response) => {
     res.json({
       submission,
       questions: examQuestions.map(eq => ({
+        ...eq.question,
+        scoreOverride: eq.scoreOverride,
+        sortOrder: eq.sortOrder,
+      })),
+    });
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// POST /api/my-exams/:id/start-wps — 开始 WPS 实操考试
+myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
+  try {
+    const exam = await prisma.exam.findUnique({
+      where: { id: req.params.id },
+      include: { examQuestions: { include: { question: true }, orderBy: { sortOrder: 'asc' } } },
+    });
+
+    if (!exam) return res.status(404).json({ message: '考试不存在' });
+    if (exam.status !== 'published' && exam.status !== 'in_progress') {
+      return res.status(400).json({ message: '考试未发布或已结束' });
+    }
+
+    const settings = (exam.settings || {}) as any;
+    if (!settings.requiresWpsTable) {
+      return res.status(400).json({ message: '该考试不是 WPS 实操考试' });
+    }
+
+    const assignment = await prisma.examTableAssignment.findUnique({
+      where: {
+        examId_studentId: {
+          examId: req.params.id,
+          studentId: req.user!.userId,
+        },
+      },
+    });
+
+    if (!assignment) {
+      return res.status(400).json({ message: '尚未分配 WPS 表格，请联系教师' });
+    }
+
+    let submission = await prisma.studentSubmission.findUnique({
+      where: {
+        examId_studentId: {
+          examId: req.params.id,
+          studentId: req.user!.userId,
+        },
+      },
+    });
+
+    const tableSpaceId = `${assignment.fileId}:${assignment.accessToken || ''}`;
+
+    if (submission) {
+      submission = await prisma.studentSubmission.update({
+        where: { id: submission.id },
+        data: {
+          status: 'in_progress',
+          startedAt: new Date(),
+          tableSpaceId,
+        },
+      });
+    } else {
+      submission = await prisma.studentSubmission.create({
+        data: {
+          examId: req.params.id,
+          studentId: req.user!.userId,
+          status: 'in_progress',
+          startedAt: new Date(),
+          tableSpaceId,
+          details: {
+            create: exam.examQuestions.map(eq => ({ questionId: eq.questionId })),
+          },
+        },
+      });
+      await prisma.examSession.create({
+        data: {
+          submissionId: submission.id,
+          studentId: req.user!.userId,
+          examId: req.params.id,
+          ipAddress: req.ip || req.socket.remoteAddress || null,
+        },
+      });
+    }
+
+    res.json({
+      submission,
+      shareUrl: assignment.shareUrl,
+      fileId: assignment.fileId,
+      exam: {
+        id: exam.id,
+        title: exam.title,
+        durationMinutes: exam.durationMinutes,
+        totalScore: exam.totalScore,
+        passScore: exam.passScore,
+      },
+      questions: exam.examQuestions.map(eq => ({
         ...eq.question,
         scoreOverride: eq.scoreOverride,
         sortOrder: eq.sortOrder,
