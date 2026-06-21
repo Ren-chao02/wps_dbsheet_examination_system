@@ -7,11 +7,17 @@ import { StudentLayout } from './components/layout/StudentLayout';
 import { TeacherLayout } from './components/layout/TeacherLayout';
 import { AdminLayout } from './components/layout/AdminLayout';
 import { StudentDashboard } from './pages/student/Dashboard';
+import { StudentHome } from './pages/student/Home';
 import { PracticeList } from './pages/student/PracticeList';
 import { PracticeDoing } from './pages/student/PracticeDoing';
 import { ExamIntroPage } from './pages/student/ExamIntro';
 import { ExamDoingPage } from './pages/student/ExamDoing';
 import { ExamResultPage } from './pages/student/ExamResult';
+import { ExamEnvironmentCheck } from './pages/student/ExamEnvironmentCheck';
+import { ExamEntrySteps } from './pages/student/ExamEntrySteps';
+import { WpsExamDoingPage } from './pages/student/WpsExamDoing';
+import { ExamHistory } from './pages/student/ExamHistory';
+import { FavoriteQuestions } from './pages/student/FavoriteQuestions';
 import { TeacherDashboard } from './pages/teacher/Dashboard';
 import { QuestionBank } from './pages/teacher/QuestionBank';
 import { QuestionEditor } from './pages/teacher/QuestionEditor';
@@ -47,6 +53,7 @@ import AccountManagement from './pages/admin/AccountManagement';
 import AccountImport from './pages/admin/AccountImport';
 import SystemImportTaskList from './pages/admin/SystemImportTaskList';
 import CacheManagement from './pages/admin/CacheManagement';
+import { WpsTokenManager } from './pages/teacher/WpsTokenManager';
 
 function PrivateRoute({ children, roles, permissions }: { children: React.ReactNode; roles?: string[]; permissions?: string[] }) {
   const { isAuthenticated, isLoading, user, hasPermission } = useAuthStore();
@@ -90,13 +97,19 @@ export default function App() {
       <Route path="/student" element={
         <PrivateRoute roles={['student']}><StudentLayout /></PrivateRoute>
       }>
-        <Route index element={<Navigate to="dashboard" replace />} />
+        <Route index element={<Navigate to="home" replace />} />
+        <Route path="home" element={<StudentHome />} />
         <Route path="dashboard" element={<StudentDashboard />} />
         <Route path="practice" element={<PracticeList />} />
         <Route path="practice/:paperId" element={<PracticeDoing />} />
         <Route path="exam/:id" element={<ExamIntroPage />} />
+        <Route path="exam/:id/check" element={<ExamEnvironmentCheck />} />
+        <Route path="exam/:id/entry" element={<ExamEntrySteps />} />
+        <Route path="exam/:id/wps" element={<WpsExamDoingPage />} />
         <Route path="exam/:id/doing" element={<ExamDoingPage />} />
         <Route path="exam/:id/result" element={<ExamResultPage />} />
+        <Route path="history" element={<ExamHistory />} />
+        <Route path="favorites" element={<FavoriteQuestions />} />
       </Route>
 
       {/* Teacher */}
@@ -129,6 +142,7 @@ export default function App() {
         <Route path="invitations" element={<InvitationManagement />} />
         <Route path="applications" element={<ApplicationReview />} />
         <Route path="import-tasks" element={<ImportTaskList />} />
+        <Route path="wps-token" element={<WpsTokenManager />} />
       </Route>
 
       {/* Public - Student Join */}
