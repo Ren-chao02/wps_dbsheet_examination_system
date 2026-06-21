@@ -47,6 +47,7 @@ interface WizardData {
     durationMinutes: number;
     passScore?: number;
     shuffleQuestions: boolean;
+    requiresWpsTable: boolean;
   };
   // Step 2: 试卷绑定
   paperInfo: {
@@ -82,6 +83,7 @@ const INITIAL_DATA: WizardData = {
     mode: 'exam',
     durationMinutes: 60,
     shuffleQuestions: false,
+    requiresWpsTable: false,
   },
   paperInfo: {
     questionsCount: 0,
@@ -249,6 +251,7 @@ export function ExamWizard() {
         ...wizardData.basicInfo,
         batchId: wizardData.basicInfo.batchId || null,
         paperId: wizardData.paperInfo.paperId || null,
+        settings: { requiresWpsTable: wizardData.basicInfo.requiresWpsTable },
       };
 
       const examRes = await api.post('/exams', examPayload);
