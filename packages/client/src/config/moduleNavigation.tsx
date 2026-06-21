@@ -38,6 +38,8 @@ import {
 
   // 系统管理
   SafetyCertificateOutlined,
+  KeyOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons';
 
 // ✅ 子功能项接口定义
@@ -109,11 +111,11 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 🔔 模块3: 监考管理 (Invigilation Management) ★核心★
+  // 🔔 模块3: 考务管理 (Exam Management) ★核心★
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   {
     key: 'invigilation',
-    label: '监考管理',
+    label: '考务管理',
     icon: <MonitorOutlined />,
     permission: 'EXAM_MANAGEMENT', // 需要考试管理权限
     subItems: [
@@ -286,6 +288,26 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
     ],
     defaultSubKey: '/teacher/departments',
     description: '学生信息维护与批量管理',
+  },
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ⚙️ 模块6: 缓存管理 (Cache & Token)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  {
+    key: 'cache',
+    label: '缓存管理',
+    icon: <DatabaseOutlined />,
+    subItems: [
+      {
+        key: '/teacher/wps-token',
+        label: 'WPS Token 管理',
+        icon: <KeyOutlined />,
+        permission: 'EXAM_MANAGEMENT',
+        description: '查看 WPS access_token 剩余有效期并手动刷新',
+      },
+    ],
+    defaultSubKey: '/teacher/wps-token',
+    description: '系统缓存与外部 Token 管理',
   },
 ];
 
