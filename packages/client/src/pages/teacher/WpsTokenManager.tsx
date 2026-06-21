@@ -236,103 +236,109 @@ export function WpsTokenManager() {
         </Text>
       </div>
 
-      {!wpsToken ? (
-        <Card>
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description="暂无 WPS access_token"
-          >
-            <Space direction="vertical" style={{ width: '100%' }} align="center">
-              <Text type="secondary">
-                点击下方的"前往 WPS 授权"按钮，完成 OAuth2 授权后即可获取 access_token。
-              </Text>
-              <Button
-                type="primary"
-                icon={<LinkOutlined />}
-                size="large"
-                onClick={handleAuthorize}
-              >
-                前往 WPS 授权
-              </Button>
-            </Space>
-          </Empty>
-        </Card>
-      ) : (
-        <Space direction="vertical" style={{ width: '100%' }} size="large">
-          <Row gutter={[16, 16]}>
-            <Col xs={24} lg={12}>
-              <Card title="access_token 剩余有效期">
-                <Statistic
-                  value={formatRemainingTime(remainingSeconds)}
-                  valueStyle={{ color: remainingSeconds <= 600 ? '#ff4d4f' : '#52c41a', fontSize: 32 }}
-                  prefix={<ClockCircleOutlined />}
-                />
-                <Progress
-                  percent={Math.max(0, Math.min(100, (remainingSeconds / 7200) * 100))}
-                  status={remainingSeconds <= 600 ? 'exception' : 'success'}
-                  showInfo={false}
-                  style={{ marginTop: 16 }}
-                />
-                <div style={{ marginTop: 12 }}>
-                  <Tag color={statusColor}>{statusText}</Tag>
-                  <Text type="secondary" style={{ marginLeft: 12 }}>
-                    总有效期 2 小时
-                  </Text>
-                </div>
-              </Card>
-            </Col>
-            <Col xs={24} lg={12}>
-              <Card title="refresh_token 有效期">
-                <Statistic
-                  value={wpsToken.refreshExpiresAt
-                    ? formatRemainingTime(Math.floor((wpsToken.refreshExpiresAt - Date.now()) / 1000))
-                    : '未知'}
-                  valueStyle={{ fontSize: 32 }}
-                  prefix={<SafetyOutlined />}
-                />
-                <Paragraph style={{ marginTop: 16, marginBottom: 0 }}>
-                  <Text type="secondary">
-                    refresh_token 通常有效期为 30 天，过期后需要重新授权。
-                  </Text>
-                </Paragraph>
-              </Card>
-            </Col>
-          </Row>
-
-          <Card title="当前 access_token">
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <Input.Password
-                value={wpsToken.accessToken}
-                visibilityToggle={false}
-                readOnly
-                addonBefore={<KeyOutlined />}
-                suffix={
-                  <Space>
-                    <Button
-                      type="text"
-                      icon={showToken ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-                      onClick={() => setShowToken(s => !s)}
-                      title={showToken ? '隐藏' : '显示'}
-                    />
-                    <Button
-                      type="text"
-                      icon={<CopyOutlined />}
-                      onClick={handleCopyToken}
-                      title="复制"
-                    />
-                  </Space>
-                }
-              />
-              {showToken && (
-                <Paragraph copyable={{ text: wpsToken.accessToken }}>
-                  <Text code style={{ wordBreak: 'break-all' }}>{wpsToken.accessToken}</Text>
-                </Paragraph>
-              )}
-            </Space>
+      <Space direction="vertical" style={{ width: '100%' }} size="large">
+        {!wpsToken && (
+          <Card>
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="暂无 WPS access_token"
+            >
+              <Space direction="vertical" style={{ width: '100%' }} align="center">
+                <Text type="secondary">
+                  点击下方的"前往 WPS 授权"按钮完成 OAuth2 授权，或点击下方"手动回填 Token"粘贴从 API Explorer 获得的 token。
+                </Text>
+                <Button
+                  type="primary"
+                  icon={<LinkOutlined />}
+                  size="large"
+                  onClick={handleAuthorize}
+                >
+                  前往 WPS 授权
+                </Button>
+              </Space>
+            </Empty>
           </Card>
+        )}
 
-          <Card title="Token 操作" style={{ marginTop: 8 }}>
-            <Space size="middle" wrap>
+        {wpsToken && (
+          <>
+            <Row gutter={[16, 16]}>
+              <Col xs={24} lg={12}>
+                <Card title="access_token 剩余有效期">
+                  <Statistic
+                    value={formatRemainingTime(remainingSeconds)}
+                    valueStyle={{ color: remainingSeconds <= 600 ? '#ff4d4f' : '#52c41a', fontSize: 32 }}
+                    prefix={<ClockCircleOutlined />}
+                  />
+                  <Progress
+                    percent={Math.max(0, Math.min(100, (remainingSeconds / 7200) * 100))}
+                    status={remainingSeconds <= 600 ? 'exception' : 'success'}
+                    showInfo={false}
+                    style={{ marginTop: 16 }}
+                  />
+                  <div style={{ marginTop: 12 }}>
+                    <Tag color={statusColor}>{statusText}</Tag>
+                    <Text type="secondary" style={{ marginLeft: 12 }}>
+                      总有效期 2 小时
+                    </Text>
+                  </div>
+                </Card>
+              </Col>
+              <Col xs={24} lg={12}>
+                <Card title="refresh_token 有效期">
+                  <Statistic
+                    value={wpsToken.refreshExpiresAt
+                      ? formatRemainingTime(Math.floor((wpsToken.refreshExpiresAt - Date.now()) / 1000))
+                      : '未知'}
+                    valueStyle={{ fontSize: 32 }}
+                    prefix={<SafetyOutlined />}
+                  />
+                  <Paragraph style={{ marginTop: 16, marginBottom: 0 }}>
+                    <Text type="secondary">
+                      refresh_token 通常有效期为 30 天，过期后需要重新授权。
+                    </Text>
+                  </Paragraph>
+                </Card>
+              </Col>
+            </Row>
+
+            <Card title="当前 access_token">
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Input.Password
+                  value={wpsToken.accessToken}
+                  visibilityToggle={false}
+                  readOnly
+                  addonBefore={<KeyOutlined />}
+                  suffix={
+                    <Space>
+                      <Button
+                        type="text"
+                        icon={showToken ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                        onClick={() => setShowToken(s => !s)}
+                        title={showToken ? '隐藏' : '显示'}
+                      />
+                      <Button
+                        type="text"
+                        icon={<CopyOutlined />}
+                        onClick={handleCopyToken}
+                        title="复制"
+                      />
+                    </Space>
+                  }
+                />
+                {showToken && (
+                  <Paragraph copyable={{ text: wpsToken.accessToken }}>
+                    <Text code style={{ wordBreak: 'break-all' }}>{wpsToken.accessToken}</Text>
+                  </Paragraph>
+                )}
+              </Space>
+            </Card>
+          </>
+        )}
+
+        <Card title="Token 操作" style={{ marginTop: 8 }}>
+          <Space size="middle" wrap>
+            {wpsToken && (
               <Button
                 type="primary"
                 icon={<ReloadOutlined />}
@@ -342,126 +348,130 @@ export function WpsTokenManager() {
               >
                 刷新 access_token
               </Button>
-              <Button
-                icon={<ExperimentOutlined />}
-                onClick={handleOpenApiExplorer}
-                size="large"
+            )}
+            <Button
+              icon={<ExperimentOutlined />}
+              onClick={handleOpenApiExplorer}
+              size="large"
+            >
+              在 API Explorer 刷新
+            </Button>
+            <Button
+              icon={<SaveOutlined />}
+              onClick={() => setManualFormVisible(v => !v)}
+              size="large"
+            >
+              手动回填 Token
+            </Button>
+            {wpsToken ? (
+              <>
+                <Button
+                  icon={<LinkOutlined />}
+                  onClick={handleAuthorize}
+                  size="large"
+                >
+                  重新授权
+                </Button>
+                <Button
+                  danger
+                  onClick={handleClear}
+                  size="large"
+                >
+                  清除本地缓存
+                </Button>
+              </>
+            ) : null}
+          </Space>
+        </Card>
+
+        {manualFormVisible && (
+          <Card title="手动回填 Token">
+            <Alert
+              type="info"
+              showIcon
+              message="从 WPS API Explorer 获得新 token 后，可在此回填到系统。"
+              style={{ marginBottom: 16 }}
+            />
+            <Form
+              form={manualForm}
+              layout="vertical"
+              onFinish={handleManualUpdate}
+              initialValues={{ expiresIn: 7200, refreshExpiresIn: 2592000 }}
+            >
+              <Form.Item
+                name="accessToken"
+                label="access_token"
+                rules={[{ required: true, message: '请输入 access_token' }]}
               >
-                在 API Explorer 刷新
-              </Button>
-              <Button
-                icon={<SaveOutlined />}
-                onClick={() => setManualFormVisible(v => !v)}
-                size="large"
+                <Input.TextArea rows={3} placeholder="从 API Explorer 复制 access_token" />
+              </Form.Item>
+              <Form.Item
+                name="refreshToken"
+                label="refresh_token（可选）"
               >
-                手动回填 Token
-              </Button>
-              <Button
-                icon={<LinkOutlined />}
-                onClick={handleAuthorize}
-                size="large"
-              >
-                重新授权
-              </Button>
-              <Button
-                danger
-                onClick={handleClear}
-                size="large"
-              >
-                清除本地缓存
-              </Button>
-            </Space>
+                <Input.TextArea rows={3} placeholder="不填则保留当前 refresh_token" />
+              </Form.Item>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item
+                    name="expiresIn"
+                    label="有效期（秒）"
+                    rules={[{ required: true, message: '请输入有效期' }]}
+                  >
+                    <Input type="number" placeholder="7200" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    name="refreshExpiresIn"
+                    label="refresh_token 有效期（秒，可选）"
+                  >
+                    <Input type="number" placeholder="2592000" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Form.Item>
+                <Space>
+                  <Button type="primary" htmlType="submit">
+                    保存到系统
+                  </Button>
+                  <Button onClick={() => setManualFormVisible(false)}>
+                    取消
+                  </Button>
+                </Space>
+              </Form.Item>
+            </Form>
           </Card>
+        )}
 
-          {manualFormVisible && (
-            <Card title="手动回填 Token">
-              <Alert
-                type="info"
-                showIcon
-                message="从 WPS API Explorer 获得新 token 后，可在此回填到系统。"
-                style={{ marginBottom: 16 }}
-              />
-              <Form
-                form={manualForm}
-                layout="vertical"
-                onFinish={handleManualUpdate}
-                initialValues={{ expiresIn: 7200, refreshExpiresIn: 2592000 }}
-              >
-                <Form.Item
-                  name="accessToken"
-                  label="access_token"
-                  rules={[{ required: true, message: '请输入 access_token' }]}
-                >
-                  <Input.TextArea rows={3} placeholder="从 API Explorer 复制 access_token" />
-                </Form.Item>
-                <Form.Item
-                  name="refreshToken"
-                  label="refresh_token（可选）"
-                >
-                  <Input.TextArea rows={3} placeholder="不填则保留当前 refresh_token" />
-                </Form.Item>
-                <Row gutter={16}>
-                  <Col span={12}>
-                    <Form.Item
-                      name="expiresIn"
-                      label="有效期（秒）"
-                      rules={[{ required: true, message: '请输入有效期' }]}
-                    >
-                      <Input type="number" placeholder="7200" />
-                    </Form.Item>
-                  </Col>
-                  <Col span={12}>
-                    <Form.Item
-                      name="refreshExpiresIn"
-                      label="refresh_token 有效期（秒，可选）"
-                    >
-                      <Input type="number" placeholder="2592000" />
-                    </Form.Item>
-                  </Col>
-                </Row>
-                <Form.Item>
-                  <Space>
-                    <Button type="primary" htmlType="submit">
-                      保存到系统
-                    </Button>
-                    <Button onClick={() => setManualFormVisible(false)}>
-                      取消
-                    </Button>
-                  </Space>
-                </Form.Item>
-              </Form>
-            </Card>
-          )}
+        {wpsToken && remainingSeconds <= 600 && remainingSeconds > 0 && (
+          <Alert
+            message="access_token 即将过期"
+            description="Token 剩余有效期不足 10 分钟，建议立即刷新以避免接口调用失败。"
+            type="warning"
+            showIcon
+            action={
+              <Button type="primary" danger size="small" loading={refreshing} onClick={handleRefresh}>
+                立即刷新
+              </Button>
+            }
+          />
+        )}
 
-          {remainingSeconds <= 600 && remainingSeconds > 0 && (
-            <Alert
-              message="access_token 即将过期"
-              description="Token 剩余有效期不足 10 分钟，建议立即刷新以避免接口调用失败。"
-              type="warning"
-              showIcon
-              action={
-                <Button type="primary" danger size="small" loading={refreshing} onClick={handleRefresh}>
-                  立即刷新
-                </Button>
-              }
-            />
-          )}
-
-          {remainingSeconds <= 0 && (
-            <Alert
-              message="access_token 已过期"
-              description="当前 Token 已失效，请刷新或重新授权。"
-              type="error"
-              showIcon
-              action={
-                <Button type="primary" danger size="small" loading={refreshing} onClick={handleRefresh}>
-                  立即刷新
-                </Button>
-              }
-            />
-          )}
-        </Space>
-      )}
+        {wpsToken && remainingSeconds <= 0 && (
+          <Alert
+            message="access_token 已过期"
+            description="当前 Token 已失效，请刷新或重新授权。"
+            type="error"
+            showIcon
+            action={
+              <Button type="primary" danger size="small" loading={refreshing} onClick={handleRefresh}>
+                立即刷新
+              </Button>
+            }
+          />
+        )}
+      </Space>
     </div>
   );
 }
