@@ -17,6 +17,7 @@ export function ExamForm() {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
   const [paperQuestions, setPaperQuestions] = useState<PaperQuestion[]>([]);
+  const [existingExam, setExistingExam] = useState<any>(null);
   const isEdit = !!id;
 
   useEffect(() => {
@@ -24,6 +25,7 @@ export function ExamForm() {
       setLoading(true);
       api.get(`/exams/${id}`).then(res => {
         const e = res.data;
+        setExistingExam(e);
         form.setFieldsValue({
           title: e.title,
           description: e.description,
@@ -31,6 +33,7 @@ export function ExamForm() {
           durationMinutes: e.durationMinutes,
           passScore: e.passScore,
           shuffleQuestions: e.settings?.shuffleQuestions || false,
+          requiresWpsTable: e.settings?.requiresWpsTable || false,
           paperId: e.paperId,
         });
         if (e.paperId) {
@@ -65,10 +68,13 @@ export function ExamForm() {
       const payload = {
         ...values,
         settings: {
+          ...(existingExam?.settings || {}),
           shuffleQuestions: values.shuffleQuestions || false,
+          requiresWpsTable: values.requiresWpsTable || false,
         },
       };
       delete payload.shuffleQuestions;
+      delete payload.requiresWpsTable;
       if (isEdit) {
         await api.put(`/exams/${id}`, payload);
         message.success('更新成功');
@@ -140,6 +146,10 @@ export function ExamForm() {
           <Form.Item name="shuffleQuestions" label="随机出卷" valuePropName="checked">
             <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             <span style={{ marginLeft: 8, color: '#999' }}>开启后每位学生看到不同的题目顺序</span>
+          </Form.Item>
+          <Form.Item name="requiresWpsTable" label="WPS 实操考试" valuePropName="checked">
+            <Switch checkedChildren="是" unCheckedChildren="否" />
+            <span style={{ marginLeft: 8, color: '#999' }}>开启后考生将直接进入 WPS 多维表格操作界面</span>
           </Form.Item>
         </Card>
 
