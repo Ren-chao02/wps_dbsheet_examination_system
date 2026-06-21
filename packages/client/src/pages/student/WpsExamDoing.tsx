@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Card, Statistic, Typography, Tag, Modal, message, Spin, Alert, Space } from 'antd';
 import { CheckOutlined, ClockCircleOutlined, WarningOutlined, LinkOutlined } from '@ant-design/icons';
+import { io } from 'socket.io-client';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import type { Question } from '../../types';
@@ -16,17 +17,31 @@ declare global {
 const { Text, Paragraph } = Typography;
 const { Countdown } = Statistic;
 
+function recordBehavior(
+  examId: string | undefined,
+  studentId: string | undefined,
+  behaviorType: string,
+  metadata: Record<string, any> = {}
+) {
+  if (!examId || !studentId) return;
+  api.post('/behaviors/record', { examId, studentId, behaviorType, metadata }).catch(() => {});
+}
+
 export function WpsExamDoingPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const user = useAuthStore(state => state.user);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [deadline, setDeadline] = useState<number | null>(null);
   const [iframeError, setIframeError] = useState(false);
+  const [tabSwitchCount, setTabSwitchCount] = useState(0);
   const sdkRef = useRef<any>(null);
+  const scriptRef = useRef<HTMLScriptElement | null>(null);
   const submittedRef = useRef(false);
+  const socketRef = useRef<any>(null);
 
   useEffect(() => {
     api.post(`/my-exams/${id}/start-wps`).then(res => {
@@ -40,6 +55,15 @@ export function WpsExamDoingPage() {
     }).catch((err) => {
       message.error(err.response?.data?.message || '加载失败');
     }).finally(() => setLoading(false));
+
+    return () => {
+      if (sdkRef.current?.destroy) {
+        try { sdkRef.current.destroy(); } catch {}
+      }
+      if (scriptRef.current && scriptRef.current.parentNode) {
+        scriptRef.current.parentNode.removeChild(scriptRef.current);
+      }
+    };
   }, [id]);
 
   const loadWpsSdk = (shareUrl: string) => {
@@ -50,6 +74,7 @@ export function WpsExamDoingPage() {
       script.async = true;
       script.onload = () => initSdk(shareUrl);
       script.onerror = () => setIframeError(true);
+      scriptRef.current = script;
       document.body.appendChild(script);
     } else {
       initSdk(shareUrl);
@@ -60,8 +85,11 @@ export function WpsExamDoingPage() {
     try {
       const mount = document.getElementById('wps-table-container');
       if (!mount) return;
+      const url = new URL(shareUrl);
+      url.searchParams.set('embed', '1');
+      url.searchParams.set('disablePlugins', 'true');
       sdkRef.current = window.WebOfficeSDK.config({
-        url: `${shareUrl}?embed=1&disablePlugins`,
+        url: url.toString(),
         mount,
         commonOptions: {
           isEnableChangeDocumentTitle: false,
@@ -73,11 +101,54 @@ export function WpsExamDoingPage() {
     }
   };
 
+  useEffect(() => {
+    const socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      socket.emit('exam:join', { examId: id, studentId: user?.id, studentName: user?.realName || user?.username });
+    });
+
+    const heartbeatInterval = setInterval(() => {
+      socket.emit('exam:heartbeat', { examId: id, studentId: user?.id, currentQuestion: currentStep, tabSwitchCount });
+    }, 10000);
+
+    return () => {
+      clearInterval(heartbeatInterval);
+      socket.disconnect();
+    };
+  }, [id, user, currentStep, tabSwitchCount]);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.hidden) {
+        setTabSwitchCount(c => {
+          const newCount = c + 1;
+          api.post(`/my-exams/${id}/heartbeat`, { tabSwitchCount: newCount }).catch(() => {});
+          recordBehavior(id, user?.id, 'TAB_SWITCH', { tabSwitch: { count: newCount } });
+          return newCount;
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [id, user?.id]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      api.post(`/my-exams/${id}/heartbeat`, { tabSwitchCount }).catch(() => {});
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [id, tabSwitchCount]);
+
   const doSubmit = useCallback(async (auto = false) => {
     if (submittedRef.current) return;
     submittedRef.current = true;
     setSubmitting(true);
     try {
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('exam:submit', { examId: id, studentId: user?.id, studentName: user?.realName || user?.username });
+      }
       await api.post(`/my-exams/${id}/submit`);
       message.success(auto ? '考试时间已到，已自动提交' : '提交成功！');
       exitFullscreen();
@@ -88,7 +159,7 @@ export function WpsExamDoingPage() {
     } finally {
       setSubmitting(false);
     }
-  }, [id, navigate]);
+  }, [id, navigate, user]);
 
   const handleTimerFinish = useCallback(() => {
     if (!submittedRef.current) doSubmit(true);
@@ -104,6 +175,13 @@ export function WpsExamDoingPage() {
     });
   };
 
+  const handleFullscreenExit = useCallback(() => {
+    recordBehavior(id, user?.id, 'FULLSCREEN_EXIT', { reason: 'student exited fullscreen' });
+    if (socketRef.current?.connected) {
+      socketRef.current.emit('exam:fullscreen-exit', { examId: id, studentId: user?.id, studentName: user?.realName || user?.username });
+    }
+  }, [id, user?.id, user?.realName, user?.username]);
+
   const openInNewTab = () => {
     if (data?.shareUrl) window.open(data.shareUrl, '_blank');
   };
@@ -115,7 +193,7 @@ export function WpsExamDoingPage() {
   const currentQuestion = questions[currentStep];
 
   return (
-    <FullscreenGuard active={true} onExit={() => {}}>
+    <FullscreenGuard active={true} onExit={handleFullscreenExit}>
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
         {/* Header */}
         <div style={{
@@ -143,6 +221,17 @@ export function WpsExamDoingPage() {
             </Button>
           </Space>
         </div>
+
+        {tabSwitchCount > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            icon={<WarningOutlined />}
+            message={`检测到 ${tabSwitchCount} 次切屏行为，请注意考试纪律`}
+            style={{ marginBottom: 16 }}
+            closable
+          />
+        )}
 
         {/* Main */}
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>

@@ -27,11 +27,7 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [bulkText, setBulkText] = useState('');
-  const { user } = useAuthStore();
-
-  // Try to use the user's cached WPS access token if available in the auth store.
-  // Fallback: leave empty; the backend will reject if absent.
-  const accessToken = (user as any)?.wpsAccessToken || '';
+  const accessToken = useAuthStore(state => state.wpsToken?.accessToken) || '';
 
   useEffect(() => {
     loadData();

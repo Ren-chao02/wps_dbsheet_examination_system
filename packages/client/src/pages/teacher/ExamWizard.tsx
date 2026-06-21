@@ -361,6 +361,12 @@ export function ExamWizard() {
                   开启后每位学生看到不同的题目顺序
                 </Text>
               </Form.Item>
+              <Form.Item name="requiresWpsTable" label="WPS 实操考试" valuePropName="checked">
+                <Switch checkedChildren="是" unCheckedChildren="否" />
+              </Form.Item>
+              <Text type="secondary" style={{ marginLeft: 8 }}>
+                开启后考生将直接进入 WPS 多维表格操作界面，需在配置向导中分配表格
+              </Text>
             </Form>
           </Card>
         );
