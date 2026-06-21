@@ -3,6 +3,7 @@ import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { hashString, shuffleWithSeed } from '../utils/helpers';
 import { isIpAllowed } from '../utils/ip-utils';
+import { gradeSubmission } from '../services/grading-service';
 
 export const myExamRouter = Router();
 myExamRouter.use(authenticate);
@@ -455,6 +456,11 @@ myExamRouter.post('/:id/submit', async (req: Request, res: Response) => {
         status: 'submitted',
         submittedAt: new Date(),
       },
+    });
+
+    // 异步触发自动判分，不阻塞响应
+    gradeSubmission(submission.id).catch(err => {
+      console.error(`[my-exams] 自动判分失败: ${submission.id}`, err);
     });
 
     res.json(updated);
