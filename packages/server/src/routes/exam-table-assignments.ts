@@ -10,7 +10,10 @@ function extractFileId(input: string): string {
   const trimmed = input.trim();
   if (trimmed.startsWith('http')) {
     const match = trimmed.match(/\/l\/([a-zA-Z0-9_-]+)/);
-    return match ? match[1] : trimmed;
+    if (!match) {
+      throw new Error('Invalid share URL');
+    }
+    return match[1];
   }
   return trimmed;
 }
@@ -45,17 +48,30 @@ examTableAssignmentRouter.post('/:examId/bulk', async (req: Request, res: Respon
     const exam = await prisma.exam.findUnique({ where: { id: examId } });
     if (!exam) return res.status(404).json({ message: '考试不存在' });
 
-    const assignments = items.map(item => {
-      const fileId = extractFileId(item.shareUrl);
-      return {
-        examId,
-        studentId: item.studentId,
-        fileId,
-        shareUrl: item.shareUrl.trim(),
-        accessToken: item.accessToken,
-        assignedBy: req.user!.userId,
-      };
-    });
+    let assignments;
+    try {
+      assignments = items.map(item => {
+        const fileId = extractFileId(item.shareUrl);
+        return {
+          examId,
+          studentId: item.studentId,
+          fileId,
+          shareUrl: item.shareUrl.trim(),
+          accessToken: item.accessToken,
+          assignedBy: req.user!.userId,
+        };
+      });
+    } catch {
+      return res.status(400).json({ message: '分享链接格式不正确' });
+    }
+
+    const fileIds = new Set();
+    for (const a of assignments) {
+      if (fileIds.has(a.fileId)) {
+        return res.status(400).json({ message: '表格不能重复分配给多名考生' });
+      }
+      fileIds.add(a.fileId);
+    }
 
     await prisma.examTableAssignment.deleteMany({
       where: {
@@ -64,10 +80,14 @@ examTableAssignmentRouter.post('/:examId/bulk', async (req: Request, res: Respon
       },
     });
 
-    await prisma.examTableAssignment.createMany({
-      data: assignments,
-      skipDuplicates: true,
-    });
+    try {
+      await prisma.examTableAssignment.createMany({ data: assignments });
+    } catch (err: any) {
+      if (err.code === 'P2002') {
+        return res.status(400).json({ message: '表格已被分配给其他考生' });
+      }
+      throw err;
+    }
 
     res.json({ count: assignments.length });
   } catch (err: any) {

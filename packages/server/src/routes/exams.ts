@@ -329,6 +329,47 @@ examRouter.get('/:id/submissions', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/exams/:id/students — 获取考试已分配学生列表
+examRouter.get('/:id/students', authenticate, authorize('teacher', 'admin'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const exam = await prisma.exam.findUnique({
+      where: { id },
+      include: {
+        rooms: {
+          include: {
+            students: {
+              include: {
+                student: {
+                  select: {
+                    id: true,
+                    realName: true,
+                    username: true,
+                    studentId: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!exam) return res.status(404).json({ message: '考试不存在' });
+
+    const studentMap = new Map();
+    for (const room of exam.rooms) {
+      for (const rs of room.students) {
+        studentMap.set(rs.student.id, rs.student);
+      }
+    }
+
+    res.json({ students: Array.from(studentMap.values()) });
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
 // GET /api/exams/:id/room-assignments
 examRouter.get('/:id/room-assignments', async (req: Request, res: Response) => {
   try {

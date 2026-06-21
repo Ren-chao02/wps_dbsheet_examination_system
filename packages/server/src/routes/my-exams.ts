@@ -285,12 +285,29 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
   try {
     const exam = await prisma.exam.findUnique({
       where: { id: req.params.id },
-      include: { examQuestions: { include: { question: true }, orderBy: { sortOrder: 'asc' } } },
+      include: {
+        batch: { select: { ipLimitEnabled: true, allowedIps: true } },
+        examQuestions: { include: { question: true }, orderBy: { sortOrder: 'asc' } },
+      },
     });
 
     if (!exam) return res.status(404).json({ message: '考试不存在' });
     if (exam.status !== 'published' && exam.status !== 'in_progress') {
       return res.status(400).json({ message: '考试未发布或已结束' });
+    }
+
+    // IP 白名单校验
+    if (exam.batch?.ipLimitEnabled) {
+      const clientIp = ((req.headers['x-forwarded-for'] as string) || req.ip || req.socket.remoteAddress || '')
+        .split(',')[0]
+        .trim();
+      const allowed = isIpAllowed(clientIp, (exam.batch.allowedIps as string[]) || []);
+      if (!allowed) {
+        return res.status(403).json({
+          message: '当前 IP 不在允许访问范围内，请联系管理员确认白名单配置',
+          clientIp,
+        });
+      }
     }
 
     const settings = (exam.settings || {}) as any;
