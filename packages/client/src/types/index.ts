@@ -5,7 +5,6 @@ export interface User {
   role: 'admin' | 'teacher' | 'student';
   email: string | null;
   avatarUrl: string | null;
-  wpsId?: string | null;
   systemRoleId?: string | null;
   systemRole?: { roleCode: string; roleName: string } | null;
   permissions?: string[];
@@ -24,6 +23,13 @@ export interface LoginResponse {
   permissions?: string[];
 }
 
+export interface WpsTokenInfo {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number; // access_token 过期时间戳（毫秒）
+  refreshExpiresAt?: number; // refresh_token 过期时间戳（毫秒）
+}
+
 export interface QuestionCategory {
   id: string;
   name: string;
@@ -32,6 +38,8 @@ export interface QuestionCategory {
   level: number;
   createdAt: string;
   children?: QuestionCategory[];
+  statistics?: { totalQuestions: number; publishedQuestions?: number };
+  _childrenCount?: number;
 }
 
 export type QuestionType = 'create_table' | 'add_field' | 'config_view' | 'create_form' | 'comprehensive';
@@ -127,10 +135,33 @@ export interface Exam {
   updatedAt: string;
   creator?: { id: string; realName: string } | null;
   paperId?: string | null;
-  paper?: { id: string; name: string; totalScore: number; passScore: number | null } | null;
+  paper?: { id: string; name: string; totalScore: number; passScore: number | null; _count?: { paperQuestions: number } } | null;
   batchId?: string | null;
-  batch?: { id: string; name: string } | null;
-  rooms?: { id: string; code: string; name: string; _count?: { students: number } }[];
+  batch?: {
+    id?: string;
+    name: string;
+    status?: string;
+    startTime?: string;
+    endTime?: string;
+    examMode?: string;
+    examDuration?: number;
+    waitingTime?: number;
+    lateTolerance?: number;
+    ipLimitEnabled?: boolean;
+    freezeMinutes?: number;
+    exitPolicy?: string;
+    exitMaxCount?: number;
+    exitMaxMinutes?: number;
+    rulesContent?: string;
+    rulesReadSeconds?: number;
+  } | null;
+  assignments?: {
+    id: string;
+    roomId: string;
+    status: string;
+    room: { id: string; code: string; name: string };
+    _count?: { students: number };
+  }[];
   examQuestions?: ExamQuestion[];
   _count?: { examQuestions: number; submissions: number };
 }
@@ -188,6 +219,19 @@ export interface VerificationResult {
   errorMessage: string | null;
   needsReview: boolean;
   verifiedAt: string;
+}
+
+/** 规则判分结果（来自规则引擎，与 server RuleResult 一致） */
+export interface RuleResult {
+  ruleId: string;
+  action: string;
+  passed: boolean;
+  score: number;
+  maxScore: number;
+  expected: any;
+  actual: any;
+  errorMessage?: string;
+  needsReview: boolean;
 }
 
 export interface PaginatedResponse<T> {
