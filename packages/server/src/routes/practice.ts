@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
+import { KingsoftAdapter } from '../engine/adapters/kingsoft-adapter';
+import { gradePracticeRecord } from '../services/practice-grading-service';
 
 export const practiceRouter = Router();
 practiceRouter.use(authenticate);
@@ -103,6 +105,128 @@ practiceRouter.get('/questions/catalog', async (_req: Request, res: Response) =>
   }
 });
 
+// POST /api/practice/start — 抽题 + 重置文件 + 建记录
+practiceRouter.post('/start', async (req: Request, res: Response) => {
+  try {
+    const { primaryCategoryId, secondaryCategoryId, difficulty, count } = startSchema.parse(req.body);
+    const studentId = req.user!.userId;
+
+    // 1. 检查练习文件注册
+    const assignment = await prisma.practiceTableAssignment.findUnique({
+      where: { studentId },
+    });
+    if (!assignment) {
+      return res.status(400).json({ message: '尚未分配练习表格，请联系教师注册' });
+    }
+
+    // 2. 抽题
+    const where: any = { status: 'published' };
+    if (primaryCategoryId) where.primaryCategoryId = primaryCategoryId;
+    if (secondaryCategoryId) where.secondaryCategoryId = secondaryCategoryId;
+    if (difficulty) where.difficulty = difficulty;
+
+    const pool = await prisma.question.findMany({
+      where,
+      select: { id: true, title: true, description: true, type: true, difficulty: true, score: true, answerRules: true, analysis: true, hints: true },
+    });
+
+    if (pool.length === 0) {
+      return res.status(400).json({ message: '当前筛选条件下无可用题目，请放宽条件' });
+    }
+
+    // 随机排序取前 count 条
+    const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, Math.min(count, pool.length));
+    const questionsSnapshot = shuffled.map((q, i) => ({
+      questionId: q.id,
+      score: q.score,
+      sortOrder: i,
+    }));
+    const maxScore = shuffled.reduce((sum, q) => sum + q.score, 0);
+
+    // 3. 重置练习文件（失败则不建 record，直接报错）
+    // 写操作需要 v3 鉴权；accessToken 为空时无法重置
+    if (!assignment.accessToken) {
+      return res.status(400).json({ message: '练习文件未配置 access_token，无法重置，请联系教师' });
+    }
+    const adapter = new KingsoftAdapter(
+      assignment.fileId,
+      assignment.accessToken,
+      undefined,
+      'v3',
+    );
+    try {
+      await adapter.resetFile();
+    } catch (err: any) {
+      console.error('Practice start resetFile failed:', err);
+      return res.status(500).json({ message: '练习文件重置失败，请重试' });
+    }
+
+    // 4. 重置成功后建 PracticeRecord
+    const tableSpaceId = `${assignment.fileId}:${assignment.accessToken}`;
+
+    const record = await prisma.practiceRecord.create({
+      data: {
+        studentId,
+        paperId: null,
+        questions: questionsSnapshot as any,
+        tableSpaceId,
+        status: 'in_progress',
+        maxScore,
+        startedAt: new Date(),
+      },
+    });
+
+    res.json({
+      recordId: record.id,
+      questions: shuffled.map((q, i) => ({
+        questionId: q.id,
+        sortOrder: i,
+        title: q.title,
+        description: q.description,
+        type: q.type,
+        difficulty: q.difficulty,
+        score: q.score,
+        hints: q.hints,
+      })),
+      maxScore,
+      shareUrl: assignment.shareUrl,
+    });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ message: '参数错误', errors: err.errors });
+    }
+    console.error('Practice start error:', err);
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// POST /api/practice/:recordId/submit — 提交练习并即时判分
+practiceRouter.post('/:recordId/submit', async (req: Request, res: Response) => {
+  try {
+    const { recordId } = req.params;
+    const studentId = req.user!.userId;
+
+    // 校验归属
+    const record = await prisma.practiceRecord.findUnique({
+      where: { id: recordId },
+      select: { id: true, studentId: true, status: true },
+    });
+    if (!record) {
+      return res.status(404).json({ message: '练习记录不存在' });
+    }
+    if (record.studentId !== studentId) {
+      return res.status(403).json({ message: '无权操作他人练习记录' });
+    }
+
+    const result = await gradePracticeRecord(recordId);
+    res.json(result);
+  } catch (err: any) {
+    console.error('Practice submit error:', err);
+    // 判分失败保持 in_progress，学生可重新提交
+    res.status(500).json({ message: err.message || '判分失败，请重试' });
+  }
+});
+
 // POST /api/practice/submit — 提交练习并持久化记录
 practiceRouter.post('/submit', async (req: Request, res: Response) => {
   try {
@@ -193,18 +317,19 @@ practiceRouter.post('/submit', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/practice/history — 练习历史
+// GET /api/practice/history — 练习历史（仅 graded）
 practiceRouter.get('/history', async (req: Request, res: Response) => {
   try {
     const records = await prisma.practiceRecord.findMany({
-      where: { studentId: req.user!.userId },
-      include: {
-        paper: { select: { id: true, name: true, totalScore: true, passScore: true } },
+      where: { studentId: req.user!.userId, status: 'graded' },
+      select: {
+        id: true, status: true, score: true, maxScore: true, passed: true,
+        startedAt: true, submittedAt: true, createdAt: true,
+        paper: { select: { id: true, name: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
-
     res.json(records);
   } catch {
     res.status(500).json({ message: '服务器错误' });
