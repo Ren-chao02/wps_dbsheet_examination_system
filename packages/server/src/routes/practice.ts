@@ -27,13 +27,13 @@ export const feedbackSchema = z.object({
   content: z.string().min(1),
 });
 
-const assignmentSchema = z.object({
+export const assignmentSchema = z.object({
   fileId: z.string().min(1),
   shareUrl: z.string().optional(),
   accessToken: z.string().optional(),
 });
 
-const startSchema = z.object({
+export const startSchema = z.object({
   primaryCategoryId: z.string().uuid().optional(),
   secondaryCategoryId: z.string().uuid().optional(),
   difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
