@@ -1,234 +1,347 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Button, Steps, message, Spin, Space, Tag, Modal } from 'antd';
-import { ArrowLeftOutlined, CheckCircleOutlined, ClockCircleOutlined, SendOutlined } from '@ant-design/icons';
-import api from '../../services/api';
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import {
+  Button, Card, Typography, Tag, message, Spin, Alert, Space, Result, List, Empty,
+} from 'antd';
+import {
+  ArrowLeftOutlined, CheckOutlined, LinkOutlined, ReloadOutlined, RightOutlined,
+} from '@ant-design/icons';
+import { practiceApi } from '../../services/api';
+import type { RuleResult } from '../../types';
+
+const { Text, Title, Paragraph } = Typography;
 
 interface PracticeQuestion {
-  id: string;
-  questionId: string;
-  sortOrder: number;
-  score: number;
-  question: {
-    id: string;
-    title: string;
-    description: string | null;
-    type: string;
-    difficulty: string;
-    score: number;
-    hints: string | null;
-  };
+  questionId: string; sortOrder: number; title: string; description: string;
+  type: string; difficulty: string; score: number; hints: string | null;
 }
 
+interface StartPayload {
+  recordId: string;
+  questions: PracticeQuestion[];
+  maxScore: number;
+  shareUrl: string | null;
+}
+
+interface QuestionResult {
+  questionId: string;
+  questionTitle: string;
+  difficulty: string;
+  type: string;
+  score: number;
+  maxScore: number;
+  isCorrect: boolean;
+  ruleResults: RuleResult[];
+  analysis: string | null;
+}
+
+interface GradingResult {
+  recordId: string;
+  score: number;
+  maxScore: number;
+  passed: boolean;
+  details: QuestionResult[];
+}
+
+const difficultyLabels: Record<string, { label: string; color: string }> = {
+  easy: { label: '简单', color: 'success' },
+  medium: { label: '中等', color: 'warning' },
+  hard: { label: '困难', color: 'error' },
+};
+
+const typeLabels: Record<string, string> = {
+  create_table: '建表',
+  add_field: '加字段',
+  config_view: '配视图',
+  create_form: '建表单',
+  comprehensive: '综合',
+};
+
 export function PracticeDoing() {
-  const { paperId } = useParams<{ paperId: string }>();
+  const { recordId } = useParams<{ recordId: string }>();
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
+  const location = useLocation();
+  const payload = (location.state as StartPayload | null);
+
+  const [questions] = useState<PracticeQuestion[]>(payload?.questions || []);
+  const [shareUrl, setShareUrl] = useState<string | null>(payload?.shareUrl || null);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [loading, setLoading] = useState(!payload);
   const [submitting, setSubmitting] = useState(false);
-  const [paperName, setPaperName] = useState('');
-  const [questions, setQuestions] = useState<PracticeQuestion[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, any>>({});
-  const [startTime] = useState(new Date());
-  const [showResult, setShowResult] = useState(false);
-  const [resultData, setResultData] = useState<any>(null);
+  const [result, setResult] = useState<GradingResult | null>(null);
+  const [iframeError, setIframeError] = useState(false);
+  const [iframeLoaded, setIframeLoaded] = useState(false);
 
+  // 若无 state（如刷新页面），仅能恢复 shareUrl；questions 快照需后端补 GET /practice/:recordId 接口
   useEffect(() => {
-    if (!paperId) return;
-    api.get(`/papers/${paperId}`).then(res => {
-      setPaperName(res.data.name);
-      if (res.data.paperQuestions) {
-        setQuestions(res.data.paperQuestions);
+    if (payload) return;
+    (async () => {
+      try {
+        const assignment = await practiceApi.getAssignment();
+        setShareUrl(assignment?.shareUrl || null);
+        message.warning('刷新后题目无法恢复，请返回重新开练');
+      } catch {
+        message.error('加载失败');
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
-    }).catch(() => {
-      message.error('加载试卷失败');
-      setLoading(false);
-    });
-  }, [paperId]);
+    })();
+  }, [payload]);
 
-  const currentQ = questions[currentIndex];
-
-  const handleAnswerChange = (questionId: string, answer: any) => {
-    setAnswers(prev => ({ ...prev, [questionId]: answer }));
-  };
+  const iframeUrl = shareUrl ? `${shareUrl}${shareUrl.includes('?') ? '&' : '?'}embed=1` : '';
 
   const handleSubmit = async () => {
-    if (Object.keys(answers).length < questions.length) {
-      Modal.confirm({
-        title: '确认提交',
-        content: `您还有 ${questions.length - Object.keys(answers).length} 题未作答，确定要提交吗？`,
-        okText: '提交',
-        cancelText: '继续答题',
-        onOk: () => submitAll(),
-      });
-    } else {
-      await submitAll();
-    }
-  };
-
-  const submitAll = async () => {
     setSubmitting(true);
     try {
-      // Build submission payload
-      const payload = questions.map(q => ({
-        questionId: q.questionId,
-        answerJson: answers[q.questionId] || {},
-      }));
-
-      const res = await api.post(`/practice/submit`, {
-        paperId,
-        answers: payload,
-      });
-
-      setResultData(res.data);
-      setShowResult(true);
-      message.success('练习已提交');
+      const res: GradingResult = await practiceApi.submit(recordId!);
+      setResult(res);
     } catch (err: any) {
-      message.error(err.response?.data?.message || '提交失败');
+      message.error(err.response?.data?.message || '判分失败，请重试');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const formatDuration = (start: Date) => {
-    const diff = Math.floor((Date.now() - start.getTime()) / 1000);
-    const min = Math.floor(diff / 60);
-    const sec = diff % 60;
-    return `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
-  };
-
-  if (loading) return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>;
-
-  if (showResult && resultData) {
+  if (loading) {
     return (
-      <div className="page-container" style={{ maxWidth: 800 }}>
-        <Card>
-          <div style={{ textAlign: 'center' }}>
-            <CheckCircleOutlined style={{ fontSize: 64, color: '#52c41a' }} />
-            <h2>练习完成！</h2>
-            <p>{paperName}</p>
-            <Space direction="vertical" size="middle" style={{ margin: '24px 0' }}>
-              <Tag color="blue" style={{ fontSize: 16, padding: '4px 16px' }}>
-                得分：{resultData.totalScore ?? 0} / {resultData.maxScore ?? questions.reduce((s, q) => s + q.score, 0)}
-              </Tag>
-              <Tag color={resultData.passed ? 'green' : 'red'} style={{ fontSize: 14 }}>
-                {resultData.passed ? '及格' : '未及格'}
-              </Tag>
-              <span style={{ color: '#666' }}>用时：{formatDuration(startTime)}</span>
-            </Space>
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Spin size="large" />
+      </div>
+    );
+  }
 
-            {/* Question-by-question results */}
-            <Card title="答题详情" style={{ marginTop: 24, textAlign: 'left' }}>
-              {questions.map((q, i) => {
-                const detail = resultData.details?.find((d: any) => d.questionId === q.questionId);
-                return (
-                  <Card key={q.id} size="small" style={{ marginBottom: 8, borderLeft: detail?.isCorrect ? '4px solid #52c41a' : '4px solid #ff4d4f' }}>
-                    <strong>{i + 1}. {q.question.title}</strong>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                      <Tag color={detail?.isCorrect ? 'green' : 'red'}>
-                        {detail?.isCorrect ? `+${detail.score}` : '+0'} 分
-                      </Tag>
-                      <span style={{ color: '#999' }}>满分 {q.score} 分</span>
-                    </div>
-                  </Card>
-                );
-              })}
-            </Card>
+  // ───── 结果态 ─────
+  if (result) {
+    const passRate = result.maxScore > 0 ? Math.round((result.score / result.maxScore) * 100) : 0;
+    return (
+      <div style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
+        <Result
+          status={result.passed ? 'success' : 'warning'}
+          title={`${result.score} / ${result.maxScore} 分`}
+          subTitle={`正确率 ${passRate}% · ${result.passed ? '通过' : '未通过'}`}
+          extra={[
+            <Button key="again" type="primary" icon={<ReloadOutlined />}
+              onClick={() => navigate('/student/practice')}>
+              再练一次
+            </Button>,
+            <Button key="back" onClick={() => navigate('/student/practice')}>返回列表</Button>,
+          ]}
+        />
 
-            <div style={{ marginTop: 24 }}>
-              <Button onClick={() => navigate('/student/practice')}>返回题库</Button>
-              <Button type="primary" onClick={() => { window.location.reload(); }} style={{ marginLeft: 12 }}>再练一次</Button>
-            </div>
-          </div>
+        <Card title="判分明细" style={{ marginTop: 16 }}>
+          <List
+            dataSource={result.details}
+            renderItem={(d, idx) => (
+              <List.Item>
+                <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                  <Space>
+                    <Text strong>第 {idx + 1} 题</Text>
+                    <Tag color={difficultyLabels[d.difficulty]?.color}>
+                      {difficultyLabels[d.difficulty]?.label || d.difficulty}
+                    </Tag>
+                    <Tag>{typeLabels[d.type] || d.type}</Tag>
+                    <Text>{d.score} / {d.maxScore} 分</Text>
+                    <Tag color={d.isCorrect ? 'success' : 'error'}>
+                      {d.isCorrect ? '正确' : '错误'}
+                    </Tag>
+                  </Space>
+                  <Text strong>{d.questionTitle}</Text>
+
+                  {/* 规则判分明细 */}
+                  {d.ruleResults.length > 0 && (
+                    <List
+                      size="small" split
+                      dataSource={d.ruleResults}
+                      renderItem={(r: RuleResult, ri) => (
+                        <List.Item>
+                          <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                            <Space>
+                              <Tag color={r.passed ? 'success' : 'error'}>{r.passed ? '✓' : '✗'}</Tag>
+                              <Text type="secondary" style={{ fontSize: 12 }}>规则 {ri + 1}: {r.action}</Text>
+                              {r.score > 0 && <Text type="secondary" style={{ fontSize: 12 }}>+{r.score}</Text>}
+                            </Space>
+                            {r.expected !== undefined && r.actual !== undefined && (
+                              <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                                预期: {JSON.stringify(r.expected)}{'\n'}实际: {JSON.stringify(r.actual)}
+                              </Text>
+                            )}
+                            {r.errorMessage && (
+                              <Text type="danger" style={{ fontSize: 12 }}>{r.errorMessage}</Text>
+                            )}
+                          </Space>
+                        </List.Item>
+                      )}
+                    />
+                  )}
+
+                  {/* 解析 */}
+                  {d.analysis && (
+                    <Alert
+                      type="info" showIcon
+                      style={{ marginTop: 8 }}
+                      message="解析"
+                      description={<Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{d.analysis}</Paragraph>}
+                    />
+                  )}
+                </Space>
+              </List.Item>
+            )}
+          />
         </Card>
       </div>
     );
   }
 
+  // ───── 答题态 ─────
+  const currentQuestion = questions[currentStep];
+  const hasShareUrl = !!shareUrl;
+  const leftWidth = hasShareUrl ? 420 : '100%';
+
+  if (questions.length === 0) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center' }}>
+        <Empty description="题目未加载，请返回重新开练" />
+        <Button style={{ marginTop: 16 }} onClick={() => navigate('/student/practice')}>返回列表</Button>
+      </div>
+    );
+  }
+
   return (
-    <div className="page-container" style={{ maxWidth: 900 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f5f5f5' }}>
+      {/* HEADER */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '10px 24px', background: '#fff', borderBottom: '1px solid #f0f0f0',
+      }}>
         <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/student/practice')}>返回</Button>
-          <h3>{paperName}</h3>
-          <Tag icon={<ClockCircleOutlined />}>{formatDuration(startTime)}</Tag>
+          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/student/practice')}>
+            返回
+          </Button>
+          <Title level={5} style={{ margin: 0 }}>题库练习</Title>
         </Space>
-        <Space>
-          <span style={{ color: '#888' }}>{currentIndex + 1} / {questions.length}</span>
-          <Button
-            type="primary"
-            icon={<SendOutlined />}
-            loading={submitting}
-            onClick={handleSubmit}
-          >
+        <Space size={16}>
+          <Text style={{ fontSize: 13, color: '#666' }}>
+            第 {currentStep + 1}/{questions.length} 题
+          </Text>
+          <Button type="primary" icon={<CheckOutlined />} loading={submitting} onClick={handleSubmit}>
             提交练习
           </Button>
         </Space>
       </div>
 
-      {/* Progress steps */}
-      <Steps
-        size="small"
-        current={currentIndex}
-        onChange={(step) => setCurrentIndex(step)}
-        items={questions.map((q, i) => ({
-          title: `第${i + 1}题`,
-          status: answers[q.questionId] ? 'finish' : 'wait',
-        }))}
-        style={{ marginBottom: 16 }}
-      />
+      {/* MAIN */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {/* 左侧题目 */}
+        <div style={{
+          width: leftWidth, minWidth: hasShareUrl ? 420 : undefined,
+          display: 'flex', flexDirection: 'column', background: '#fff',
+          borderRight: hasShareUrl ? '1px solid #f0f0f0' : 'none', overflow: 'hidden',
+        }}>
+          <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+            {currentQuestion && (
+              <>
+                <div style={{ marginBottom: 12 }}>
+                  <Space>
+                    <Text style={{ fontSize: 13, fontWeight: 600, color: '#1890ff' }}>
+                      第 {currentStep + 1} 题
+                    </Text>
+                    <Tag color={difficultyLabels[currentQuestion.difficulty]?.color}>
+                      {difficultyLabels[currentQuestion.difficulty]?.label || currentQuestion.difficulty}
+                    </Tag>
+                    <Tag>{typeLabels[currentQuestion.type] || currentQuestion.type}</Tag>
+                    <Text style={{ fontWeight: 600, color: '#1890ff' }}>{currentQuestion.score} 分</Text>
+                  </Space>
+                </div>
+                <Title level={4} style={{ margin: '0 0 12px', fontSize: 16 }}>
+                  {currentQuestion.title}
+                </Title>
+                {currentQuestion.description && (
+                  <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
+                    <Paragraph style={{ whiteSpace: 'pre-wrap', fontSize: 15, lineHeight: 1.8, margin: 0 }}>
+                      {currentQuestion.description}
+                    </Paragraph>
+                  </Card>
+                )}
+                {currentQuestion.hints && (
+                  <Alert type="info" showIcon message="操作提示" description={currentQuestion.hints} />
+                )}
+              </>
+            )}
 
-      {currentQ ? (
-        <Card key={currentQ.questionId}>
-          <div style={{ marginBottom: 12 }}>
-            <Tag color="blue">第 {currentIndex + 1} 题</Tag>
-            <Tag>{currentQ.question.type}</Tag>
-            <Tag color={currentQ.question.difficulty === 'easy' ? 'green' : currentQ.question.difficulty === 'medium' ? 'blue' : 'red'}>
-              {currentQ.question.difficulty === 'easy' ? '简单' : currentQ.question.difficulty === 'medium' ? '中等' : '困难'}
-            </Tag>
-            <span style={{ float: 'right', fontWeight: 'bold', color: '#1890ff' }}>{currentQ.score} 分</span>
+            {/* 答题卡 */}
+            <Card title="答题卡" size="small" style={{ marginTop: 16 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {questions.map((q, i) => (
+                  <Button
+                    key={q.questionId}
+                    type={i === currentStep ? 'primary' : 'default'}
+                    shape="round" size="small"
+                    onClick={() => setCurrentStep(i)}
+                    style={{ minWidth: 36 }}
+                  >{i + 1}</Button>
+                ))}
+              </div>
+            </Card>
           </div>
-          <h3 style={{ marginBottom: 8 }}>{currentQ.question.title}</h3>
-          {currentQ.question.description && (
-            <div style={{ color: '#666', marginBottom: 16, whiteSpace: 'pre-wrap' }}>
-              {currentQ.question.description}
-            </div>
-          )}
 
-          {/* Answer area - simplified for practice */}
-          <div style={{ background: '#fafafa', padding: 16, borderRadius: 4, border: '1px dashed #d9d9d9' }}>
-            <h4>答题区域</h4>
-            <textarea
-              placeholder="请在此输入您的答案或操作说明..."
-              value={answers[currentQ.questionId]?.text || ''}
-              onChange={e => handleAnswerChange(currentQ.questionId, { text: e.target.value })}
-              style={{
-                width: '100%',
-                minHeight: 120,
-                border: '1px solid #d9d9d9',
-                borderRadius: 4,
-                padding: 8,
-                fontFamily: 'inherit',
-                fontSize: 14,
-              }}
-            />
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16 }}>
-            <Button disabled={currentIndex === 0} onClick={() => setCurrentIndex(i => i - 1)}>
+          {/* 底部导航 */}
+          <div style={{ display: 'flex', gap: 12, padding: '12px 20px', borderTop: '1px solid #f0f0f0', background: '#fff' }}>
+            <Button size="large" disabled={currentStep === 0}
+              onClick={() => setCurrentStep(s => s - 1)} style={{ flex: 1, height: 44 }}>
               上一题
             </Button>
-            <Button
-              type="primary"
-              disabled={currentIndex >= questions.length - 1}
-              onClick={() => setCurrentIndex(i => i + 1)}
-            >
-              下一题
-            </Button>
+            {currentStep < questions.length - 1 ? (
+              <Button type="primary" size="large"
+                onClick={() => setCurrentStep(s => s + 1)} icon={<RightOutlined />}
+                style={{ flex: 1, height: 44 }}>
+                下一题
+              </Button>
+            ) : (
+              <Button type="primary" size="large" icon={<CheckOutlined />}
+                loading={submitting} onClick={handleSubmit} style={{ flex: 1, height: 44 }}>
+                提交练习
+              </Button>
+            )}
           </div>
-        </Card>
-      ) : null}
+        </div>
+
+        {/* 右侧 WPS iframe */}
+        {hasShareUrl && (
+          <div style={{ flex: 1, position: 'relative', background: '#f0f2f5' }}>
+            {iframeError ? (
+              <div style={{ textAlign: 'center', paddingTop: 100 }}>
+                <Alert
+                  type="warning" showIcon
+                  message="WPS 表格无法内嵌打开"
+                  description="请点击下方按钮在新标签页打开表格，操作完成后返回本页面提交。"
+                  style={{ maxWidth: 480, margin: '0 auto' }}
+                />
+                <div style={{ marginTop: 16 }}>
+                  <Button type="primary" icon={<LinkOutlined />}
+                    onClick={() => shareUrl && window.open(shareUrl, '_blank')}>
+                    在新标签页打开
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {!iframeLoaded && (
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Spin tip="正在加载 WPS 多维表格..." />
+                  </div>
+                )}
+                <iframe
+                  src={iframeUrl}
+                  style={{ width: '100%', height: '100%', border: 'none' }}
+                  title="WPS 多维表格练习"
+                  onLoad={() => setIframeLoaded(true)}
+                  onError={() => setIframeError(true)}
+                />
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
