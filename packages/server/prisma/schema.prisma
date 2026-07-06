@@ -35,6 +35,11 @@ enum QuestionStatus {
   archived
 }
 
+enum PracticeStatus {
+  in_progress
+  graded
+}
+
 enum ExamMode {
   practice
   quiz
@@ -44,8 +49,10 @@ enum ExamMode {
 enum ExamStatus {
   draft
   published
+  scheduled
   in_progress
   ended
+  cancelled
   archived
 }
 
@@ -56,10 +63,21 @@ enum BatchStatus {
   archived    // 已归档
 }
 
+enum BatchExamMode {
+  unified     // 集中统一
+  flexible    // 随到随考
+}
+
 enum ExamRoomStatus {
-  available   // 可用
-  occupied    // 使用中
-  maintenance // 维护中
+  available   
+  maintenance 
+}
+
+enum AssignmentStatus {
+  scheduled   
+  in_progress 
+  completed   
+  cancelled   
 }
 
 enum SubmissionStatus {
@@ -132,6 +150,7 @@ model User {
   examSessions         ExamSession[]
   invigilatedRooms     ExamRoom[]           @relation("RoomInvigilators") // ✅ 新增：监考的考场
   roomAssignments      ExamRoomStudent[]    // ✅ 新增：考场座位分配
+  assignmentInvigilations ExamRoomAssignment[] @relation("AssignmentInvigilators") // ✅ 新增：分配监考
   department           Department?          @relation(fields: [departmentId], references: [id])
   major                Major?               @relation(fields: [majorId], references: [id])
   classRoom            ClassRoom?           @relation(fields: [classRoomId], references: [id])
@@ -144,7 +163,9 @@ model User {
   auditLogs            AuditLog[] @relation("AuditOperator") // ✅ Phase 3.2: 审计日志
   notifications        Notification[] @relation("UserNotifications") // ✅ Phase 3.4: 通知消息
   notificationPreference NotificationPreference? @relation("UserNotificationPrefs") // ✅ Phase 3.4: 偏好设置
+  notificationTemplates NotificationTemplate[] @relation("NotificationTemplateCreator") // ✅ 通知模板
   practiceRecords      PracticeRecord[]
+  practiceTableAssignment PracticeTableAssignment?
   wrongQuestions       WrongQuestion[]
   favoriteQuestions    FavoriteQuestion[]
   questionFeedback     QuestionFeedback[]
@@ -212,8 +233,9 @@ model Question {
   score                 Int              @default(10)
   answerRules           Json             @default("[]") @map("answer_rules")
   hints                 String?          @db.Text
+  analysis              String?          @db.Text   // 教师手写解析（题库练习用）
   tags                  String[]         @default([])
-  status                QuestionStatus   @default(draft)
+  status                QuestionStatus   @default(published)
   createdBy             String?          @map("created_by") @db.Uuid
   createdAt             DateTime         @default(now()) @map("created_at")
   updatedAt             DateTime         @updatedAt @map("updated_at")
@@ -294,7 +316,7 @@ model Exam {
   examQuestions ExamQuestion[]
   submissions   StudentSubmission[]
   sessions      ExamSession[]
-  rooms         ExamRoom[]          @relation("ExamRooms") // ✅ 新增：该考试的所有考场
+  assignments   ExamRoomAssignment[] @relation("ExamRoomAssignments")
   behaviorLogs  StudentBehaviorLog[] @relation("ExamBehavior") // ✅ Phase 3: 行为日志
   behaviorReports BehaviorAnalysisReport[] @relation("ExamReport") // ✅ Phase 3: 分析报告
   tableAssignments ExamTableAssignment[] @relation("ExamTableAssignments") // ✅ 考试表格分配
@@ -308,7 +330,7 @@ model ExamBatch {
   id               String       @id @default(uuid()) @db.Uuid
   name             String       @db.VarChar(256)           // 批次名称（如：2026春季期末考试）
   description      String?      @db.Text                   // 批次说明
-  examMode         String       @default("unified") @map("exam_mode") @db.VarChar(32) // 考试模式：unified(集中统一) | flexible(随到随考)
+  examMode         BatchExamMode @default(unified) @map("exam_mode") // 考试模式：unified(集中统一) | flexible(随到随考)
   startTime        DateTime?    @map("start_time")          // 批次开始时间
   endTime          DateTime?    @map("end_time")            // 批次结束时间
   examDuration     Int          @map("exam_duration")       // 考试时长（分钟），所有考试统一时长
@@ -338,40 +360,58 @@ model ExamBatch {
 
 // ✅ 考场管理模型 - 管理物理考场信息
 model ExamRoom {
-  id           String          @id @default(uuid()) @db.Uuid
-  code         String          @unique @db.VarChar(64)    // 考场编码（如：A101、B203）
-  name         String          @db.VarChar(128)            // 考场名称（如：第一机房、第二实验室）
-  capacity     Int                                        // 容纳人数上限
-  location     String?         @db.VarChar(256)            // 物理位置描述
-  equipment    Json            @default("[]")              // 设备列表（电脑编号等）
-  status       ExamRoomStatus  @default(available)         // 考场状态
-  examId       String          @map("exam_id") @db.Uuid    // 所属考试ID
-  createdAt    DateTime        @default(now()) @map("created_at")
-  updatedAt    DateTime        @updatedAt @map("updated_at")
+  id        String          @id @default(uuid()) @db.Uuid
+  code      String          @unique @db.VarChar(64)    // 考场编码（如：A101、B203）
+  name      String          @db.VarChar(128)            // 考场名称（如：第一机房、第二实验室）
+  capacity  Int                                        // 容纳人数上限
+  location  String?         @db.VarChar(256)            // 物理位置描述
+  equipment Json            @default("[]")              // 设备列表（电脑编号等）
+  status    ExamRoomStatus  @default(available)         // 考场状态
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
 
   // Relations
-  exam         Exam                 @relation("ExamRooms", fields: [examId], references: [id], onDelete: Cascade)
-  invigilators User[]               @relation("RoomInvigilators") // 监考老师
-  students     ExamRoomStudent[]    // 已分配学生
+  assignments  ExamRoomAssignment[]    @relation("ExamRoomAssignmentRoom")
+  invigilators User[]                  @relation("RoomInvigilators") // 监考老师
 
-  @@index([examId, status])
+  @@index([status])
   @@map("exam_rooms")
+}
+
+// ✅ 考场分配模型 - 考场的考试时间段分配（资源池预约模式）
+model ExamRoomAssignment {
+  id        String            @id @default(uuid()) @db.Uuid
+  examId    String            @map("exam_id") @db.Uuid
+  roomId    String            @map("room_id") @db.Uuid
+  status    AssignmentStatus  @default(scheduled)
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+
+  exam        Exam                @relation("ExamRoomAssignments", fields: [examId], references: [id], onDelete: Cascade)
+  room        ExamRoom            @relation("ExamRoomAssignmentRoom", fields: [roomId], references: [id])
+  students    ExamRoomStudent[]
+  invigilators User[]              @relation("AssignmentInvigilators")
+
+  @@unique([examId, roomId])
+  @@index([roomId, status])
+  @@index([examId, status])
+  @@map("exam_room_assignments")
 }
 
 // ✅ 考场-学生关联表 - 支持批量分配
 model ExamRoomStudent {
-  id        String @id @default(uuid()) @db.Uuid
-  roomId    String @map("room_id") @db.Uuid
-  studentId String @map("student_id") @db.Uuid
-  seatNumber Int    @map("seat_number") // 座位号
-  assignedAt DateTime @default(now()) @map("assigned_at")
+  id            String @id @default(uuid()) @db.Uuid
+  assignmentId  String @map("assignment_id") @db.Uuid
+  studentId     String @map("student_id") @db.Uuid
+  seatNumber    Int    @map("seat_number") // 座位号
+  assignedAt    DateTime @default(now()) @map("assigned_at")
 
   // Relations
-  room    ExamRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  student User     @relation(fields: [studentId], references: [id])
+  assignment    ExamRoomAssignment @relation(fields: [assignmentId], references: [id])
+  student       User                @relation(fields: [studentId], references: [id])
 
-  @@unique([roomId, studentId])
-  @@unique([roomId, seatNumber])
+  @@unique([assignmentId, studentId])
+  @@unique([assignmentId, seatNumber])
   @@map("exam_room_students")
 }
 
@@ -520,6 +560,18 @@ model ClassRoom {
   major        Major      @relation(fields: [majorId], references: [id], onDelete: Cascade)
   students     User[]
   invitations  Invitation[]
+}
+
+// ==================== WPS Token 配置 (单例) ====================
+model WpsConfig {
+  id                String   @id @default("wps_config")
+  accessToken       String   @map("access_token")
+  refreshToken      String   @map("refresh_token")
+  expiresAt         BigInt   @map("expires_at")
+  refreshExpiresAt  BigInt   @map("refresh_expires_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("wps_config")
 }
 
 model Invitation {
@@ -770,6 +822,9 @@ model Notification {
   userId        String               @map("user_id") @db.Uuid
   isRead        Boolean              @map("is_read") @default(false)
 
+  // 发送者
+  senderId      String?              @map("sender_id") @db.Uuid
+
   // 关联数据（可选）
   entityType    String?              @map("entity_type") @db.VarChar(128) // 关联实体类型
   entityId      String?              @map("entity_id") @db.Uuid // 关联实体ID
@@ -818,22 +873,41 @@ model NotificationPreference {
   @@map("notification_preferences")
 }
 
-model PracticeRecord {
-  id          String    @id @default(uuid()) @db.Uuid
-  studentId   String    @map("student_id") @db.Uuid
-  paperId     String    @map("paper_id") @db.Uuid
-  score       Int?
-  maxScore    Int       @map("max_score")
-  passed      Boolean?
-  answers     Json      @default("{}")
-  details     Json?
-  startedAt   DateTime  @map("started_at")
-  submittedAt DateTime? @map("submitted_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+// 通知模板表
+model NotificationTemplate {
+  id        String           @id @default(uuid()) @db.Uuid
+  name      String           @db.VarChar(128)
+  type      NotificationType
+  title     String           @db.VarChar(256)
+  content   String?          @db.Text
+  createdBy String           @map("created_by") @db.Uuid
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
 
-  student User  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  paper   Paper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  creator   User             @relation("NotificationTemplateCreator", fields: [createdBy], references: [id])
+
+  @@map("notification_templates")
+}
+
+model PracticeRecord {
+  id           String         @id @default(uuid()) @db.Uuid
+  studentId    String         @map("student_id") @db.Uuid
+  paperId      String?        @map("paper_id") @db.Uuid
+  questions    Json           @default("[]")
+  tableSpaceId String?        @map("table_space_id")
+  status       PracticeStatus @default(in_progress)
+  score        Int?
+  maxScore     Int            @map("max_score")
+  passed       Boolean?
+  answers      Json           @default("{}")
+  details      Json?
+  startedAt    DateTime       @map("started_at")
+  submittedAt  DateTime?      @map("submitted_at")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  student User   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  paper   Paper? @relation(fields: [paperId], references: [id], onDelete: Cascade)
 
   @@index([studentId, createdAt])
   @@index([paperId])
@@ -906,6 +980,20 @@ model ExamTableAssignment {
   @@unique([examId, fileId])
   @@index([examId])
   @@map("exam_table_assignments")
+}
+
+model PracticeTableAssignment {
+  id          String   @id @default(uuid()) @db.Uuid
+  studentId   String   @unique @map("student_id") @db.Uuid
+  fileId      String   @map("file_id") @db.Text
+  shareUrl    String?  @map("share_url") @db.Text
+  accessToken String?  @map("access_token") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("practice_table_assignments")
 }
 
 
