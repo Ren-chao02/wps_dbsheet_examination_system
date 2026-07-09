@@ -71,6 +71,7 @@ export function PracticeDoing() {
   const [result, setResult] = useState<GradingResult | null>(null);
   const [iframeError, setIframeError] = useState(false);
   const [iframeLoaded, setIframeLoaded] = useState(false);
+  const [iframeTimeout, setIframeTimeout] = useState(false);
 
   // 若无 state（如刷新页面），仅能恢复 shareUrl；questions 快照需后端补 GET /practice/:recordId 接口
   useEffect(() => {
@@ -89,6 +90,23 @@ export function PracticeDoing() {
   }, [payload]);
 
   const iframeUrl = shareUrl ? `${shareUrl}${shareUrl.includes('?') ? '&' : '?'}embed=1` : '';
+  const openInNewTab = () => {
+    if (shareUrl) window.open(shareUrl, '_blank');
+  };
+  // 加载遮罩是否展示：onLoad 触发 / 报错 / 超时 三者任一发生即撤下
+  const showSpinner = !!shareUrl && !iframeLoaded && !iframeError && !iframeTimeout;
+
+  // iframe 加载超时兜底：WPS 多维表格为重型 SPA（常驻 WebSocket + 懒加载），
+  // 其 load 事件可能迟迟不触发，导致 onLoad 永不回调、转圈遮罩永久盖住 iframe。
+  // 10s 后强制撤下遮罩，露出 iframe 实际内容并提供「新标签页打开」逃生口。
+  useEffect(() => {
+    if (!shareUrl) return;
+    setIframeLoaded(false);
+    setIframeError(false);
+    setIframeTimeout(false);
+    const t = setTimeout(() => setIframeTimeout(true), 10000);
+    return () => clearTimeout(t);
+  }, [iframeUrl]);
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -308,37 +326,38 @@ export function PracticeDoing() {
         {/* 右侧 WPS iframe */}
         {hasShareUrl && (
           <div style={{ flex: 1, position: 'relative', background: '#f0f2f5' }}>
-            {iframeError ? (
-              <div style={{ textAlign: 'center', paddingTop: 100 }}>
-                <Alert
-                  type="warning" showIcon
-                  message="WPS 表格无法内嵌打开"
-                  description="请点击下方按钮在新标签页打开表格，操作完成后返回本页面提交。"
-                  style={{ maxWidth: 480, margin: '0 auto' }}
-                />
-                <div style={{ marginTop: 16 }}>
-                  <Button type="primary" icon={<LinkOutlined />}
-                    onClick={() => shareUrl && window.open(shareUrl, '_blank')}>
-                    在新标签页打开
-                  </Button>
-                </div>
+            {/* 右上角逃生口：始终可用，内嵌失败时可改在新标签页打开 */}
+            <div style={{ position: 'absolute', top: 8, right: 12, zIndex: 10 }}>
+              <Button size="small" icon={<LinkOutlined />} onClick={openInNewTab}>
+                在新标签页打开
+              </Button>
+            </div>
+
+            {/* 加载遮罩：onLoad 触发 / 报错 / 10s 超时 三者任一发生即撤下，避免永久转圈 */}
+            {showSpinner && (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5', zIndex: 5 }}>
+                <Spin tip="正在加载 WPS 多维表格..." />
               </div>
-            ) : (
-              <>
-                {!iframeLoaded && (
-                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Spin tip="正在加载 WPS 多维表格..." />
-                  </div>
-                )}
-                <iframe
-                  src={iframeUrl}
-                  style={{ width: '100%', height: '100%', border: 'none' }}
-                  title="WPS 多维表格练习"
-                  onLoad={() => setIframeLoaded(true)}
-                  onError={() => setIframeError(true)}
-                />
-              </>
             )}
+
+            {/* 超时/错误提示：iframe 迟迟未触发 onLoad，提示学生用新标签页打开 */}
+            {(iframeTimeout || iframeError) && !iframeLoaded && (
+              <div style={{ position: 'absolute', top: 44, left: 12, right: 12, zIndex: 6 }}>
+                <Alert
+                  type="warning" showIcon banner
+                  message="WPS 表格加载较慢或被浏览器拦截"
+                  description="若上方区域长时间空白，请点击右上角「在新标签页打开」在新窗口操作，完成后返回本页交卷。"
+                />
+              </div>
+            )}
+
+            <iframe
+              src={iframeUrl}
+              style={{ width: '100%', height: '100%', border: 'none' }}
+              title="WPS 多维表格练习"
+              onLoad={() => setIframeLoaded(true)}
+              onError={() => setIframeError(true)}
+            />
           </div>
         )}
       </div>

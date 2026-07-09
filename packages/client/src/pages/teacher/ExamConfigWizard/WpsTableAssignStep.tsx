@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import {
   Button, Card, Input, Table, message, Space, Typography, Alert, Spin, Tabs
 } from 'antd';
-import { SaveOutlined, ImportOutlined } from '@ant-design/icons';
+import { SaveOutlined, ImportOutlined, LinkOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/auth';
+import { useNavigate } from 'react-router-dom';
 
 const { Text } = Typography;
 
@@ -22,12 +23,58 @@ interface StudentRow {
   shareUrl: string;
 }
 
+// 独立输入组件：本地 state 管理，只在失焦时提交到父级，避免每次按键全量更新
+function StudentUrlCell({
+  studentId,
+  value,
+  onChange,
+}: {
+  studentId: string;
+  value: string;
+  onChange: (studentId: string, url: string) => void;
+}) {
+  const [localValue, setLocalValue] = useState(value);
+  const prevStudentIdRef = useRef(studentId);
+  const prevExternalValueRef = useRef(value);
+
+  // 使用 useEffect 同步外部值变化，避免在 render 中调用 setState 导致级联重渲染
+  useEffect(() => {
+    if (studentId !== prevStudentIdRef.current) {
+      prevStudentIdRef.current = studentId;
+      setLocalValue(value);
+      prevExternalValueRef.current = value;
+    } else if (value !== prevExternalValueRef.current) {
+      prevExternalValueRef.current = value;
+      setLocalValue(value);
+    }
+  }, [studentId, value]);
+
+  const handleBlur = useCallback(() => {
+    if (localValue !== value) {
+      onChange(studentId, localValue);
+    }
+  }, [studentId, localValue, value, onChange]);
+
+  return (
+    <Input
+      placeholder="https://www.kdocs.cn/l/xxxxxx"
+      value={localValue}
+      onChange={(e) => setLocalValue(e.target.value)}
+      onBlur={handleBlur}
+      onPressEnter={(e: any) => e.target?.blur?.()}
+    />
+  );
+}
+
 export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStepProps) {
+  const navigate = useNavigate();
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [bulkText, setBulkText] = useState('');
   const accessToken = useAuthStore(state => state.wpsToken?.accessToken) || '';
+  const wpsToken = useAuthStore(state => state.wpsToken);
+  const getWpsTokenRemainingSeconds = useAuthStore(state => state.getWpsTokenRemainingSeconds);
 
   useEffect(() => {
     loadData();
@@ -61,11 +108,11 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
     }
   };
 
-  const handleShareUrlChange = (studentId: string, value: string) => {
+  const handleShareUrlChange = useCallback((studentId: string, value: string) => {
     setStudents(prev => prev.map(s =>
       s.studentId === studentId ? { ...s, shareUrl: value } : s
     ));
-  };
+  }, []);
 
   const handleSave = async () => {
     const items = students
@@ -78,11 +125,6 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
 
     if (items.length === 0) {
       message.warning('请至少为一个考生填写分享链接');
-      return;
-    }
-
-    if (!accessToken) {
-      message.warning('请先完成 WPS Token 授权（个人设置 → WPS Token 管理）');
       return;
     }
 
@@ -119,21 +161,21 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
     setBulkText('');
   };
 
-  const columns = [
+  const columns = useMemo(() => [
     { title: '姓名', dataIndex: 'realName', width: 120 },
     { title: '学号', dataIndex: 'studentIdNumber', width: 140, render: (v: string) => v || '-' },
     { title: '用户名', dataIndex: 'username', width: 140 },
     {
       title: 'WPS 多维表格分享链接',
       render: (_: any, record: StudentRow) => (
-        <Input
-          placeholder="https://www.kdocs.cn/l/xxxxxx"
+        <StudentUrlCell
+          studentId={record.studentId}
           value={record.shareUrl}
-          onChange={(e) => handleShareUrlChange(record.studentId, e.target.value)}
+          onChange={handleShareUrlChange}
         />
       ),
     },
-  ];
+  ], [handleShareUrlChange]);
 
   if (loading) return <div style={{ textAlign: 'center', padding: 60 }}><Spin /></div>;
 
@@ -145,6 +187,54 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
         message="请先在 WPS 中为每个考生创建空白多维表格，然后将分享链接粘贴到下方。"
         style={{ marginBottom: 16 }}
       />
+
+      {/* WPS Token 状态提示 */}
+      {!wpsToken && (
+        <Alert
+          type="info"
+          showIcon
+          message="建议配置 WPS Token"
+          description={
+            <div>
+              <p style={{ marginBottom: 8 }}>
+                自动判分时需要 WPS Token 来获取考生多维表格数据。当前尚未配置，建议在判分前完成配置。
+              </p>
+              <Button
+                type="default"
+                size="small"
+                icon={<LinkOutlined />}
+                onClick={() => navigate('/teacher/wps-token')}
+              >
+                前往 WPS Token 管理
+              </Button>
+            </div>
+          }
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {wpsToken && getWpsTokenRemainingSeconds() <= 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          message="WPS Token 已过期"
+          description={
+            <div>
+              <p style={{ marginBottom: 8 }}>
+                自动判分时需要有效的 WPS Token。当前 Token 已过期，建议在判分前刷新。
+              </p>
+              <Button
+                type="default"
+                size="small"
+                icon={<LinkOutlined />}
+                onClick={() => navigate('/teacher/wps-token')}
+              >
+                前往刷新 Token
+              </Button>
+            </div>
+          }
+          style={{ marginBottom: 16 }}
+        />
+      )}
 
       <Tabs
         items={[

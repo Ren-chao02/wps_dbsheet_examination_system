@@ -165,36 +165,32 @@ paperRouter.put('/:id/questions', async (req: Request, res: Response) => {
     }
 
     const { questionIds } = paperQuestionSchema.parse(req.body);
-
-    // Delete existing and create new
-    await prisma.paperQuestion.deleteMany({ where: { paperId: req.params.id } });
-    if (questionIds.length > 0) {
-      await prisma.paperQuestion.createMany({
-        data: questionIds.map(q => ({
-          paperId: req.params.id,
-          questionId: q.questionId,
-          sortOrder: q.sortOrder,
-          score: q.score,
-        })),
-      });
-    }
-
-    // Update total score
     const totalScore = questionIds.reduce((sum, q) => sum + q.score, 0);
-    await prisma.paper.update({
-      where: { id: req.params.id },
-      data: { totalScore },
-    });
 
-    const updated = await prisma.paper.findUnique({
-      where: { id: req.params.id },
-      include: {
-        paperQuestions: {
-          include: { question: true },
-          orderBy: { sortOrder: 'asc' },
+    // 事务保护：删除旧题目、创建新题目、更新总分在同一事务中完成
+    const [, , updated] = await prisma.$transaction([
+      prisma.paperQuestion.deleteMany({ where: { paperId: req.params.id } }),
+      ...(questionIds.length > 0
+        ? [prisma.paperQuestion.createMany({
+            data: questionIds.map(q => ({
+              paperId: req.params.id,
+              questionId: q.questionId,
+              sortOrder: q.sortOrder,
+              score: q.score,
+            })),
+          })]
+        : []),
+      prisma.paper.update({
+        where: { id: req.params.id },
+        data: { totalScore },
+        include: {
+          paperQuestions: {
+            include: { question: true },
+            orderBy: { sortOrder: 'asc' },
+          },
         },
-      },
-    });
+      }),
+    ]);
 
     res.json(updated);
   } catch (err: any) {

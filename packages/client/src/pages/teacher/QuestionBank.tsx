@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Table,
   Button,
@@ -13,6 +13,7 @@ import {
   DatePicker,
   Row,
   Col,
+  Switch,
 } from 'antd';
 import {
   PlusOutlined,
@@ -38,15 +39,15 @@ const difficultyOptions = [
   { value: 'hard', label: '困难' },
 ];
 
-// 状态选项
+// 状态选项（简化为启用/禁用）
 const statusOptions = [
-  { value: 'draft', label: '草稿' },
-  { value: 'published', label: '已发布' },
-  { value: 'archived', label: '已归档' },
+  { value: 'published', label: '已启用' },
+  { value: 'draft', label: '已禁用' },
 ];
 
 export function QuestionBank() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [data, setData] = useState<PaginatedResponse<Question>>({
     data: [],
     total: 0,
@@ -74,17 +75,29 @@ export function QuestionBank() {
     updatedAtEnd?: string;
   }>({});
 
+  // 防抖后的筛选条件（实际用于 API 请求）
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const [activeFilters, setActiveFilters] = useState(filters);
+
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setActiveFilters(filters);
+    }, 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [filters]);
+
   // 获取题目列表数据
   const fetchQuestions = useCallback(
-    async (page = 1) => {
+    async (page = 1, pageSize = 20) => {
       setLoading(true);
       try {
         const params = new URLSearchParams({
           page: String(page),
-          pageSize: '20',
+          pageSize: String(pageSize),
           // 只添加非空的筛选条件
           ...Object.fromEntries(
-            Object.entries(filters).filter(([_, v]) => v !== undefined && v !== '')
+            Object.entries(activeFilters).filter(([_, v]) => v !== undefined && v !== '')
           ),
         });
 
@@ -97,7 +110,7 @@ export function QuestionBank() {
         setLoading(false);
       }
     },
-    [filters]
+    [activeFilters]
   );
 
   // 获取分类列表（用于级联选择器）- 获取树形结构以支持子分类
@@ -138,9 +151,15 @@ export function QuestionBank() {
     }
   };
 
+  // 筛选条件变化 → 回到第一页
   useEffect(() => {
-    fetchQuestions();
-  }, [fetchQuestions]);
+    fetchQuestions(1, data.pageSize);
+  }, [activeFilters]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 初始化 + 从子页面返回时自动刷新
+  useEffect(() => {
+    fetchQuestions(data.page, data.pageSize);
+  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     fetchCategories();
@@ -155,6 +174,18 @@ export function QuestionBank() {
       fetchQuestions(data.page);
     } catch (err: any) {
       message.error(err.response?.data?.message || '删除失败');
+    }
+  };
+
+  // 切换题目启用/禁用状态
+  const handleToggleStatus = async (id: string, currentStatus: string) => {
+    try {
+      const newStatus = currentStatus === 'published' ? 'draft' : 'published';
+      await api.put(`/questions/${id}/status`, { status: newStatus });
+      message.success(newStatus === 'published' ? '已启用' : '已禁用');
+      fetchQuestions(data.page);
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '状态更新失败');
     }
   };
 
@@ -253,23 +284,29 @@ export function QuestionBank() {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 80,
-      render: (v: string) => (
-        <Tag
-          color={
-            v === 'published'
-              ? 'green'
-              : v === 'draft'
-              ? 'default'
-              : 'orange'
-          }
+      width: 100,
+      render: (v: string, record: Question) => (
+        <Popconfirm
+          title="确认禁用"
+          description="试题禁用后不能被引用到试卷中，确认禁用吗？"
+          onConfirm={() => handleToggleStatus(record.id, v)}
+          okText="确认禁用"
+          cancelText="取消"
+          disabled={v !== 'published'}  // 只有启用状态下点击才需要确认
         >
-          {v === 'published'
-            ? '已发布'
-            : v === 'draft'
-            ? '草稿'
-            : '已归档'}
-        </Tag>
+          <Switch
+            checked={v === 'published'}
+            checkedChildren="启用"
+            unCheckedChildren="禁用"
+            onChange={(checked) => {
+              // 如果是启用操作（从禁用切换到启用），直接执行不需要确认
+              if (checked) {
+                handleToggleStatus(record.id, v);
+              }
+              // 如果是禁用操作（从启用切换到禁用），由 Popconfirm 处理
+            }}
+          />
+        </Popconfirm>
       ),
     },
     {
@@ -339,7 +376,7 @@ export function QuestionBank() {
             icon={<SettingOutlined />}
             onClick={() => setCategoryModalVisible(true)}
             style={{
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              background: 'linear-gradient(135deg, #1677ff 0%, #0958d9 100%)',
               borderColor: 'transparent',
               color: '#fff',
               fontWeight: 500,
@@ -561,12 +598,7 @@ export function QuestionBank() {
           showQuickJumper: true,
           showTotal: (total) => `共 ${total} 条记录`,
           onChange: (page, pageSize) => {
-            // 如果页大小改变，回到第一页
-            if (pageSize !== data.pageSize) {
-              setFilters((f) => ({ ...f }));
-              return;
-            }
-            fetchQuestions(page);
+            fetchQuestions(page, pageSize);
           },
         }}
       />

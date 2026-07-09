@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Table, Button, Drawer, InputNumber, Tag, message, Space, Card, Descriptions, Divider, Alert, Spin, Tooltip, Collapse } from 'antd';
-import { CheckOutlined, CloseOutlined, ThunderboltOutlined, EyeOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { CheckOutlined, CloseOutlined, ThunderboltOutlined, EyeOutlined, ExclamationCircleOutlined, CodeOutlined } from '@ant-design/icons';
 import api from '../../services/api';
+import { useAuthStore } from '../../stores/auth';
 import type { StudentSubmission, SubmissionDetail, VerificationResult } from '../../types';
 
 const statusMap: Record<string, { color: string; text: string }> = {
@@ -36,6 +37,7 @@ const actionLabels: Record<string, string> = {
 };
 
 export function GradingPage() {
+  const { wpsToken } = useAuthStore();
   const { id } = useParams<{ id: string }>();
   const [submissions, setSubmissions] = useState<StudentSubmission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +48,7 @@ export function GradingPage() {
   const [saving, setSaving] = useState(false);
   const [autoGrading, setAutoGrading] = useState(false);
   const [gradingResult, setGradingResult] = useState<any>(null);
+  const [showRawData, setShowRawData] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -70,22 +73,30 @@ export function GradingPage() {
       });
       setScores(newScores);
       setCorrects(newCorrects);
-      setGradingResult(null);
       setDrawerOpen(true);
     } catch { message.error('加载详情失败'); }
   };
 
   const triggerAutoGrading = async (submission: StudentSubmission) => {
+    if (!wpsToken?.accessToken) {
+      message.warning('未配置 WPS access_token，请先在「WPS Token 管理」中手动回填');
+      return;
+    }
     setAutoGrading(true);
     try {
-      const res = await api.post(`/grading/${submission.id}`);
+      const res = await api.post(`/grading/${submission.id}`, {
+        accessToken: wpsToken?.accessToken,
+      });
       setGradingResult(res.data);
       message.success(res.data.message || '自动判分完成');
       // 重新加载详情
       await openGrading(submission);
       fetchData();
     } catch (err: any) {
-      message.error(err.response?.data?.message || '自动判分失败');
+      const detail = err.response?.data?.detail;
+      message.error(detail
+        ? `${err.response?.data?.message}: ${detail}`
+        : err.response?.data?.message || '自动判分失败');
     } finally { setAutoGrading(false); }
   };
 
@@ -166,11 +177,22 @@ export function GradingPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2>阅卷</h2>
         <Button type="primary" icon={<ThunderboltOutlined />} onClick={async () => {
+          if (!wpsToken?.accessToken) {
+            message.warning('未配置 WPS access_token，请先在「WPS Token 管理」中手动回填');
+            return;
+          }
           try {
-            const res = await api.post(`/grading/batch/${id}`);
+            const res = await api.post(`/grading/batch/${id}`, {
+              accessToken: wpsToken?.accessToken,
+            });
             message.success(res.data.message || '批量判分完成');
             fetchData();
-          } catch (err: any) { message.error(err.response?.data?.message || '操作失败'); }
+          } catch (err: any) {
+            const detail = err.response?.data?.detail;
+            message.error(detail
+              ? `${err.response?.data?.message}: ${detail}`
+              : err.response?.data?.message || '操作失败');
+          }
         }}>批量自动判分</Button>
       </div>
 
@@ -207,6 +229,25 @@ export function GradingPage() {
                 description={'标记为「需复核」的规则无法自动判分，请教师根据实际情况手动确认。'}
                 style={{ marginBottom: 16 }}
               />
+            )}
+
+            {gradingResult?.rawSchema && (
+              <div style={{ marginBottom: 16 }}>
+                <Button
+                  size="small"
+                  icon={<CodeOutlined />}
+                  onClick={() => setShowRawData(v => !v)}
+                >
+                  {showRawData ? '收起 WPS API 原始数据' : '查看 WPS API 原始数据'}
+                </Button>
+                {showRawData && (
+                  <div style={{ marginTop: 8, maxHeight: 500, overflow: 'auto', background: '#f5f5f5', borderRadius: 8, padding: 12 }}>
+                    <pre style={{ fontSize: 11, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      {JSON.stringify({ schema: gradingResult.rawSchema, records: gradingResult.rawRecords }, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
             )}
 
             <Divider />

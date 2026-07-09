@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Table, Button, Tag, Space, message, Card, Input, Select, Popconfirm } from 'antd';
+import { Table, Button, Tag, Space, message, Card, Input, Select, Popconfirm, Tooltip } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, FileTextOutlined, EyeOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { Paper, PaginatedResponse } from '../../types';
+import { useAuthStore } from '../../stores/auth';
 
 const difficultyLabels: Record<string, { color: string; text: string }> = {
   easy: { color: 'green', text: '简单' },
@@ -13,10 +15,16 @@ const difficultyLabels: Record<string, { color: string; text: string }> = {
 
 export function PaperBank() {
   const navigate = useNavigate();
+  const currentUser = useAuthStore((s) => s.user);
   const [data, setData] = useState<PaginatedResponse<Paper>>({ data: [], total: 0, page: 1, pageSize: 20 });
   const [loading, setLoading] = useState(true);
   const [searchName, setSearchName] = useState('');
   const [searchDifficulty, setSearchDifficulty] = useState<string | undefined>();
+
+  // 判断当前用户是否为试卷创建者（admin 视为所有者）
+  const isOwner = (r: Paper) => {
+    return currentUser?.role === 'admin' || r.createdBy === currentUser?.id;
+  };
 
   const fetchPapers = async (page = 1) => {
     setLoading(true);
@@ -56,17 +64,25 @@ export function PaperBank() {
     { title: '及格分', dataIndex: 'passScore', key: 'passScore', render: (v: number | null) => v ?? '-' },
     { title: '来源', dataIndex: 'source', key: 'source', render: (v: string) => v === 'official' ? <Tag color="orange">官方</Tag> : <Tag color="cyan">校本</Tag> },
     { title: '创建人', key: 'creator', render: (_: any, r: Paper) => r.creator?.realName || '-' },
+    { title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', width: 160, render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm') },
     {
-      title: '操作', key: 'actions', width: 280, render: (_: any, r: Paper) => (
-        <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => navigate(`/teacher/papers/${r.id}/edit`)}>编辑</Button>
-          <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/teacher/papers/${r.id}/edit?tab=preview`)}>预览</Button>
-          <Button size="small" icon={<CopyOutlined />} onClick={() => handleDuplicate(r.id)}>复制</Button>
-          <Popconfirm title="确认删除？" onConfirm={() => handleDelete(r.id)} okText="删除" cancelText="取消">
-            <Button size="small" icon={<DeleteOutlined />} danger>删除</Button>
-          </Popconfirm>
-        </Space>
-      ),
+      title: '操作', key: 'actions', width: 280, render: (_: any, r: Paper) => {
+        const owner = isOwner(r);
+        return (
+          <Space>
+            <Tooltip title={owner ? undefined : '仅支持本人创建的试卷'}>
+              <Button size="small" icon={<EditOutlined />} disabled={!owner} onClick={() => navigate(`/teacher/papers/${r.id}/edit`)}>编辑</Button>
+            </Tooltip>
+            <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/teacher/papers/${r.id}/edit?tab=preview`)}>预览</Button>
+            <Button size="small" icon={<CopyOutlined />} onClick={() => handleDuplicate(r.id)}>复制</Button>
+            <Popconfirm title="确认删除？" onConfirm={() => handleDelete(r.id)} okText="删除" cancelText="取消" disabled={!owner}>
+              <Tooltip title={!owner ? '仅支持本人创建的试卷' : undefined}>
+                <Button size="small" icon={<DeleteOutlined />} danger disabled={!owner}>删除</Button>
+              </Tooltip>
+            </Popconfirm>
+          </Space>
+        );
+      },
     },
   ];
 

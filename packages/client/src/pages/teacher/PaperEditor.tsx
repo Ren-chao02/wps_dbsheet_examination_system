@@ -24,11 +24,11 @@ export function PaperEditor() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState('select');
   const [categories, setCategories] = useState<QuestionCategory[]>([]);
+  const [categoryMap, setCategoryMap] = useState<Map<string, number>>(new Map());
   const [allQuestions, setAllQuestions] = useState<Question[]>([]);
   const [selectedQuestions, setSelectedQuestions] = useState<PaperQuestion[]>([]);
-  const [questionFilter, setQuestionFilter] = useState({ type: '', difficulty: '', search: '' });
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<{ id: string; level: number } | null>(null);
   const isEdit = !!id;
 
   useEffect(() => {
@@ -56,8 +56,21 @@ export function PaperEditor() {
 
   const fetchCategories = async () => {
     try {
-      const res = await api.get('/categories/tree');
-      setCategories(res.data?.data || []);
+      const res = await api.get('/categories?mode=tree');
+      const treeData = res.data?.data || [];
+      setCategories(treeData);
+
+      const map = new Map<string, number>();
+      const traverse = (cats: QuestionCategory[]) => {
+        cats.forEach((c) => {
+          map.set(c.id, c.level);
+          if (c.children && c.children.length > 0) {
+            traverse(c.children);
+          }
+        });
+      };
+      traverse(treeData);
+      setCategoryMap(map);
     } catch {
       console.error('Error fetching categories');
     }
@@ -68,16 +81,19 @@ export function PaperEditor() {
       const params = new URLSearchParams();
       params.append('status', 'published');
       params.append('pageSize', '1000');
-      if (questionFilter.type) params.append('type', questionFilter.type);
-      if (questionFilter.difficulty) params.append('difficulty', questionFilter.difficulty);
-      if (questionFilter.search) params.append('search', questionFilter.search);
-      if (selectedCategory) params.append('primaryCategoryId', selectedCategory);
+      if (selectedCategory) {
+        if (selectedCategory.level === 1) {
+          params.append('primaryCategory', selectedCategory.id);
+        } else {
+          params.append('secondaryCategory', selectedCategory.id);
+        }
+      }
       const res = await api.get(`/questions?${params.toString()}`);
       setAllQuestions(res.data?.data || []);
     } catch {
       console.error('Error fetching questions');
     }
-  }, [questionFilter, selectedCategory]);
+  }, [selectedCategory]);
 
   useEffect(() => {
     if (drawerOpen) {
@@ -104,9 +120,8 @@ export function PaperEditor() {
         })),
       });
       message.success(isEdit ? '更新成功' : '创建成功');
-      if (!isEdit) {
-        navigate(`/teacher/papers/${paperId}/edit`);
-      }
+      // 保存成功后返回上一级页面（试卷列表）
+      navigate('/teacher/papers');
     } catch (err: any) {
       message.error(err.response?.data?.message || '保存失败');
     } finally {
@@ -164,10 +179,7 @@ export function PaperEditor() {
     return acc;
   }, {} as Record<string, number>);
 
-  const filteredQuestions = allQuestions.filter(q => {
-    const selectedIds = new Set(selectedQuestions.map(pq => pq.questionId));
-    return !selectedIds.has(q.id);
-  });
+  const selectedQuestionIds = new Set(selectedQuestions.map(pq => pq.questionId));
 
   if (loading) return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>;
 
@@ -259,39 +271,35 @@ export function PaperEditor() {
               <Col span={6}>
                 <Tree
                   treeData={buildTreeData(categories)}
+                  selectedKeys={selectedCategory ? [selectedCategory.id] : []}
                   expandedKeys={expandedKeys}
                   onExpand={keys => setExpandedKeys(keys as string[])}
-                  onSelect={keys => setSelectedCategory(keys[0] as string || null)}
+                  onSelect={keys => {
+                    const id = keys[0] as string;
+                    if (id) {
+                      setSelectedCategory({ id, level: categoryMap.get(id) || 1 });
+                    } else {
+                      setSelectedCategory(null);
+                    }
+                  }}
                   style={{ maxHeight: 500, overflow: 'auto', border: '1px solid #f0f0f0', padding: 8 }}
                 />
               </Col>
               <Col span={18}>
-                <Space style={{ marginBottom: 16 }} wrap>
-                  <Input placeholder="搜索题目" value={questionFilter.search} onChange={e => setQuestionFilter({ ...questionFilter, search: e.target.value })} onPressEnter={fetchQuestions} style={{ width: 200 }} />
-                  <Select placeholder="题型" allowClear value={questionFilter.type || undefined} onChange={v => setQuestionFilter({ ...questionFilter, type: v || '' })} style={{ width: 140 }}
-                    options={[
-                      { value: 'create_table', label: '创建表格' },
-                      { value: 'add_field', label: '添加字段' },
-                      { value: 'config_view', label: '配置视图' },
-                      { value: 'create_form', label: '创建表单' },
-                      { value: 'comprehensive', label: '综合题' },
-                    ]}
-                  />
-                  <Select placeholder="难度" allowClear value={questionFilter.difficulty || undefined} onChange={v => setQuestionFilter({ ...questionFilter, difficulty: v || '' })} style={{ width: 120 }}
-                    options={[{ value: 'easy', label: '简单' }, { value: 'medium', label: '中等' }, { value: 'hard', label: '困难' }]}
-                  />
-                  <Button type="primary" onClick={fetchQuestions}>查询</Button>
-                </Space>
-                <Table dataSource={filteredQuestions} rowKey="id" size="small" pagination={{ pageSize: 10 }}
+                <Table dataSource={allQuestions} rowKey="id" size="small" pagination={{ pageSize: 10 }}
                   columns={[
                     { title: '题型', dataIndex: 'type', width: 100, render: (v: string) => <Tag>{v}</Tag> },
                     { title: '题目', dataIndex: 'title', ellipsis: true },
                     { title: '难度', dataIndex: 'difficulty', width: 80 },
                     { title: '分值', dataIndex: 'score', width: 60 },
                     { title: '分类', dataIndex: ['primaryCategory', 'name'], width: 120, render: (v: string) => v || '-' },
-                    { title: '操作', width: 80, render: (_: any, q: Question) => (
-                      <Button size="small" type="primary" onClick={() => handleAddQuestion(q)}>添加</Button>
-                    )},
+                    { title: '操作', width: 80, render: (_: any, q: Question) =>
+                      selectedQuestionIds.has(q.id) ? (
+                        <Button size="small" disabled>已添加</Button>
+                      ) : (
+                        <Button size="small" type="primary" onClick={() => handleAddQuestion(q)}>添加</Button>
+                      )
+                    },
                   ]}
                 />
               </Col>

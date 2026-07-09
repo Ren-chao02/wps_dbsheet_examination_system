@@ -309,7 +309,7 @@ export default function StudentManagement() {
       </div>
 
       {/* 筛选栏 */}
-      <Row gutter={12} style={{ marginBottom: 16 }} align="middle">
+      <Row gutter={[12, 8]} style={{ marginBottom: 16 }} align="middle">
         <Col>
           <Select
             placeholder="院系"
@@ -385,7 +385,7 @@ export default function StudentManagement() {
         okText="保存"
         cancelText="取消"
         width={560}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical">
           <Form.Item name="username" label="用户名" rules={editingStudent ? [] : [{ required: true, min: 2, message: '请输入用户名' }]}>
@@ -396,7 +396,9 @@ export default function StudentManagement() {
               <Input.Password placeholder="设置登录密码" />
             </Form.Item>
           )}
-          <Form.Item name="studentId" label="学号" rules={[{ required: true, message: '请输入学号' }]}>
+          <Form.Item name="studentId" label="学号" rules={[
+            { required: true, message: '请输入学号' },
+          ]}>
             <Input placeholder="学生学号" />
           </Form.Item>
           <Form.Item name="realName" label="姓名" rules={[{ required: true, message: '请输入姓名' }]}>
@@ -408,7 +410,9 @@ export default function StudentManagement() {
               <Radio value="FEMALE">女</Radio>
             </Radio.Group>
           </Form.Item>
-          <Form.Item name="phoneNumber" label="手机号">
+          <Form.Item name="phoneNumber" label="手机号" rules={[
+            { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号' },
+          ]}>
             <Input placeholder="手机号码" />
           </Form.Item>
           <Form.Item name="email" label="邮箱" rules={[{ type: 'email', message: '请输入有效邮箱' }]}>

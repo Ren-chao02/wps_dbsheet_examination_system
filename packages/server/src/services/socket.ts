@@ -30,6 +30,8 @@ interface StudentState {
 
 // examId → Map<studentId, StudentState>
 const examStudents = new Map<string, Map<string, StudentState>>();
+// socket.id → { examId, studentId }
+const socketStudentMap = new Map<string, { examId: string; studentId: string }>();
 
 let io: SocketServer | null = null;
 
@@ -66,6 +68,7 @@ export function initSocketIO(httpServer: HttpServer): SocketServer {
       };
 
       examStudents.get(examId)!.set(studentId, state);
+      socketStudentMap.set(socket.id, { examId, studentId });
 
       // 通知教师
       io!.to(`monitor:${examId}`).emit('monitor:join', {
@@ -143,13 +146,38 @@ export function initSocketIO(httpServer: HttpServer): SocketServer {
       });
     });
 
+    // 学生退出全屏
+    socket.on('exam:fullscreen-exit', (data: { examId: string; studentId: string; studentName: string }) => {
+      const students = examStudents.get(data.examId);
+      const student = students?.get(data.studentId);
+      if (student) {
+        io!.to(`monitor:${data.examId}`).emit('monitor:fullscreen-exit', {
+          studentId: data.studentId,
+          studentName: data.studentName,
+          occurredAt: new Date(),
+        });
+      }
+    });
+
     // 断开连接
     socket.on('disconnect', () => {
-      // Mark student offline across all exams
-      for (const [examId, students] of examStudents) {
-        for (const [studentId, student] of students) {
-          // Check if this socket was associated with this student
-          // (simplified: mark offline if no heartbeat in 60s)
+      const mapping = socketStudentMap.get(socket.id);
+      if (mapping) {
+        const { examId, studentId } = mapping;
+        socketStudentMap.delete(socket.id);
+        const students = examStudents.get(examId);
+        const student = students?.get(studentId);
+        if (student) {
+          student.online = false;
+          io!.to(`monitor:${examId}`).emit('monitor:update', {
+            studentId: student.studentId,
+            studentName: student.studentName,
+            currentQuestion: student.currentQuestion,
+            tabSwitchCount: student.tabSwitchCount,
+            lastHeartbeat: student.lastHeartbeat,
+            online: false,
+          });
+          console.log(`[Socket] 学生离线: ${student.studentName} -> exam:${examId}`);
         }
       }
       console.log(`[Socket] 断开: ${socket.id}`);

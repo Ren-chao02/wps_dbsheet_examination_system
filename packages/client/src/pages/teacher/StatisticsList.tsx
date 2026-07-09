@@ -12,8 +12,10 @@ import type { Exam, PaginatedResponse } from '../../types';
 const statusLabels: Record<string, { color: string; text: string }> = {
   draft: { color: 'default', text: '草稿' },
   published: { color: 'blue', text: '已发布' },
+  scheduled: { color: 'cyan', text: '已排期' },
   in_progress: { color: 'processing', text: '进行中' },
-  ended: { color: 'purple', text: '已结束' },
+  ended: { color: 'blue', text: '已结束' },
+  cancelled: { color: 'red', text: '已取消' },
   archived: { color: 'orange', text: '已归档' },
 };
 

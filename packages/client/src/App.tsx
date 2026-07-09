@@ -53,6 +53,7 @@ import AccountManagement from './pages/admin/AccountManagement';
 import AccountImport from './pages/admin/AccountImport';
 import SystemImportTaskList from './pages/admin/SystemImportTaskList';
 import CacheManagement from './pages/admin/CacheManagement';
+import LlmConfigManager from './pages/admin/LlmConfigManager';
 import { WpsTokenManager } from './pages/teacher/WpsTokenManager';
 
 function PrivateRoute({ children, roles, permissions }: { children: React.ReactNode; roles?: string[]; permissions?: string[] }) {
@@ -143,6 +144,7 @@ export default function App() {
         <Route path="applications" element={<ApplicationReview />} />
         <Route path="import-tasks" element={<ImportTaskList />} />
         <Route path="wps-token" element={<WpsTokenManager />} />
+        <Route path="llm-config" element={<LlmConfigManager />} />
       </Route>
 
       {/* Public - Student Join */}
@@ -160,6 +162,7 @@ export default function App() {
         <Route path="roles" element={<RoleManagement />} />
         <Route path="import-tasks" element={<SystemImportTaskList />} />
         <Route path="cache" element={<CacheManagement />} />
+        <Route path="llm-config" element={<LlmConfigManager />} />
       </Route>
 
       {/* Demo - 金山多维表格 API 测试 */}
