@@ -15,6 +15,7 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime'; // ✅ 导入相对时间插件
 import api from '../../services/api';
 import * as XLSX from 'xlsx'; // Excel导出库
+import { getSocketURL } from '../../config/socket-url';
 
 // ✅ 扩展dayjs以支持fromNow方法
 dayjs.extend(relativeTime);
@@ -74,14 +75,30 @@ export function EnhancedExamMonitor() {
   const [selectedStudent, setSelectedStudent] = useState<LiveStudent | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [rooms, setRooms] = useState<any[]>([]); // ✅ 考场列表
+  const [roomAssignments, setRoomAssignments] = useState<Map<string, { roomId: string; roomCode: string; roomName: string; seatNumber: number }>>(new Map());
   const socketRef = useRef<Socket | null>(null);
 
-  // ✅ 加载考场信息
+  // ✅ 加载考场与座位分配信息
   useEffect(() => {
     if (id) {
-      api.get(`/rooms?examId=${id}&pageSize=100`)
+      api.get(`/rooms?availableForExam=${id}&pageSize=100`)
         .then(res => setRooms(res.data?.data || []))
         .catch(err => console.error('加载考场失败:', err));
+
+      api.get(`/exams/${id}/room-assignments`)
+        .then(res => {
+          const map = new Map();
+          (res.data || []).forEach((a: any) => {
+            map.set(a.studentId, {
+              roomId: a.roomId,
+              roomCode: a.roomCode,
+              roomName: a.roomName,
+              seatNumber: a.seatNumber,
+            });
+          });
+          setRoomAssignments(map);
+        })
+        .catch(err => console.error('加载考场分配失败:', err));
     }
   }, [id]);
 
@@ -98,7 +115,7 @@ export function EnhancedExamMonitor() {
 
   // ✅ Socket.IO 连接（保持原有逻辑）
   useEffect(() => {
-    const socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
+    const socket = io(getSocketURL(), { transports: ['websocket', 'polling'] });
     socketRef.current = socket;
 
     socket.on('connect', () => {
@@ -154,6 +171,10 @@ export function EnhancedExamMonitor() {
       fetchData();
     });
 
+    socket.on('monitor:fullscreen-exit', (data: { studentId: string; studentName: string; occurredAt: string }) => {
+      message.warning(`${data.studentName || data.studentId} 退出全屏`, 3);
+    });
+
     return () => {
       socket.disconnect();
     };
@@ -163,15 +184,22 @@ export function EnhancedExamMonitor() {
     fetchData();
   }, [id]);
 
+  // ✅ 合并考场/座位信息
+  const enrichedStudents = useMemo(() => {
+    return Array.from(liveStudents.values()).map(s => ({
+      ...s,
+      ...roomAssignments.get(s.studentId),
+    }));
+  }, [liveStudents, roomAssignments]);
+
   // ✅ 计算统计数据
   const stats = useMemo(() => {
-    const students = Array.from(liveStudents.values());
     return {
-      total: students.length,
-      online: students.filter(s => s.online).length,
-      inProgress: students.filter(s => s.status === 'in_progress').length,
-      submitted: students.filter(s => s.status === 'submitted' || s.status === 'graded').length,
-      alerts: students.filter(s =>
+      total: enrichedStudents.length,
+      online: enrichedStudents.filter(s => s.online).length,
+      inProgress: enrichedStudents.filter(s => s.status === 'in_progress').length,
+      submitted: enrichedStudents.filter(s => s.status === 'submitted' || s.status === 'graded').length,
+      alerts: enrichedStudents.filter(s =>
         alertRules.enableAlert && (
           s.tabSwitchCount > alertRules.maxTabSwitches ||
           (s.online === false &&
@@ -179,23 +207,23 @@ export function EnhancedExamMonitor() {
         )
       ).length,
     };
-  }, [liveStudents, alertRules]);
+  }, [enrichedStudents, alertRules]);
 
   // ✅ 按考场分组数据
   const roomGroupedData = useMemo(() => {
     const grouped: Record<string, LiveStudent[]> = {};
-    Array.from(liveStudents.values()).forEach(student => {
+    enrichedStudents.forEach(student => {
       const roomId = student.roomId || 'unassigned';
       if (!grouped[roomId]) grouped[roomId] = [];
       grouped[roomId].push(student);
     });
     return grouped;
-  }, [liveStudents]);
+  }, [enrichedStudents]);
 
   // ✅ 数据导出功能
   const handleExport = (format: 'excel' | 'csv') => {
     try {
-      const exportData = Array.from(liveStudents.values()).map(student => ({
+      const exportData = enrichedStudents.map(student => ({
         '学生姓名': student.studentName,
         '学号': student.studentId,
         '状态': statusMap[student.status || 'pending']?.text || '未知',
@@ -404,7 +432,7 @@ export function EnhancedExamMonitor() {
             <Statistic
               title="已提交"
               value={stats.submitted}
-              valueStyle={{ color: '#722ed1' }}
+              valueStyle={{ color: '#1677ff' }}
               prefix={<CheckCircleOutlined />}
             />
           </Card>
@@ -435,7 +463,7 @@ export function EnhancedExamMonitor() {
       <Tabs activeKey={activeTab} onChange={setActiveTab}>
         <Tabs.TabPane tab="总览" key="overview">
           <Table
-            dataSource={Array.from(liveStudents.values())}
+            dataSource={enrichedStudents}
             rowKey="studentId"
             columns={columns}
             pagination={{ pageSize: 20 }}
@@ -507,7 +535,7 @@ export function EnhancedExamMonitor() {
         } key="alerts">
           {stats.alerts > 0 ? (
             <Table
-              dataSource={Array.from(liveStudents.values()).filter(student =>
+              dataSource={enrichedStudents.filter(student =>
                 alertRules.enableAlert && (
                   student.tabSwitchCount > alertRules.maxTabSwitches ||
                   (student.online === false &&

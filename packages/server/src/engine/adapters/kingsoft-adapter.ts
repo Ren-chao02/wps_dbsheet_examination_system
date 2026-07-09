@@ -314,7 +314,7 @@ export class KingsoftAdapter {
     sheetId: number,
     options?: { pageSize?: number; viewId?: string; fields?: string[] }
   ): Promise<RecordListResponse> {
-    const baseUrl = config.kingsoft.apiBaseUrl || V7_API_BASE;
+    const baseUrl = V7_API_BASE;
     const url = `${baseUrl}/${this.fileId}/sheets/${sheetId}/records`;
 
     const body: Record<string, any> = {
@@ -390,9 +390,7 @@ export class KingsoftAdapter {
    * 返回: { form_fields: [{ field_id, title, description, required }] }
    */
   async getFormFields(sheetId: number, viewId: string): Promise<{ field_id: string; title: string; description: string; required: boolean }[]> {
-    const baseUrl = config.kingsoft.apiBaseUrl || V7_API_BASE;
-    // 注意：表单字段API不在 /coop/ 路径下，使用 /dbsheet/ 路径
-    const dbsheetBaseUrl = baseUrl.replace('/coop/dbsheet', '/dbsheet');
+    const dbsheetBaseUrl = 'https://openapi.wps.cn/v7/dbsheet';
     const url = `${dbsheetBaseUrl}/${this.fileId}/sheets/${sheetId}/forms/${viewId}/fields`;
 
     const response = await fetch(url, {
@@ -430,6 +428,48 @@ export class KingsoftAdapter {
   }
 
   // ============================================================
+  // 写能力（v3 写接口，权限要求 kso.dbsheet.readwrite）
+  // ============================================================
+
+  /**
+   * 删除指定工作表（v3 写接口）
+   * WPS 开放平台：POST /kopen/office/file/:file_id/core/execute/sheets/delete
+   * 复用现有 requestV3（已支持 /core/execute{action} 模式）
+   * 权限要求：kso.dbsheet.readwrite
+   * 注：写操作固定走 v3 签名，调用方需确保 adapter 持有有效的 v3 access_token
+   */
+  async deleteSheet(sheetId: number): Promise<void> {
+    if (this.apiVersion === 'v7') {
+      throw new Error('写操作（deleteSheet）仅支持 v3 鉴权，请用 v3 access_token 创建 adapter');
+    }
+    await this.requestV3('/sheets/delete', { sheetId });
+  }
+
+  /**
+   * 重置文件：列出所有 sheet → 逐个删除，得到干净初始态
+   * 容错：单个 sheet 删除失败时记录日志继续，不阻断整体重置
+   * （WPS 多维表格删除全部工作表后会保留一个默认空表，不影响按表名判分）
+   */
+  async resetFile(): Promise<{ deletedCount: number; failed: number[] }> {
+    const schema = await this.getSchema();
+    const sheets = schema.detail.sheets || [];
+    let deletedCount = 0;
+    const failed: number[] = [];
+
+    for (const sheet of sheets) {
+      try {
+        await this.deleteSheet(sheet.id);
+        deletedCount++;
+      } catch (err) {
+        console.error(`[resetFile] 删除 sheet ${sheet.id} (${sheet.name}) 失败:`, err);
+        failed.push(sheet.id);
+      }
+    }
+
+    return { deletedCount, failed };
+  }
+
+  // ============================================================
   // 底层 HTTP 请求（v7: Bearer JWT / v3: WPS-3 签名）
   // ============================================================
 
@@ -448,7 +488,7 @@ export class KingsoftAdapter {
    *   '/record/list'   → POST /{file_id}/record/list
    */
   private async requestV7<T>(action: string, params: Record<string, any>): Promise<T> {
-    const baseUrl = config.kingsoft.apiBaseUrl || V7_API_BASE;
+    const baseUrl = V7_API_BASE;
 
     // 将内部 action 映射为 v7 RESTful 路径
     const routeMap: Record<string, { method: string; path: string }> = {
@@ -554,22 +594,42 @@ export class KingsoftAdapter {
 
 /**
  * tableSpaceId 格式约定：
+ *   "fileId"                   — 仅文件 ID，accessToken/apiSecret 从 config 回退
  *   "fileId:accessToken"
- *   或 "fileId:accessToken:apiSecret"
- *   或 "fileId:accessToken:apiSecret:v3"  （显式指定旧版鉴权）
+ *   "fileId:accessToken:apiSecret"
+ *   "fileId:accessToken:apiSecret:v3"  （显式指定旧版鉴权）
  *
  * 默认使用 v7 API（Bearer JWT）。
- * 如果未配置 tableSpaceId，返回 null（将使用 mock 模式）
+ * 当 accessToken 或 apiSecret 未提供时，回退到 KINGSOFT_API_KEY / KINGSOFT_API_SECRET 环境变量。
+ * 如果最终仍无有效凭证，返回 null。
  */
 export function createAdapterFromSpaceId(tableSpaceId: string | null | undefined): KingsoftAdapter | null {
   if (!tableSpaceId) return null;
 
   const parts = tableSpaceId.split(':');
+  // 纯 fileId（不含冒号）：回退使用环境变量中的凭证
+  if (parts.length === 1) {
+    const fileId = parts[0];
+    if (!fileId) return null;
+    const accessToken = config.kingsoft.apiKey;
+    if (!accessToken) return null;
+    return new KingsoftAdapter(fileId, accessToken, config.kingsoft.apiSecret, 'v7');
+  }
+
   if (parts.length < 2) return null;
 
-  const [fileId, accessToken, apiSecret, version] = parts;
-  if (!fileId || !accessToken) return null;
+  let [fileId, accessToken, apiSecret, version] = parts;
+  if (!fileId) return null;
+
+  // accessToken 为空时回退到环境变量
+  if (!accessToken) {
+    accessToken = config.kingsoft.apiKey;
+  }
+  if (!accessToken) return null;
+
+  // apiSecret 为空时回退到环境变量
+  const finalApiSecret = apiSecret || config.kingsoft.apiSecret;
 
   const apiVersion = (version === 'v3' ? 'v3' : 'v7') as 'v3' | 'v7';
-  return new KingsoftAdapter(fileId, accessToken, apiSecret, apiVersion);
+  return new KingsoftAdapter(fileId, accessToken, finalApiSecret, apiVersion);
 }

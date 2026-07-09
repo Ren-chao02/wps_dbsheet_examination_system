@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Card, Row, Col, Tree, Input, Button, Form, Empty, message, Popconfirm,
-  Space, Badge, Divider, Spin,
+  Space, Divider, Spin,
 } from 'antd';
 import {
   PlusOutlined, BankOutlined, BookOutlined, TeamOutlined,
@@ -212,14 +212,10 @@ export default function DepartmentManagement() {
   const titleRender = (nodeData: DataNode) => {
     const { type, id } = parseNodeKey(nodeData.key as string);
     const data = resolveNode(type, id);
-    const studentCount = type === 'class' ? (data as ClassRoom)?.studentCount : undefined;
 
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
         <span>{nodeData.title as string}</span>
-        {studentCount !== undefined && studentCount > 0 && (
-          <Badge count={studentCount} style={{ backgroundColor: '#1890ff' }} size="small" />
-        )}
         <Space size={4} style={{ marginLeft: 4 }} onClick={(e) => e.stopPropagation()}>
           {type !== 'class' && (
             <Button

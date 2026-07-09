@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
+import { skeletonGenerator } from '../engine/skeleton-generator';
+import { answerReverser } from '../engine/answer-reverser';
 
 export const questionRouter = Router();
 questionRouter.use(authenticate);
@@ -223,10 +225,13 @@ questionRouter.put('/:id', authorize('teacher', 'admin'), async (req: Request, r
 // DELETE /api/questions/:id
 questionRouter.delete('/:id', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
-    // Check if question is used in any exam
-    const used = await prisma.examQuestion.count({ where: { questionId: req.params.id } });
-    if (used > 0) {
-      return res.status(400).json({ message: '该题目已被考试引用，无法删除。请先归档' });
+    // 检查题目是否被考试或试卷引用
+    const [usedInExam, usedInPaper] = await Promise.all([
+      prisma.examQuestion.count({ where: { questionId: req.params.id } }),
+      prisma.paperQuestion.count({ where: { questionId: req.params.id } }),
+    ]);
+    if (usedInExam > 0 || usedInPaper > 0) {
+      return res.status(400).json({ message: '该题目已被考试或试卷引用，无法删除。可先将其禁用' });
     }
     await prisma.question.delete({ where: { id: req.params.id } });
     res.json({ message: '删除成功' });
@@ -239,10 +244,10 @@ questionRouter.delete('/:id', authorize('teacher', 'admin'), async (req: Request
   }
 });
 
-// PUT /api/questions/:id/status
+// PUT /api/questions/:id/status - 切换题目启用/禁用状态
 questionRouter.put('/:id/status', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
-    const { status } = z.object({ status: z.enum(['draft', 'published', 'archived']) }).parse(req.body);
+    const { status } = z.object({ status: z.enum(['draft', 'published']) }).parse(req.body);
     const question = await prisma.question.update({
       where: { id: req.params.id },
       data: { status },
@@ -250,12 +255,76 @@ questionRouter.put('/:id/status', authorize('teacher', 'admin'), async (req: Req
     res.json(question);
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ message: '参数错误', errors: err.errors });
+      return res.status(400).json({ message: '参数错误，状态值只能是 published（启用）或 draft（禁用）' });
     }
     if (err.code === 'P2025') {
       return res.status(404).json({ message: '题目不存在' });
     }
     console.error('Error updating question status:', err);
     res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// ============================================================
+// 出题辅助：题目骨架生成 + 标准答案反向生成规则
+// @see docs/superpowers/specs/2026-07-07-exam-authoring-assist.md §4.4
+// ============================================================
+
+/**
+ * POST /api/questions/skeleton
+ * 根据勾选能力生成题目骨架（标题/描述/规则模板/建议分值）。
+ * 生成的 ruleTemplates 含占位符，后续由 reverse-rules 用标准答案填充。
+ */
+const skeletonSchema = z.object({
+  capabilityIds: z.array(z.string().min(1)).min(1, '至少选择一个能力'),
+  difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
+});
+
+questionRouter.post('/skeleton', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
+  try {
+    const parsed = skeletonSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: '参数错误', errors: parsed.error.flatten() });
+    }
+    const skeleton = skeletonGenerator.generate(parsed.data);
+    res.json(skeleton);
+  } catch (err: any) {
+    console.error('Error generating skeleton:', err);
+    res.status(500).json({ message: '生成题目骨架失败', detail: err.message });
+  }
+});
+
+/**
+ * POST /api/questions/reverse-rules
+ * 从标准答案的真实 Schema 反向生成 answerRules（参数 100% 真实）。
+ * 调用 KingsoftAdapter.getSchema()，accessToken 过期透传 401。
+ */
+const reverseRulesSchema = z.object({
+  capabilities: z.array(z.string().min(1)).min(1, '至少选择一个能力'),
+  fileId: z.string().min(1, 'fileId 必填'),
+  accessToken: z.string().min(1, 'accessToken 必填'),
+  apiSecret: z.string().optional(),
+});
+
+questionRouter.post('/reverse-rules', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
+  try {
+    const parsed = reverseRulesSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: '参数错误', errors: parsed.error.flatten() });
+    }
+    const output = await answerReverser.reverse(parsed.data);
+    res.json(output);
+  } catch (err: any) {
+    const msg = err.message || '';
+    // accessToken 过期/无效 → 400（非 401，避免触发前端全局登录跳转）
+    const isAuthError =
+      err.status === 401 ||
+      err.response?.status === 401 ||
+      /401|Unauthorized|invalid token|access_token/i.test(msg);
+    if (isAuthError) {
+      return res.status(400).json({ message: 'WPS 访问令牌无效或已过期，请重新获取', detail: msg });
+    }
+    console.error('Error reversing rules:', err);
+    res.status(500).json({ message: '反向生成规则失败', detail: msg });
   }
 });

@@ -14,14 +14,12 @@ const roomCreateSchema = z.object({
   capacity: z.number().int().positive(), // 容纳人数
   location: z.string().max(256).optional(), // 物理位置
   equipment: z.array(z.any()).default([]), // 设备列表
-  examId: z.string().uuid(), // 所属考试ID
 });
 
-const roomUpdateSchema = roomCreateSchema.partial().omit({ examId: true }); // 不允许修改所属考试
+const roomUpdateSchema = roomCreateSchema.partial();
 
 // 批量导入Schema（支持Excel格式数据）
 const bulkImportSchema = z.object({
-  examId: z.string().uuid(),
   rooms: z.array(z.object({
     code: z.string().min(1).max(64),
     name: z.string().min(1).max(128),
@@ -33,12 +31,11 @@ const bulkImportSchema = z.object({
 // GET /api/rooms - 获取考场列表（支持按考试筛选）
 roomRouter.get('/', async (req: Request, res: Response) => {
   try {
-    const { page = '1', pageSize = '20', examId, status, keyword } = req.query;
+    const { page = '1', pageSize = '20', status, keyword, availableForExam } = req.query;
     const skip = (Number(page) - 1) * Number(pageSize);
     const take = Number(pageSize);
 
     const where: any = {};
-    if (examId) where.examId = String(examId);
     if (status) where.status = String(status);
     if (keyword) {
       where.OR = [
@@ -55,16 +52,56 @@ roomRouter.get('/', async (req: Request, res: Response) => {
         take,
         orderBy: { code: 'asc' },
         include: {
-          exam: { select: { id: true, title: true } },
           invigilators: { select: { id: true, realName: true, username: true } },
-          _count: { select: { students: true } }, // 已分配学生数
+          assignments: {
+            select: { _count: { select: { students: true } } },
+          },
         },
       }),
       prisma.examRoom.count({ where }),
     ]);
 
+    // 将嵌套的 assignments._count.students 聚合为顶层的 _count.students
+    const roomsWithCount = rooms.map((room) => ({
+      ...room,
+      _count: {
+        students: (room as any).assignments.reduce(
+          (sum: number, a: any) => sum + a._count.students, 0
+        ),
+      },
+    }));
+
+    // 如果指定了 availableForExam，则检查每个考场在该考试时间段是否有冲突的预约
+    let result = roomsWithCount;
+    if (availableForExam) {
+      const exam = await prisma.exam.findUnique({
+        where: { id: String(availableForExam) },
+        select: { startTime: true, endTime: true },
+      });
+      if (exam && exam.startTime && exam.endTime) {
+        result = await Promise.all(
+          roomsWithCount.map(async (room) => {
+            const conflicts = await prisma.examRoomAssignment.findMany({
+              where: {
+                roomId: room.id,
+                status: { in: ['scheduled', 'in_progress'] },
+                exam: {
+                  startTime: { lt: exam.endTime! },
+                  endTime: { gt: exam.startTime! },
+                },
+              },
+              include: {
+                exam: { select: { id: true, title: true, startTime: true, endTime: true } },
+              },
+            });
+            return { ...room, conflicts };
+          })
+        );
+      }
+    }
+
     res.json({
-      data: rooms,
+      data: result,
       total,
       page: Number(page),
       pageSize: Number(pageSize),
@@ -75,39 +112,34 @@ roomRouter.get('/', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/rooms/:id - 获取考场详情（含已分配学生列表）
+// GET /api/rooms/:id - 获取考场详情（含关联预约、学生列表）
 roomRouter.get('/:id', async (req: Request, res: Response) => {
   try {
     const room = await prisma.examRoom.findUnique({
       where: { id: req.params.id },
       include: {
-        exam: {
-          select: {
-            id: true,
-            title: true,
-            mode: true,
-            startTime: true,
-            endTime: true,
+        assignments: {
+          include: {
+            exam: { select: { id: true, title: true, startTime: true, endTime: true } },
+            students: {
+              include: {
+                student: {
+                  select: {
+                    id: true,
+                    realName: true,
+                    username: true,
+                    studentId: true,
+                    classRoom: { select: { name: true, code: true } },
+                  },
+                },
+              },
+            },
           },
+          orderBy: { createdAt: 'desc' },
         },
         invigilators: {
           select: { id: true, realName: true, username: true, email: true },
         },
-        students: {
-          include: {
-            student: {
-              select: {
-                id: true,
-                username: true,
-                realName: true,
-                studentId: true,
-                classRoom: { select: { name: true, code: true } },
-              },
-            },
-          },
-          orderBy: { seatNumber: 'asc' },
-        },
-        _count: { select: { students: true } },
       },
     });
 
@@ -115,7 +147,20 @@ roomRouter.get('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ message: '考场不存在' });
     }
 
-    res.json(room);
+    // 将嵌套的 assignments[].students 展平到顶层
+    const allStudents = room.assignments.flatMap((a: any) =>
+      a.students.map((s: any) => ({
+        studentId: s.studentId,
+        seatNumber: s.seatNumber,
+        student: s.student,
+      }))
+    );
+
+    res.json({
+      ...room,
+      _count: { students: allStudents.length },
+      students: allStudents,
+    });
   } catch (error) {
     console.error('获取考场详情失败:', error);
     res.status(500).json({ message: '服务器错误' });
@@ -127,25 +172,13 @@ roomRouter.post('/', async (req: Request, res: Response) => {
   try {
     const data = roomCreateSchema.parse(req.body);
 
-    // 验证考试是否存在
-    const exam = await prisma.exam.findUnique({ where: { id: data.examId } });
-    if (!exam) {
-      return res.status(400).json({ message: '指定的考试不存在' });
-    }
-
     // 检查编码是否重复
     const existing = await prisma.examRoom.findUnique({ where: { code: data.code } });
     if (existing) {
       return res.status(400).json({ message: `考场编码 "${data.code}" 已存在` });
     }
 
-    const room = await prisma.examRoom.create({
-      data,
-      include: {
-        exam: { select: { id: true, title: true } },
-        _count: { select: { students: true } },
-      },
-    });
+    const room = await prisma.examRoom.create({ data });
 
     res.status(201).json(room);
   } catch (err: any) {
@@ -160,13 +193,7 @@ roomRouter.post('/', async (req: Request, res: Response) => {
 // POST /api/rooms/bulk-import - 批量导入考场（核心功能✨）
 roomRouter.post('/bulk-import', async (req: Request, res: Response) => {
   try {
-    const { examId, rooms } = bulkImportSchema.parse(req.body);
-
-    // 验证考试是否存在
-    const exam = await prisma.exam.findUnique({ where: { id: examId } });
-    if (!exam) {
-      return res.status(400).json({ message: '指定的考试不存在' });
-    }
+    const { rooms } = bulkImportSchema.parse(req.body);
 
     // 检查是否有重复的编码
     const codes = rooms.map(r => r.code);
@@ -191,18 +218,12 @@ roomRouter.post('/bulk-import', async (req: Request, res: Response) => {
 
     // 批量创建考场
     const createdRooms = await prisma.examRoom.createMany({
-      data: rooms.map(room => ({
-        ...room,
-        examId,
-      })),
+      data: rooms,
     });
 
     // 返回新创建的考场列表
     const newRooms = await prisma.examRoom.findMany({
       where: { code: { in: codes } },
-      include: {
-        exam: { select: { id: true, title: true } },
-      },
       orderBy: { code: 'asc' },
     });
 
@@ -241,10 +262,6 @@ roomRouter.put('/:id', async (req: Request, res: Response) => {
     const updated = await prisma.examRoom.update({
       where: { id: req.params.id },
       data,
-      include: {
-        exam: { select: { id: true, title: true } },
-        _count: { select: { students: true } },
-      },
     });
 
     res.json(updated);
@@ -262,15 +279,20 @@ roomRouter.delete('/:id', async (req: Request, res: Response) => {
   try {
     const existing = await prisma.examRoom.findUnique({
       where: { id: req.params.id },
-      include: { _count: { select: { students: true } } },
+      include: {
+        assignments: {
+          where: { status: { in: ['scheduled', 'in_progress'] } },
+          select: { id: true },
+        },
+      },
     });
 
     if (!existing) {
       return res.status(404).json({ message: '考场不存在' });
     }
-    if (existing._count.students > 0) {
+    if (existing.assignments.length > 0) {
       return res.status(400).json({
-        message: `该考场已分配 ${existing._count.students} 名学生，请先移除学生后再删除`,
+        message: '该考场有正在进行的预约，无法删除。请先取消预约后再删除',
       });
     }
 
@@ -282,204 +304,6 @@ roomRouter.delete('/:id', async (req: Request, res: Response) => {
     }
     console.error('删除考场失败:', err);
     res.status(500).json({ message: '删除失败' });
-  }
-});
-
-// POST /api/rooms/:id/invigilators/:userId - 分配监考老师
-roomRouter.post('/:id/invigilators/:userId', async (req: Request, res: Response) => {
-  try {
-    const room = await prisma.examRoom.findUnique({ where: { id: req.params.id } });
-    if (!room) {
-      return res.status(404).json({ message: '考场不存在' });
-    }
-
-    // 验证用户是否存在且是老师或管理员
-    const user = await prisma.user.findUnique({
-      where: { id: req.params.userId },
-      select: { id: true, role: true, realName: true },
-    });
-
-    if (!user || !['teacher', 'admin'].includes(user.role)) {
-      return res.status(400).json({ message: '只能分配老师或管理员作为监考' });
-    }
-
-    // 检查是否已经分配过
-    if (room.invigilators.some(inv => inv.id === req.params.userId)) {
-      return res.status(400).json({ message: `${user.realName} 已经是该考场的监考老师` });
-    }
-
-    const updated = await prisma.examRoom.update({
-      where: { id: req.params.id },
-      data: {
-        invigilators: { connect: { id: req.params.userId } },
-      },
-      include: {
-        invigilators: { select: { id: true, realName: true, username: true } },
-      },
-    });
-
-    res.json({
-      message: `成功分配监考老师: ${user.realName}`,
-      data: updated.invigilators,
-    });
-  } catch (error) {
-    console.error('分配监考失败:', error);
-    res.status(500).json({ message: '分配失败' });
-  }
-});
-
-// DELETE /api/rooms/:id/invigilators/:userId - 移除监考老师
-roomRouter.delete('/:id/invigilators/:userId', async (req: Request, res: Response) => {
-  try {
-    const updated = await prisma.examRoom.update({
-      where: { id: req.params.id },
-      data: {
-        invigilators: { disconnect: { id: req.params.userId } },
-      },
-      include: {
-        invigilators: { select: { id: true, realName: true, username: true } },
-      },
-    });
-
-    res.json({ message: '移除成功', data: updated.invigilators });
-  } catch (error) {
-    console.error('移除监考失败:', error);
-    res.status(500).json({ message: '移除失败' });
-  }
-});
-
-// POST /api/rooms/:id/students/batch-assign - 批量分配学生到考场（核心功能✨）
-roomRouter.post('/:id/students/batch-assign', async (req: Request, res: Response) => {
-  try {
-    const schema = z.object({
-      studentIds: z.array(z.string().uuid()).min(1).max(50), // 单次最多分配50人
-    });
-
-    const { studentIds } = schema.parse(req.body);
-
-    const room = await prisma.examRoom.findUnique({
-      where: { id: req.params.id },
-      include: {
-        _count: { select: { students: true } },
-        students: { select: { studentId: true } },
-      },
-    });
-
-    if (!room) {
-      return res.status(404).json({ message: '考场不存在' });
-    }
-
-    // 检查容量是否足够
-    const currentCount = room._count.students;
-    const availableCapacity = room.capacity - currentCount;
-
-    if (studentIds.length > availableCapacity) {
-      return res.status(400).json({
-        message: `考场容量不足，剩余座位: ${availableCapacity}，尝试分配: ${studentIds.length}`,
-        available: availableCapacity,
-        requested: studentIds.length,
-      });
-    }
-
-    // 验证所有学生是否存在
-    const students = await prisma.user.findMany({
-      where: {
-        id: { in: studentIds },
-        role: 'student',
-      },
-      select: { id: true, realName: true, studentId: true },
-    });
-
-    if (students.length !== studentIds.length) {
-      const foundIds = students.map(s => s.id);
-      const missingIds = studentIds.filter(id => !foundIds.includes(id));
-      return res.status(400).json({
-        message: `以下学生ID不存在或不是学生角色: ${missingIds.join(', ')}`,
-        missing: missingIds,
-      });
-    }
-
-    // 检查是否已在其他考场或本考场
-    const existingAssignments = await prisma.examRoomStudent.findMany({
-      where: {
-        roomId: req.params.id,
-        studentId: { in: studentIds },
-      },
-      select: { studentId: true },
-    });
-
-    const alreadyAssigned = existingAssignments.map(a => a.studentId);
-    const newStudents = studentIds.filter(id => !alreadyAssigned.includes(id));
-
-    if (newStudents.length === 0) {
-      return res.status(400).json({
-        message: '所有选中的学生已经在该考场中',
-        alreadyAssigned,
-      });
-    }
-
-    // 计算起始座位号
-    const startSeatNumber = currentCount + 1;
-
-    // 批量创建座位分配
-    const assignments = await prisma.examRoomStudent.createMany({
-      data: newStudents.map((studentId, index) => ({
-        roomId: req.params.id,
-        studentId,
-        seatNumber: startSeatNumber + index,
-      })),
-    });
-
-    // 返回更新后的考场信息
-    const updatedRoom = await prisma.examRoom.findUnique({
-      where: { id: req.params.id },
-      include: {
-        students: {
-          include: {
-            student: {
-              select: { id: true, realName: true, studentId: true },
-            },
-          },
-          orderBy: { seatNumber: 'asc' },
-        },
-        _count: { select: { students: true } },
-      },
-    });
-
-    res.status(201).json({
-      message: `成功分配 ${assignments.count} 名学生到考场`,
-      assignedCount: assignments.count,
-      skippedCount: alreadyAssigned.length,
-      data: updatedRoom?.students,
-    });
-  } catch (err: any) {
-    if (err instanceof z.ZodError) {
-      return res.status(400).json({ message: '参数错误', errors: err.errors });
-    }
-    console.error('批量分配学生失败:', err);
-    res.status(500).json({ message: '分配失败' });
-  }
-});
-
-// DELETE /api/rooms/:id/students/:studentId - 移除单个学生
-roomRouter.delete('/:id/students/:studentId', async (req: Request, res: Response) => {
-  try {
-    await prisma.examRoomStudent.delete({
-      where: {
-        roomId_studentId: {
-          roomId: req.params.id,
-          studentId: req.params.studentId,
-        },
-      },
-    });
-
-    res.json({ message: '移除成功' });
-  } catch (err: any) {
-    if (err.code === 'P2025') {
-      return res.status(404).json({ message: '该学生未在此考场中' });
-    }
-    console.error('移除学生失败:', err);
-    res.status(500).json({ message: '移除失败' });
   }
 });
 

@@ -129,11 +129,11 @@ accountRouter.put('/:id/enable', async (req: Request, res: Response) => {
 const createAccountSchema = z.object({
   username: z.string().min(2).max(64),
   password: z.string().min(6),
-  realName: z.string().optional(),
-  email: z.string().email().optional(),
+  realName: z.string().optional().nullable(),
+  email: z.string().email().optional().nullable(),
   role: z.enum(['admin', 'teacher']).default('teacher'),
-  gender: z.enum(['MALE', 'FEMALE', 'UNSET']).optional(),
-  remark: z.string().max(512).optional(),
+  gender: z.enum(['MALE', 'FEMALE', 'UNSET']).optional().nullable(),
+  remark: z.string().max(512).optional().nullable(),
   systemRoleId: z.string().uuid().optional().nullable(),
 });
 
@@ -196,7 +196,7 @@ accountRouter.post('/', async (req: Request, res: Response) => {
 const updateAccountSchema = z.object({
   realName: z.string().optional(),
   email: z.string().email().optional().nullable(),
-  role: z.enum(['admin', 'teacher', 'student']).optional(),
+  role: z.enum(['admin', 'teacher']).optional(),
   gender: z.enum(['MALE', 'FEMALE', 'UNSET']).optional().nullable(),
   remark: z.string().max(512).optional().nullable(),
   systemRoleId: z.string().uuid().optional().nullable(),

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Form, Input, Select, InputNumber, Button, Card, message, Spin, Space, Row, Col, Switch, Table, Tag, Modal } from 'antd';
+import { Form, Input, Select, InputNumber, Button, Card, message, Spin, Space, Row, Col, Switch, Table, Tag, Modal, DatePicker } from 'antd';
 import { SaveOutlined, ArrowLeftOutlined, BookOutlined, EyeOutlined, LinkOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { Paper, PaperQuestion } from '../../types';
 
@@ -17,6 +18,8 @@ export function ExamForm() {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
   const [paperQuestions, setPaperQuestions] = useState<PaperQuestion[]>([]);
+  const [existingExam, setExistingExam] = useState<any>(null);
+  const [batches, setBatches] = useState<any[]>([]);
   const isEdit = !!id;
 
   useEffect(() => {
@@ -24,21 +27,34 @@ export function ExamForm() {
       setLoading(true);
       api.get(`/exams/${id}`).then(res => {
         const e = res.data;
+        setExistingExam(e);
+        const settings = typeof e.settings === 'object' && e.settings !== null ? e.settings : {};
         form.setFieldsValue({
           title: e.title,
           description: e.description,
           mode: e.mode,
           durationMinutes: e.durationMinutes,
           passScore: e.passScore,
-          shuffleQuestions: e.settings?.shuffleQuestions || false,
+          shuffleQuestions: settings.shuffleQuestions === true,
           paperId: e.paperId,
+          batchId: e.batchId,
+          startTime: e.startTime ? dayjs(e.startTime) : undefined,
+          endTime: e.endTime ? dayjs(e.endTime) : undefined,
         });
         if (e.paperId) {
           loadPaper(e.paperId);
         }
       }).catch(() => message.error('加载失败')).finally(() => setLoading(false));
     }
+    fetchBatches();
   }, [id]);
+
+  const fetchBatches = async () => {
+    try {
+      const res = await api.get('/batches?pageSize=200');
+      setBatches(res.data?.data || []);
+    } catch { /* ignore */ }
+  };
 
   const loadPaper = async (paperId: string) => {
     try {
@@ -64,8 +80,14 @@ export function ExamForm() {
     try {
       const payload = {
         ...values,
+        paperId: values.paperId || null,
+        durationMinutes: values.durationMinutes ?? null,
+        passScore: values.passScore ?? null,
+        startTime: values.startTime ? values.startTime.toISOString() : null,
+        endTime: values.endTime ? values.endTime.toISOString() : null,
         settings: {
-          shuffleQuestions: values.shuffleQuestions || false,
+          ...(typeof existingExam?.settings === 'object' && existingExam?.settings !== null ? existingExam.settings : {}),
+          shuffleQuestions: values.shuffleQuestions === true,
         },
       };
       delete payload.shuffleQuestions;
@@ -78,7 +100,12 @@ export function ExamForm() {
         navigate(`/teacher/exams/${res.data.id}/edit`);
       }
     } catch (err: any) {
-      message.error(err.response?.data?.message || '保存失败');
+      const errors = err.response?.data?.errors;
+      if (errors?.length) {
+        message.error(errors.map((e: any) => `${e.path?.join('.')}: ${e.message}`).join('; '));
+      } else {
+        message.error(err.response?.data?.message || '保存失败');
+      }
     } finally {
       setSaving(false);
     }
@@ -112,7 +139,7 @@ export function ExamForm() {
         <Button type="primary" icon={<SaveOutlined />} onClick={() => form.submit()} loading={saving}>保存</Button>
       </div>
 
-      <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ mode: 'exam', durationMinutes: 60 }}>
+      <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ mode: 'exam' }}>
         <Card title="基本信息" style={{ marginBottom: 16 }}>
           <Form.Item name="title" label="考试名称" rules={[{ required: true }]}>
             <Input placeholder="如：多维表格基础操作考核" />
@@ -134,6 +161,25 @@ export function ExamForm() {
             <Col span={8}>
               <Form.Item name="passScore" label="及格线（分）">
                 <InputNumber min={0} max={1000} style={{ width: '100%' }} placeholder="不设及格线" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="batchId" label="所属批次">
+            <Select placeholder="选择批次以继承公共参数（可选）" allowClear showSearch optionFilterProp="children">
+              {batches.map((b: any) => (
+                <Select.Option key={b.id} value={b.id}>{b.name}</Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="startTime" label="考试开始时间">
+                <DatePicker showTime style={{ width: '100%' }} placeholder="选择开始时间" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="endTime" label="考试结束时间">
+                <DatePicker showTime style={{ width: '100%' }} placeholder="选择结束时间" />
               </Form.Item>
             </Col>
           </Row>
@@ -190,13 +236,9 @@ export function ExamForm() {
           <Card title="发布管理" style={{ marginBottom: 16 }}>
             <Space>
               <Button onClick={async () => {
-                try { await api.post(`/exams/${id}/publish`); message.success('已发布'); window.location.reload(); }
+                try { await api.post(`/exams/${id}/publish`); message.success('已发布'); navigate('/teacher/exams'); }
                 catch (err: any) { message.error(err.response?.data?.message || '发布失败'); }
               }}>发布考试</Button>
-              <Button onClick={async () => {
-                try { await api.post(`/exams/${id}/start`); message.success('考试已开始'); window.location.reload(); }
-                catch (err: any) { message.error(err.response?.data?.message || '失败'); }
-              }}>开始考试</Button>
               <Button onClick={async () => {
                 try { await api.post(`/exams/${id}/end`); message.success('考试已结束'); window.location.reload(); }
                 catch (err: any) { message.error(err.response?.data?.message || '失败'); }

@@ -21,7 +21,11 @@ const difficultyConfig: Record<string, { label: string; color: string }> = {
 const statusConfig: Record<string, { label: string; color: string }> = {
   draft: { label: '草稿', color: 'default' },
   published: { label: '已发布', color: 'green' },
-  archived: { label: '已归档', color: 'gray' },
+  scheduled: { label: '已排期', color: 'cyan' },
+  in_progress: { label: '进行中', color: 'processing' },
+  ended: { label: '已结束', color: 'blue' },
+  cancelled: { label: '已取消', color: 'red' },
+  archived: { label: '已归档', color: 'orange' },
 };
 
 export const QuestionDetailDrawer: React.FC<QuestionDetailDrawerProps> = ({
@@ -65,7 +69,7 @@ export const QuestionDetailDrawer: React.FC<QuestionDetailDrawerProps> = ({
       </Descriptions>
 
       {/* 知识点分类区域 */}
-      <Divider orientation="left">知识点分类</Divider>
+      <Divider titlePlacement="left">知识点分类</Divider>
       <Descriptions bordered column={2} size="small">
         <Descriptions.Item label="一级分类" span={1}>
           {question.primaryCategory ? (
@@ -85,7 +89,7 @@ export const QuestionDetailDrawer: React.FC<QuestionDetailDrawerProps> = ({
       </Descriptions>
 
       {/* 元数据信息区域 */}
-      <Divider orientation="left">元数据信息</Divider>
+      <Divider titlePlacement="left">元数据信息</Divider>
       <Descriptions bordered column={2} size="small">
         <Descriptions.Item label="出题老师" span={1}>
           {question.teacherName || (
@@ -115,7 +119,7 @@ export const QuestionDetailDrawer: React.FC<QuestionDetailDrawerProps> = ({
       {/* 题目内容区域 */}
       {question.description && (
         <>
-          <Divider orientation="left">题目内容</Divider>
+          <Divider titlePlacement="left">题目内容</Divider>
           <div
             style={{
               background: '#fafafa',
@@ -132,7 +136,7 @@ export const QuestionDetailDrawer: React.FC<QuestionDetailDrawerProps> = ({
       {/* 提示信息 */}
       {question.hints && (
         <>
-          <Divider orientation="left">操作提示</Divider>
+          <Divider titlePlacement="left">操作提示</Divider>
           <div
             style={{
               background: '#e6f7ff',
@@ -150,7 +154,7 @@ export const QuestionDetailDrawer: React.FC<QuestionDetailDrawerProps> = ({
       {/* 标签区域 */}
       {question.tags && question.tags.length > 0 && (
         <>
-          <Divider orientation="left">标签</Divider>
+          <Divider titlePlacement="left">标签</Divider>
           <Space wrap>
             {question.tags.map((tag, index) => (
               <Tag key={index} color="geekblue">
@@ -164,7 +168,7 @@ export const QuestionDetailDrawer: React.FC<QuestionDetailDrawerProps> = ({
       {/* 评分规则区域 */}
       {question.answerRules && question.answerRules.length > 0 && (
         <>
-          <Divider orientation="left">评分规则</Divider>
+          <Divider titlePlacement="left">评分规则</Divider>
           <div
             style={{
               background: '#f6ffed',

@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Apple Developer Style - 导航栏重设计效果图</title>
+<style>
+  :root {
+    --bg-primary: #f5f5f7;
+    --bg-surface: rgba(255,255,255,0.85);
+    --bg-sidebar: #fafafa;
+    --text-primary: #1d1d1f;
+    --text-secondary: #86868b;
+    --text-tertiary: #aeaeaf;
+    --border-color: #d2d2d7;
+    --border-light: #e8e8ed;
+    --accent: #0071e3;
+    --accent-hover: #0077ed;
+    --accent-bg: rgba(0,113,227,0.08);
+    --red: #ff3b30;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 18px;
+    --radius-xl: 24px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+    --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--font-system);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Top Header (Apple Dev Style) ── */
+  .top-header {
+    position: fixed; top: 0; left: 0; right: 0; height: 52px;
+    background: var(--bg-surface);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 1px solid var(--border-light);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; z-index: 200;
+  }
+  .header-brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 600; font-size: 15px; color: var(--text-primary);
+  }
+  .header-brand .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  }
+  .header-tabs {
+    display: flex; gap: 4px;
+    background: rgba(0,0,0,0.03); border-radius: var(--radius-lg);
+    padding: 3px;
+  }
+  .header-tab {
+    padding: 6px 18px; border-radius: var(--radius-lg);
+    font-size: 13px; font-weight: 500; color: var(--text-secondary);
+    cursor: pointer; transition: all 0.18s ease;
+    border: none; background: none;
+    font-family: var(--font-system);
+    white-space: nowrap;
+  }
+  .header-tab:hover { color: var(--text-primary); }
+  .header-tab.active {
+    background: #fff; color: var(--text-primary);
+    box-shadow: var(--shadow-sm);
+  }
+  .header-actions {
+    display: flex; align-items: center; gap: 16px;
+  }
+  .header-icon {
+    width: 36px; height: 36px; border-radius: var(--radius-md);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 0.15s ease;
+    font-size: 16px; color: var(--text-secondary);
+  }
+  .header-icon:hover { background: rgba(0,0,0,0.05); color: var(--text-primary); }
+  .header-avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: linear-gradient(135deg, #0071e3, #5ac8fa);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+
+  /* ── Sidebar (Apple Dev Style) ── */
+  .sidebar {
+    position: fixed; left: 0; top: 52px; bottom: 0; width: 220px;
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border-light);
+    padding: 20px 12px;
+    overflow-y: auto; z-index: 100;
+    transition: width 0.2s ease;
+  }
+  .sidebar.collapsed { width: 68px; padding: 20px 6px; }
+  .sidebar-section {
+    margin-bottom: 24px;
+  }
+  .sidebar-section-title {
+    font-size: 11px; font-weight: 600; color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    padding: 0 12px; margin-bottom: 6px;
+  }
+  .sidebar.collapsed .sidebar-section-title { display: none; }
+  .sidebar-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; margin-bottom: 2px;
+    border-radius: var(--radius-md);
+    font-size: 13px; color: var(--text-secondary);
+    cursor: pointer; transition: all 0.15s ease;
+    font-weight: 450;
+    position: relative;
+  }
+  .sidebar-item:hover { background: rgba(0,0,0,0.04); color: var(--text-primary); }
+  .sidebar-item.active {
+    background: var(--accent-bg); color: var(--accent);
+    font-weight: 550;
+  }
+  .sidebar-item .icon {
+    width: 20px; text-align: center; font-size: 16px;
+    flex-shrink: 0;
+  }
+  .sidebar-item .label {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sidebar.collapsed .sidebar-item .label { display: none; }
+  .sidebar.collapsed .sidebar-item {
+    justify-content: center; padding: 10px 6px;
+  }
+  .sidebar-badge {
+    margin-left: auto; background: var(--red); color: #fff;
+    font-size: 10px; padding: 2px 6px; border-radius: 10px;
+    font-weight: 600;
+  }
+  .sidebar.collapsed .sidebar-badge { display: none; }
+
+  /* ── Main Content ── */
+  .main-content {
+    margin-left: 220px; margin-top: 52px; padding: 32px;
+    min-height: calc(100vh - 52px);
+    transition: margin-left 0.2s ease;
+  }
+  .main-content.sidebar-collapsed { margin-left: 68px; }
+
+  /* ── Demo Cards ── */
+  .demo-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
+  }
+  .demo-card {
+    background: #fff; border-radius: var(--radius-xl);
+    border: 1px solid var(--border-light);
+    padding: 24px; box-shadow: var(--shadow-sm);
+    transition: all 0.2s ease;
+  }
+  .demo-card:hover { box-shadow: var(--shadow-md); }
+  .demo-card h3 { font-size: 15px; margin-bottom: 8px; }
+  .demo-card p { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+
+  /* ── Toggle Button ── */
+  .toggle-btn {
+    position: fixed; bottom: 24px; left: 24px;
+    background: var(--bg-surface); backdrop-filter: blur(20px);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg); padding: 8px 16px;
+    font-size: 13px; cursor: pointer; z-index: 300;
+    box-shadow: var(--shadow-md); transition: all 0.2s ease;
+    font-family: var(--font-system); color: var(--text-secondary);
+  }
+  .toggle-btn:hover { color: var(--accent); }
+
+  /* ── Version labels ── */
+  .version-label {
+    text-align: center; padding: 40px 0 20px;
+    font-size: 13px; color: var(--text-tertiary);
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 1024px) {
+    .demo-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="top-header">
+  <div class="header-brand">
+    <div class="dot"></div>
+    <span>考试系统</span>
+  </div>
+
+  <div class="header-tabs">
+    <button class="header-tab active">工作台</button>
+    <button class="header-tab">题库与试卷</button>
+    <button class="header-tab">考务管理</button>
+    <button class="header-tab">阅卷管理</button>
+    <button class="header-tab">学生管理</button>
+    <button class="header-tab">缓存管理</button>
+  </div>
+
+  <div class="header-actions">
+    <div class="header-icon" title="通知">🔔</div>
+    <div class="header-icon" title="设置">⚙️</div>
+    <div class="header-avatar">张</div>
+  </div>
+</div>
+
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-section">
+    <div class="sidebar-section-title">概览</div>
+    <div class="sidebar-item active">
+      <span class="icon">📊</span>
+      <span class="label">仪表盘</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="icon">📝</span>
+      <span class="label">我的待办</span>
+      <span class="sidebar-badge">5</span>
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-title">题库</div>
+    <div class="sidebar-item">
+      <span class="icon">📚</span>
+      <span class="label">题目库</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="icon">📋</span>
+      <span class="label">试卷库</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="icon">🏷️</span>
+      <span class="label">分类管理</span>
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-title">考试</div>
+    <div class="sidebar-item">
+      <span class="icon">📅</span>
+      <span class="label">考试列表</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="icon">🛡️</span>
+      <span class="label">监考中心</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="icon">📦</span>
+      <span class="label">批次管理</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="icon">🏫</span>
+      <span class="label">考场管理</span>
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-section-title">数据</div>
+    <div class="sidebar-item">
+      <span class="icon">📈</span>
+      <span class="label">成绩统计</span>
+    </div>
+    <div class="sidebar-item">
+      <span class="icon">📤</span>
+      <span class="label">数据导出</span>
+    </div>
+  </div>
+</div>
+
+<div class="main-content" id="mainContent">
+  <div class="demo-grid">
+    <div class="demo-card">
+      <h3>今日考试</h3>
+      <p>3 场进行中 · 128 名考生在线</p>
+    </div>
+    <div class="demo-card">
+      <h3>待批阅试卷</h3>
+      <p>47 份待批阅 · 预计 35 分钟</p>
+    </div>
+    <div class="demo-card">
+      <h3>成绩发布</h3>
+      <p>最近一场考试通过率 87.3%</p>
+    </div>
+  </div>
+
+  <div class="version-label">
+    Apple Developer Design Language &nbsp;·&nbsp; 2026
+  </div>
+</div>
+
+<button class="toggle-btn" onclick="toggleSidebar()">☰ 切换侧栏</button>
+
+<script>
+  function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const main = document.getElementById('mainContent');
+    sidebar.classList.toggle('collapsed');
+    main.classList.toggle('sidebar-collapsed');
+  }
+</script>
+
+</body>
+</html>

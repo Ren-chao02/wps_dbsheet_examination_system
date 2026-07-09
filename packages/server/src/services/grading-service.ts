@@ -8,13 +8,12 @@
  * 4. 将验证结果写入数据库
  * 5. 汇总每题得分
  *
- * 如果 tableSpaceId 为空（未关联真实 WPS 文件），使用 Mock 模式判分。
+ * 必须提供有效的 WPS access_token 才能判分，缺少时直接抛出错误。
  */
 
 import { prisma } from '../config/prisma';
 import { evaluateRules, type AnswerRule, type RuleResult, type SchemaResponse, type RecordData } from '../engine/rule-engine';
-import { KingsoftAdapter, createAdapterFromSpaceId } from '../engine/adapters/kingsoft-adapter';
-import { MOCK_SCHEMAS } from '../engine/demo-schemas';
+import { createAdapterFromSpaceId } from '../engine/adapters/kingsoft-adapter';
 
 // ============================================================
 // 类型定义
@@ -28,6 +27,8 @@ export interface GradingResult {
   hasNeedsReview: boolean;
   needsReviewCount: number;
   autoGraded: boolean;
+  rawSchema?: any;
+  rawRecords?: any;
   error?: string;
 }
 
@@ -43,104 +44,13 @@ export interface QuestionGradingResult {
 }
 
 // ============================================================
-// Mock Schema 生成器（tableSpaceId 为空时使用）
-// ============================================================
-
-/**
- * 为没有 tableSpaceId 的答卷生成模拟 Schema。
- * 用于演示和测试自动判分流程。
- * 假设学生完成了约 70% 的操作。
- */
-function generateMockSchema(questions: { answerRules: AnswerRule[] }[]): SchemaResponse {
-  // 收集所有规则中提到的表名、字段名、视图名
-  const allTableNames = new Set<string>();
-  const allFields = new Map<string, { name: string; type: string; required?: boolean }[]>();
-  const allViews = new Map<string, { name: string; type: string }[]>();
-
-  for (const q of questions) {
-    for (const rule of q.answerRules) {
-      const p = rule.params;
-      if (p.tableName) {
-        allTableNames.add(p.tableName);
-        if (!allFields.has(p.tableName)) allFields.set(p.tableName, []);
-        if (!allViews.has(p.tableName)) allViews.set(p.tableName, []);
-
-        if (p.fieldName) {
-          const wpsType = typeToWps(p.type) || 'SingleLineText';
-          const fields = allFields.get(p.tableName)!;
-          if (!fields.find(f => f.name === p.fieldName)) {
-            fields.push({ name: p.fieldName, type: wpsType, required: p.required });
-          }
-        }
-        if (p.viewName) {
-          const views = allViews.get(p.tableName)!;
-          if (!views.find(v => v.name === p.viewName)) {
-            const viewType = capitalizeFirst(p.viewType || 'Grid');
-            views.push({ name: p.viewName, type: viewType });
-          }
-        }
-        if (p.formName) {
-          const views = allViews.get(p.tableName)!;
-          if (!views.find(v => v.name === p.formName)) {
-            views.push({ name: p.formName, type: 'Form' });
-          }
-        }
-      }
-    }
-  }
-
-  // 构建 Schema
-  const sheets = Array.from(allTableNames).map((name, idx) => ({
-    id: idx + 1,
-    name,
-    primaryFieldId: `fld_${idx}_0`,
-    fields: (allFields.get(name) || []).map((f, i) => ({
-      id: `fld_${idx}_${i}`,
-      name: f.name,
-      type: f.type,
-      required: f.required,
-    })),
-    views: (allViews.get(name) || []).map((v, i) => ({
-      id: `viw_${idx}_${i}`,
-      name: v.name,
-      type: v.type,
-    })),
-  }));
-
-  return { result: 0, detail: { sheets } };
-}
-
-function typeToWps(type?: string): string {
-  const map: Record<string, string> = {
-    text: 'SingleLineText',
-    number: 'Number',
-    date: 'Date',
-    time: 'Time',
-    single_select: 'SingleSelect',
-    multiple_select: 'MultipleSelect',
-    checkbox: 'Checkbox',
-    email: 'Email',
-    phone: 'Phone',
-    url: 'Url',
-    attachment: 'Attachment',
-    link: 'Link',
-    formula: 'Formula',
-  };
-  return map[type || ''] || 'SingleLineText';
-}
-
-function capitalizeFirst(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-// ============================================================
 // 核心判分函数
 // ============================================================
 
 /**
  * 对单份答卷执行自动判分
  */
-export async function gradeSubmission(submissionId: string): Promise<GradingResult> {
+export async function gradeSubmission(submissionId: string, accessToken?: string): Promise<GradingResult> {
   // 1. 加载答卷及关联数据
   const submission = await prisma.studentSubmission.findUnique({
     where: { id: submissionId },
@@ -166,87 +76,141 @@ export async function gradeSubmission(submissionId: string): Promise<GradingResu
     throw new Error(`答卷不存在: ${submissionId}`);
   }
 
+  // 1.5 WPS 实操考试可能没有提交答题详情，自动基于考试题目创建
+  let details = submission.details;
+  if (!details || details.length === 0) {
+    const examQuestions = await prisma.examQuestion.findMany({
+      where: { examId: submission.examId },
+      include: {
+        question: {
+          select: {
+            id: true,
+            title: true,
+            type: true,
+            score: true,
+            answerRules: true,
+          },
+        },
+      },
+      orderBy: { sortOrder: 'asc' },
+    });
+
+    if (examQuestions.length > 0) {
+      await prisma.submissionDetail.createMany({
+        data: examQuestions.map(eq => ({
+          submissionId: submission.id,
+          questionId: eq.questionId,
+          answerJson: {},
+          score: null,
+          isCorrect: null,
+        })),
+      });
+
+      details = await prisma.submissionDetail.findMany({
+        where: { submissionId: submission.id },
+        include: {
+          question: {
+            select: {
+              id: true,
+              title: true,
+              type: true,
+              score: true,
+              answerRules: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+    }
+  }
+
   // 2. 获取 Schema
   let schema: SchemaResponse;
   let autoGraded = false;
   let recordData: RecordData | undefined;
 
-  const adapter = createAdapterFromSpaceId(submission.tableSpaceId);
-
-  if (adapter) {
-    // 真实 API 模式
-    try {
-      schema = await adapter.getSchema();
-      autoGraded = true;
-
-      // 检查是否有记录类规则，若有则预获取记录数据
-      const allRules = submission.details.flatMap(
-        d => (d.question.answerRules as unknown as AnswerRule[]) || []
-      );
-      const recordActions = new Set(['check_record_exists', 'check_record_value', 'check_record_count', 'check_record_value_exact']);
-      const tablesNeedingRecords = new Set<string>();
-      for (const rule of allRules) {
-        if (recordActions.has(rule.action) && rule.params.tableName) {
-          tablesNeedingRecords.add(rule.params.tableName);
-        }
-      }
-
-      if (tablesNeedingRecords.size > 0) {
-        recordData = {};
-        for (const tableName of tablesNeedingRecords) {
-          try {
-            const result = await adapter.getRecordsByTableName(tableName);
-            recordData[tableName] = {
-              records: result.records,
-              fieldsSchema: result.fieldsSchema,
-            };
-          } catch (err: any) {
-            console.warn(`[GradingService] 获取表「${tableName}」记录失败: ${err.message}`);
-          }
-        }
-      }
-
-      // 检查是否有表单字段规则，若有则预获取表单字段数据
-      const formFieldActions = new Set(['check_form_fields', 'check_form_field_required']);
-      const formFieldsData = new Map<string, any[]>();
-      for (const rule of allRules) {
-        if (formFieldActions.has(rule.action) && rule.params.tableName) {
-          const sheet = schema.detail.sheets.find(s => s.name === rule.params.tableName);
-          if (sheet) {
-            const formViews = (sheet.views || []).filter(v => v.type === 'Form');
-            const targetForm = rule.params.formName
-              ? formViews.find(v => v.name === rule.params.formName)
-              : formViews[0];
-            if (targetForm) {
-              const cacheKey = `${rule.params.tableName}:${targetForm.id}`;
-              if (!formFieldsData.has(cacheKey)) {
-                try {
-                  const fields = await adapter.getFormFields(sheet.id, targetForm.id);
-                  formFieldsData.set(cacheKey, fields);
-                } catch (err: any) {
-                  console.warn(`[GradingService] 获取表单字段失败: ${err.message}`);
-                }
-              }
-              // 将表单字段数据注入规则params中，供rule-engine使用
-              rule.params.formFields = formFieldsData.get(cacheKey);
-            }
-          }
-        }
-      }
-    } catch (err: any) {
-      // API 调用失败时降级为 mock
-      console.warn(`[GradingService] API 调用失败，降级为 Mock 模式: ${err.message}`);
-      const questions = submission.details.map(d => ({
-        answerRules: d.question.answerRules as unknown as AnswerRule[],
-      }));
-      schema = generateMockSchema(questions);
+  // 回退：tableSpaceId 为空时，从 ExamTableAssignment 获取
+  let effectiveSpaceId = submission.tableSpaceId;
+  if (!effectiveSpaceId) {
+    const assignment = await prisma.examTableAssignment.findUnique({
+      where: {
+        examId_studentId: {
+          examId: submission.examId,
+          studentId: submission.studentId,
+        },
+      },
+    });
+    if (assignment) {
+      effectiveSpaceId = assignment.fileId;
     }
-  } else {
-    // Mock 模式：基于题目规则生成理想 Schema
-    const questions = submission.details.map(d => ({
-      answerRules: d.question.answerRules as unknown as AnswerRule[],
-    }));
-    schema = generateMockSchema(questions);
+  }
+
+  // 如果外部传入了 accessToken，注入到 spaceId 中
+  if (accessToken && effectiveSpaceId) {
+    const fileId = effectiveSpaceId.split(':')[0];
+    effectiveSpaceId = `${fileId}:${accessToken}`;
+  }
+
+  const adapter = createAdapterFromSpaceId(effectiveSpaceId);
+
+  if (!adapter) {
+    const tableSpaceIdParts = (effectiveSpaceId || '').split(':');
+    const hasToken = tableSpaceIdParts.length >= 2 && tableSpaceIdParts[1];
+    const reason = hasToken
+      ? 'WPS API 连接失败，无法创建适配器'
+      : '缺少有效的 WPS access_token，无法获取考生多维表格数据';
+    throw new Error(reason);
+  }
+
+  // 真实 API 模式
+  schema = await adapter.getSchema();
+  autoGraded = true;
+
+  // 检查是否有记录类规则，若有则预获取记录数据
+  const allRules = details.flatMap(
+    d => (d.question.answerRules as unknown as AnswerRule[]) || []
+  );
+  const recordActions = new Set(['check_record_exists', 'check_record_value', 'check_record_count', 'check_record_value_exact']);
+  const tablesNeedingRecords = new Set<string>();
+  for (const rule of allRules) {
+    if (recordActions.has(rule.action) && rule.params.tableName) {
+      tablesNeedingRecords.add(rule.params.tableName);
+    }
+  }
+
+  if (tablesNeedingRecords.size > 0) {
+    recordData = {};
+    for (const tableName of tablesNeedingRecords) {
+      const result = await adapter.getRecordsByTableName(tableName);
+      recordData[tableName] = {
+        records: result.records,
+        fieldsSchema: result.fieldsSchema,
+      };
+    }
+  }
+
+  // 检查是否有表单字段规则，若有则预获取表单字段数据
+  const formFieldActions = new Set(['check_form_fields', 'check_form_field_required']);
+  const formFieldsData = new Map<string, any[]>();
+  for (const rule of allRules) {
+    if (formFieldActions.has(rule.action) && rule.params.tableName) {
+      const sheet = schema.detail.sheets.find(s => s.name === rule.params.tableName);
+      if (sheet) {
+        const formViews = (sheet.views || []).filter(v => v.type === 'Form');
+        const targetForm = rule.params.formName
+          ? formViews.find(v => v.name === rule.params.formName)
+          : formViews[0];
+        if (targetForm) {
+          const cacheKey = `${rule.params.tableName}:${targetForm.id}`;
+          if (!formFieldsData.has(cacheKey)) {
+            const fields = await adapter.getFormFields(sheet.id, targetForm.id);
+            formFieldsData.set(cacheKey, fields);
+          }
+          // 将表单字段数据注入规则params中，供rule-engine使用
+          rule.params.formFields = formFieldsData.get(cacheKey);
+        }
+      }
+    }
   }
 
   // 3. 逐题判分
@@ -255,7 +219,7 @@ export async function gradeSubmission(submissionId: string): Promise<GradingResu
   let maxScore = 0;
   let totalNeedsReview = 0;
 
-  for (const detail of submission.details) {
+  for (const detail of details) {
     const rules = detail.question.answerRules as unknown as AnswerRule[];
     if (!rules || rules.length === 0) continue;
 
@@ -340,13 +304,15 @@ export async function gradeSubmission(submissionId: string): Promise<GradingResu
     hasNeedsReview,
     needsReviewCount: totalNeedsReview,
     autoGraded,
+    rawSchema: schema,
+    rawRecords: recordData,
   };
 }
 
 /**
  * 批量判分：对某场考试的所有已提交答卷执行自动判分
  */
-export async function gradeExamSubmissions(examId: string): Promise<{
+export async function gradeExamSubmissions(examId: string, accessToken?: string): Promise<{
   total: number;
   success: number;
   failed: number;
@@ -363,7 +329,7 @@ export async function gradeExamSubmissions(examId: string): Promise<{
 
   for (const sub of submissions) {
     try {
-      const result = await gradeSubmission(sub.id);
+      const result = await gradeSubmission(sub.id, accessToken);
       results.push(result);
     } catch (err: any) {
       errors.push({ submissionId: sub.id, error: err.message });

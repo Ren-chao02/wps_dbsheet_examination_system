@@ -187,8 +187,8 @@ roleRouter.put('/:id', async (req: Request, res: Response) => {
     if (!role) {
       return res.status(404).json({ message: '角色不存在' });
     }
-    if (role.roleType === 'preset') {
-      return res.status(403).json({ message: '预设角色不可修改' });
+    if (role.roleCode === 'ADMIN') {
+      return res.status(403).json({ message: '学校管理员角色不可修改' });
     }
 
     const data = updateRoleSchema.parse(req.body);
@@ -257,8 +257,8 @@ roleRouter.delete('/:id', async (req: Request, res: Response) => {
     if (!role) {
       return res.status(404).json({ message: '角色不存在' });
     }
-    if (role.roleType === 'preset') {
-      return res.status(403).json({ message: '预设角色不可删除' });
+    if (role.roleCode === 'ADMIN') {
+      return res.status(403).json({ message: '学校管理员角色不可删除' });
     }
     if (role._count.users > 0) {
       return res.status(400).json({ message: `该角色下还有 ${role._count.users} 个用户，无法删除` });

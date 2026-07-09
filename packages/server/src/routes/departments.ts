@@ -75,14 +75,26 @@ departmentRouter.get('/', async (_req: Request, res: Response) => {
       },
     });
 
-    res.json({ data: departments });
+    res.json({
+      data: departments.map(dept => ({
+        ...dept,
+        majors: dept.majors.map(major => ({
+          ...major,
+          classRooms: major.classRooms.map(cls => ({
+            ...cls,
+            studentCount: cls._count?.students ?? 0,
+            _count: undefined,
+          })),
+        })),
+      })),
+    });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
 });
 
 // POST / — 创建院系（admin only）
-departmentRouter.post('/', authorize('admin'), async (req: Request, res: Response) => {
+departmentRouter.post('/', authorize('admin', 'teacher'), async (req: Request, res: Response) => {
   try {
     const data = createDepartmentSchema.parse(req.body);
 
@@ -112,7 +124,7 @@ departmentRouter.post('/', authorize('admin'), async (req: Request, res: Respons
 });
 
 // PUT /:id — 更新院系（admin only）
-departmentRouter.put('/:id', authorize('admin'), async (req: Request, res: Response) => {
+departmentRouter.put('/:id', authorize('admin', 'teacher'), async (req: Request, res: Response) => {
   try {
     const data = updateDepartmentSchema.parse(req.body);
 
@@ -155,7 +167,7 @@ departmentRouter.put('/:id', authorize('admin'), async (req: Request, res: Respo
 });
 
 // DELETE /:id — 删除院系（admin only，级联删除检查）
-departmentRouter.delete('/:id', authorize('admin'), async (req: Request, res: Response) => {
+departmentRouter.delete('/:id', authorize('admin', 'teacher'), async (req: Request, res: Response) => {
   try {
     const { force } = req.query;
     const departmentId = req.params.id;
@@ -248,7 +260,7 @@ departmentRouter.delete('/:id', authorize('admin'), async (req: Request, res: Re
 // ============ 专业 CRUD ============
 
 // POST /:departmentId/majors — 创建专业（admin only）
-departmentRouter.post('/:departmentId/majors', authorize('admin'), async (req: Request, res: Response) => {
+departmentRouter.post('/:departmentId/majors', authorize('admin', 'teacher'), async (req: Request, res: Response) => {
   try {
     const data = createMajorSchema.parse(req.body);
     const { departmentId } = req.params;
@@ -287,7 +299,7 @@ departmentRouter.post('/:departmentId/majors', authorize('admin'), async (req: R
 });
 
 // PUT /majors/:id — 更新专业（admin only）
-departmentRouter.put('/majors/:id', authorize('admin'), async (req: Request, res: Response) => {
+departmentRouter.put('/majors/:id', authorize('admin', 'teacher'), async (req: Request, res: Response) => {
   try {
     const data = updateMajorSchema.parse(req.body);
     const majorId = req.params.id;
@@ -333,7 +345,7 @@ departmentRouter.put('/majors/:id', authorize('admin'), async (req: Request, res
 });
 
 // DELETE /majors/:id — 删除专业（admin only）
-departmentRouter.delete('/majors/:id', authorize('admin'), async (req: Request, res: Response) => {
+departmentRouter.delete('/majors/:id', authorize('admin', 'teacher'), async (req: Request, res: Response) => {
   try {
     const { force } = req.query;
     const majorId = req.params.id;
@@ -488,7 +500,7 @@ departmentRouter.put('/classrooms/:id', authorize('admin', 'teacher'), async (re
 });
 
 // DELETE /classrooms/:id — 删除班级（admin only）
-departmentRouter.delete('/classrooms/:id', authorize('admin'), async (req: Request, res: Response) => {
+departmentRouter.delete('/classrooms/:id', authorize('admin', 'teacher'), async (req: Request, res: Response) => {
   try {
     const { force } = req.query;
     const classRoomId = req.params.id;

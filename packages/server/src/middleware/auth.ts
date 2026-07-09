@@ -4,6 +4,7 @@ import { config } from '../config';
 import { prisma } from '../config/prisma';
 
 export interface JwtPayload {
+  id: string;
   userId: string;
   username: string;
   role: string;
@@ -46,7 +47,10 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       });
     }
 
-    req.user = payload;
+    req.user = {
+      ...payload,
+      id: payload.id || payload.userId,
+    };
     next();
   } catch (err) {
     if (err instanceof jwt.TokenExpiredError) {

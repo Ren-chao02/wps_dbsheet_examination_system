@@ -1,119 +1,34 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Form, Input, Select, InputNumber, Button, Card, Space, Divider, Tag, message, Spin, Row, Col, Tooltip } from 'antd';
-import { PlusOutlined, DeleteOutlined, SaveOutlined, SettingOutlined } from '@ant-design/icons';
+import { Form, Input, Select, InputNumber, Button, Card, Space, Tag, message, Spin, Row, Col, Tooltip } from 'antd';
+import { SaveOutlined, SettingOutlined } from '@ant-design/icons';
 import api from '../../services/api';
-import type { Question, QuestionCategory, AnswerRule } from '../../types';
+import type { Question, QuestionCategory, AnswerRule, QuestionSkeleton, ReverseOutput, RuleSuggestion, Proposal, QuestionState } from '../../types';
 import { CategoryManagerModal } from '../../components/CategoryManagerModal';
+import { CapabilitySelector } from './components/CapabilitySelector';
+import { AnswerImporter } from './components/AnswerImporter';
+import { RulePreviewer } from './components/RulePreviewer';
+import { CoachingPanel } from './components/CoachingPanel';
+import { applyProposal, type QuestionStateForApply } from './components/applyProposal';
 
 const { TextArea } = Input;
 
-const actionOptions = [
-  { value: 'check_table_exists', label: '检查表存在' },
-  { value: 'check_table_name', label: '检查表名称' },
-  { value: 'check_table_count', label: '检查表数量' },
-  { value: 'check_field', label: '检查字段' },
-  { value: 'check_field_count', label: '检查字段数量' },
-  { value: 'check_field_required', label: '检查必填设置' },
-  { value: 'check_field_formula', label: '检查公式字段' },
-  { value: 'check_linked_record', label: '检查关联记录' },
-  { value: 'check_view_exists', label: '检查视图存在' },
-  { value: 'check_view_type', label: '检查视图类型' },
-  { value: 'check_view_filter', label: '检查视图筛选' },
-  { value: 'check_view_sort', label: '检查视图排序' },
-  { value: 'check_view_group', label: '检查视图分组' },
-  { value: 'check_form_exists', label: '检查表单存在' },
-  { value: 'check_form_fields', label: '检查表单字段' },
-  { value: 'check_form_settings', label: '检查表单设置' },
-  { value: 'check_record_exists', label: '检查记录存在' },
-  { value: 'check_record_value', label: '检查记录值' },
-  { value: 'check_record_count', label: '检查记录数量' },
-];
-
-const actionParamHints: Record<string, string> = {
-  check_table_exists: '{"tableName":"表名"}',
-  check_table_name: '{"tableName":"表名"}',
-  check_table_count: '{"count":3}',
-  check_field: '{"tableName":"表名","fieldName":"字段名","type":"text/number/single_select/date","options":["选项1","选项2"]}',
-  check_field_count: '{"tableName":"表名","count":5}',
-  check_field_required: '{"tableName":"表名","fieldName":"字段名"}',
-  check_field_formula: '{"tableName":"表名","fieldName":"字段名","formula":"公式表达式"}',
-  check_linked_record: '{"tableName":"表名","targetTable":"目标表名"}',
-  check_view_exists: '{"tableName":"表名","viewName":"视图名"}',
-  check_view_type: '{"tableName":"表名","viewName":"视图名","viewType":"kanban/gallery/grid/form"}',
-  check_view_filter: '{"tableName":"表名","viewName":"视图名","field":"字段名","value":"筛选值"}',
-  check_view_sort: '{"tableName":"表名","viewName":"视图名","field":"字段名","direction":"asc/desc"}',
-  check_view_group: '{"tableName":"表名","viewName":"视图名","field":"字段名"}',
-  check_form_exists: '{"tableName":"表名","formName":"表单名"}',
-  check_form_fields: '{"tableName":"表名","formName":"表单名","hiddenFields":["隐藏字段"]}',
-  check_form_settings: '{"tableName":"表名","formName":"表单名","submitMessage":"提交成功提示"}',
-  check_record_exists: '{"tableName":"表名","field":"字段名","value":"值"}',
-  check_record_value: '{"tableName":"表名","field":"字段名","expected":"期望值"}',
-  check_record_count: '{"tableName":"表名","count":10}',
-};
-
-function RuleEditor({ rules, onChange }: { rules: AnswerRule[]; onChange: (rules: AnswerRule[]) => void }) {
-  const addRule = () => {
-    const newRule: AnswerRule = {
-      id: `rule_${Date.now()}`,
-      action: 'check_table_exists',
-      params: {},
-      score: 5,
-    };
-    onChange([...rules, newRule]);
-  };
-
-  const updateRule = (index: number, field: string, value: any) => {
-    const updated = [...rules];
-    (updated[index] as any)[field] = value;
-    if (field === 'action') {
-      try {
-        updated[index].params = JSON.parse(actionParamHints[value] || '{}');
-      } catch { updated[index].params = {}; }
-    }
-    onChange(updated);
-  };
-
-  const removeRule = (index: number) => {
-    onChange(rules.filter((_, i) => i !== index));
-  };
-
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-        <strong>验证规则</strong>
-        <Button type="dashed" icon={<PlusOutlined />} onClick={addRule} size="small">添加规则</Button>
-      </div>
-      {rules.length === 0 && <div style={{ color: '#999', padding: 16, textAlign: 'center', border: '1px dashed #ddd', borderRadius: 4 }}>暂无规则，请点击"添加规则"</div>}
-      {rules.map((rule, index) => (
-        <Card key={rule.id} size="small" style={{ marginBottom: 8 }} extra={<Button type="text" danger icon={<DeleteOutlined />} onClick={() => removeRule(index)} />}>
-          <Row gutter={8}>
-            <Col span={8}>
-              <Select value={rule.action} onChange={v => updateRule(index, 'action', v)} style={{ width: '100%' }} options={actionOptions} />
-            </Col>
-            <Col span={12}>
-              <Input
-                value={JSON.stringify(rule.params)}
-                onChange={e => {
-                  try { updateRule(index, 'params', JSON.parse(e.target.value)); } catch { /* allow typing */ }
-                }}
-                placeholder={actionParamHints[rule.action] || '{"key":"value"}'}
-                style={{ fontFamily: 'monospace', fontSize: 12 }}
-              />
-            </Col>
-            <Col span={4}>
-              <InputNumber value={rule.score} onChange={v => updateRule(index, 'score', v || 0)} min={0} addonAfter="分" style={{ width: '100%' }} />
-            </Col>
-          </Row>
-        </Card>
-      ))}
-      {rules.length > 0 && (
-        <div style={{ textAlign: 'right', marginTop: 8 }}>
-          <Tag color="blue">总计：{rules.reduce((sum, r) => sum + r.score, 0)} 分</Tag>
-        </div>
-      )}
-    </div>
-  );
+/**
+ * 将已保存的 AnswerRule 包装为 RuleSuggestion，供 RulePreviewer 展示。
+ * 编辑模式加载时使用：让用户可在三段式 UI 中继续编辑已保存的规则。
+ */
+function rulesToSuggestions(rules: AnswerRule[]): RuleSuggestion[] {
+  return rules.map(rule => ({
+    rule,
+    source: {
+      sheetName: '(已保存规则)',
+      sheetId: 0,
+      capabilityId: '',
+    },
+    editable: false,
+    selected: true,
+    missingParams: [],
+  }));
 }
 
 export function QuestionEditor() {
@@ -121,23 +36,43 @@ export function QuestionEditor() {
   const navigate = useNavigate();
   const [form] = Form.useForm();
   const [categories, setCategories] = useState<QuestionCategory[]>([]);
+  /** 最终将保存到题目的 answerRules */
   const [rules, setRules] = useState<AnswerRule[]>([]);
+  /** 反向生成的规则建议（待确认） */
+  const [suggestions, setSuggestions] = useState<RuleSuggestion[]>([]);
+  /** 用户勾选的能力 id */
+  const [selectedCapabilityIds, setSelectedCapabilityIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
+  /** Phase 2：WPS 凭据（上提自 AnswerImporter，供 CoachingPanel 共用） */
+  const [credentials, setCredentials] = useState<{ fileId: string; accessToken: string; apiSecret?: string } | null>(null);
   const isEdit = !!id;
   const primaryCategoryId = Form.useWatch('primaryCategoryId', form);
 
   useEffect(() => {
-    // ✅ 更新：获取分类列表（用于两级分类选择）
+    // ✅ 获取分类列表并扁平化（用于两级分类选择）
     api.get('/categories?mode=tree')
-      .then(res => setCategories(res.data?.data || []))
+      .then(res => {
+        const treeData = res.data?.data || [];
+        // 扁平化树形数据，保留 level 和 parentId
+        const flattenCategories = (cats: any[], level: number = 1): QuestionCategory[] => {
+          return cats.reduce((acc: QuestionCategory[], cat: any) => {
+            acc.push({ ...cat, level, children: cat.children || [] });
+            if (cat.children && cat.children.length > 0) {
+              acc.push(...flattenCategories(cat.children, level + 1));
+            }
+            return acc;
+          }, []);
+        };
+        setCategories(flattenCategories(treeData));
+      })
       .catch(() => {});
 
     if (isEdit) {
       setLoading(true);
       api.get(`/questions/${id}`).then(res => {
-        const q = res.data;
+        const q: Question = res.data;
         form.setFieldsValue({
           ...q,
           // 确保新字段正确映射
@@ -145,10 +80,86 @@ export function QuestionEditor() {
           secondaryCategoryId: q.secondaryCategoryId,
           teacherName: q.teacherName,
         });
-        setRules(q.answerRules || []);
+        const savedRules = q.answerRules || [];
+        setRules(savedRules);
+        // 将已保存规则包装为 suggestions，便于在 RulePreviewer 中继续编辑
+        setSuggestions(rulesToSuggestions(savedRules));
       }).catch(() => message.error('加载失败')).finally(() => setLoading(false));
     }
   }, [id]);
+
+  /** 能力变化时清空建议（能力变了需重新反向生成） */
+  const handleCapabilityChange = (ids: string[]) => {
+    setSelectedCapabilityIds(ids);
+    // 若已有反向生成的建议且当前未应用过，清空以避免不一致
+    if (suggestions.some(s => s.source.capabilityId)) {
+      setSuggestions(suggestions.filter(s => !s.source.capabilityId));
+    }
+  };
+
+  /** 骨架生成成功：回填标题/描述/分值/难度 */
+  const handleSkeleton = (skeleton: QuestionSkeleton) => {
+    form.setFieldsValue({
+      title: skeleton.title,
+      description: skeleton.description,
+      score: skeleton.suggestedScore,
+      difficulty: skeleton.difficulty,
+    });
+    if (skeleton.warnings.length > 0) {
+      message.warning(skeleton.warnings.join('；'));
+    }
+  };
+
+  /** 反向生成成功：覆盖 suggestions */
+  const handleGenerated = (output: ReverseOutput) => {
+    setSuggestions(output.suggestions);
+  };
+
+  /** 应用选中规则到题目 answerRules */
+  const handleApplyRules = (appliedRules: AnswerRule[]) => {
+    setRules(appliedRules);
+  };
+
+  /** Phase 2：从表单 + 状态拼装 QuestionState（每次渲染时构建，保证 CoachingPanel 拿到最新） */
+  const buildQuestionState = useCallback((): QuestionState => {
+    const values = form.getFieldsValue(true);
+    return {
+      title: values.title || '',
+      description: values.description || '',
+      type: values.type || 'comprehensive',
+      difficulty: values.difficulty || 'medium',
+      score: values.score ?? 0,
+      selectedCapabilityIds,
+      currentRules: rules.map(r => ({
+        id: r.id,
+        action: r.action,
+        tableName: r.params?.tableName,
+        fieldName: r.params?.fieldName,
+        score: r.score,
+      })),
+      hints: values.hints || '',
+    };
+  }, [form, selectedCapabilityIds, rules]);
+
+  /** Phase 2：应用 AI 建议卡（包装纯函数 applyProposal，含 React state setters） */
+  const handleApplyProposal = useCallback((proposal: Proposal): { ok: boolean; reason?: string } => {
+    const snapshot: QuestionStateForApply = {
+      selectedCapabilityIds,
+      suggestions,
+      rules,
+      description: form.getFieldValue('description') || '',
+      hints: form.getFieldValue('hints') || '',
+    };
+    const result = applyProposal(snapshot, proposal);
+    if (!result.ok) return { ok: false, reason: result.reason };
+    const { newState } = result;
+    if (newState.selectedCapabilityIds) setSelectedCapabilityIds(newState.selectedCapabilityIds);
+    if (newState.suggestions) setSuggestions(newState.suggestions);
+    if (newState.rules) setRules(newState.rules);
+    if (newState.description !== undefined) form.setFieldsValue({ description: newState.description });
+    if (newState.hints !== undefined) form.setFieldsValue({ hints: newState.hints });
+    return { ok: true };
+  }, [form, selectedCapabilityIds, suggestions, rules]);
 
   const onFinish = async (values: any) => {
     setSaving(true);
@@ -213,7 +224,7 @@ export function QuestionEditor() {
                   filterOption={(input, option) =>
                     (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                   }
-                  options={categories.map(c => ({
+                  options={categories.filter(c => c.level === 1 || !c.parentId).map(c => ({
                     value: c.id,
                     label: c.name,
                   }))}
@@ -229,8 +240,8 @@ export function QuestionEditor() {
                     icon={<SettingOutlined />}
                     onClick={() => setCategoryModalVisible(true)}
                     style={{
-                      color: '#667eea',
-                      border: '1px solid #667eea33',
+                      color: '#1677ff',
+                      border: '1px solid #1677ff33',
                       borderRadius: 6,
                       height: 32,
                       width: 32,
@@ -291,9 +302,36 @@ export function QuestionEditor() {
           </Form.Item>
         </Card>
 
-        <Card title="验证规则" style={{ marginBottom: 16 }}>
-          <RuleEditor rules={rules} onChange={setRules} />
-        </Card>
+        {/* ✅ 三段式出题辅助：能力选择 → 标准答案导入 → 规则预览 */}
+        <CapabilitySelector
+          selectedIds={selectedCapabilityIds}
+          onChange={handleCapabilityChange}
+        />
+        <AnswerImporter
+          selectedCapabilityIds={selectedCapabilityIds}
+          onSkeleton={handleSkeleton}
+          onGenerated={handleGenerated}
+          onCredentialsChange={setCredentials}
+        />
+        <RulePreviewer
+          suggestions={suggestions}
+          onChange={setSuggestions}
+          onApply={handleApplyRules}
+        />
+
+        {/* ✅ 已应用规则汇总（展示当前将保存的 answerRules） */}
+        {rules.length > 0 && (
+          <Card
+            title={<Space><span>已应用规则</span><Tag color="green">{rules.length} 条</Tag><Tag color="blue">总分 {rules.reduce((s, r) => s + r.score, 0)}</Tag></Space>}
+            style={{ marginBottom: 16 }}
+          >
+            {rules.map(rule => (
+              <Tag key={rule.id} style={{ marginBottom: 4 }}>
+                {rule.action} · {rule.score}分
+              </Tag>
+            ))}
+          </Card>
+        )}
       </Form>
 
       {/* ✨ 知识点分类管理弹窗 */}
@@ -323,6 +361,13 @@ export function QuestionEditor() {
             })
             .catch(() => {});
         }}
+      />
+
+      {/* ✨ Phase 2：AI 对话式教练侧栏（仅实操题渲染，本编辑器全为实操题） */}
+      <CoachingPanel
+        questionState={buildQuestionState()}
+        credentials={credentials || undefined}
+        onApplyProposal={handleApplyProposal}
       />
     </div>
   );

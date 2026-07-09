@@ -175,9 +175,9 @@ async function writeAuditLog(
         action,
         entityType: entityType || 'Unknown',
         entityId,
-        oldData,
-        newData,
-        changedFields,
+        oldData: oldData ?? undefined,
+        newData: newData ?? undefined,
+        changedFields: changedFields ? JSON.stringify(changedFields) : undefined,
         userId,
         username,
         userRole,
@@ -213,7 +213,7 @@ export async function manualAuditLog(params: {
         ...params,
         changedFields:
           params.oldData && params.newData
-            ? computeChangedFields(params.oldData, params.newData)
+            ? JSON.stringify(computeChangedFields(params.oldData, params.newData))
             : undefined,
         occurredAt: new Date(),
       },

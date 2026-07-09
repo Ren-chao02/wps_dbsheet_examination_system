@@ -408,6 +408,16 @@ applicationRouter.put('/batch-approve', async (req: Request, res: Response) => {
             continue;
           }
 
+          // 检查用户名是否已存在
+          const existingUsername = await tx.user.findUnique({
+            where: { username: application.studentId },
+          });
+          if (existingUsername) {
+            failed++;
+            errors.push({ id, reason: `用户名 ${application.studentId} 已存在` });
+            continue;
+          }
+
           const { classRoom } = application.invitation;
           const studentIdSuffix = application.studentId.slice(-6);
           const passwordHash = await bcrypt.hash(studentIdSuffix, 10);
@@ -489,6 +499,14 @@ applicationRouter.put('/:id/approve', async (req: Request, res: Response) => {
     });
     if (existingUser) {
       return res.status(409).json({ message: '该学号已注册，无法再次通过' });
+    }
+
+    // 检查用户名是否已存在
+    const existingUsername = await prisma.user.findUnique({
+      where: { username: application.studentId },
+    });
+    if (existingUsername) {
+      return res.status(409).json({ message: `用户名 ${application.studentId} 已存在` });
     }
 
     const { classRoom } = application.invitation;
