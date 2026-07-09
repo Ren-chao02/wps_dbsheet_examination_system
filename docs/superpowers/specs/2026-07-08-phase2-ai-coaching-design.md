@@ -5,27 +5,30 @@
 **作者**: brainstorming session
 **关联**: [Phase 1 spec](./2026-07-07-exam-authoring-assist.md)（已实现）、Phase 3（视图/表单/记录值规则的 AI 建议扩展）预留
 
----
+***
 
 ## 1. 背景与现状基线
 
 ### 1.1 Phase 1 已交付
 
-- 能力图谱 66 项（6 域）：`tables`(6) / `fields`(29) / `field_props`(6) / `views`(12) / `forms`(5) / `records`(8)
-- 题目骨架生成器、标准答案反向器（6 个 Matcher）、三段式 UI（CapabilitySelector / AnswerImporter / RulePreviewer）
-- rule-engine 26 个 action、grading-service 端到端判分链路
-- `Capability.promptHints` 字段**已全部填充**真实提示文本
+* 能力图谱 66 项（6 域）：`tables`(6) / `fields`(29) / `field_props`(6) / `views`(12) / `forms`(5) / `records`(8)
+
+* 题目骨架生成器、标准答案反向器（6 个 Matcher）、三段式 UI（CapabilitySelector / AnswerImporter / RulePreviewer）
+
+* rule-engine 26 个 action、grading-service 端到端判分链路
+
+* `Capability.promptHints` 字段**已全部填充**真实提示文本
 
 ### 1.2 经核实的现状（与 Phase 1 spec 的出入）
 
-| 项 | Phase 1 spec 说 | 实际 |
-|----|----------------|------|
-| 能力项总数 | 67 | **66**（fields 29 而非 30） |
-| rule action 数 | 25 | **26** |
-| `AnswerRule` 形状 | （未细述） | `{ id; action; params; score }` |
-| `AnswerReverser` 可校准 LLM 草稿 | §7 预留 | **无此入口**，`reverse()` 只走 capability→schema→rules。Phase 2 需新增 `groundProposal()` |
-| `SkeletonGenerator` 可替换 | §7 预留 | 具体类单例，路由层替换即可，无 DI 接口 |
-| 现有 LLM/AI 集成 | — | **无**，全新引入 |
+| 项                           | Phase 1 spec 说 | 实际                                                                             |
+| --------------------------- | -------------- | ------------------------------------------------------------------------------ |
+| 能力项总数                       | 67             | **66**（fields 29 而非 30）                                                        |
+| rule action 数               | 25             | **26**                                                                         |
+| `AnswerRule` 形状             | （未细述）          | `{ id; action; params; score }`                                                |
+| `AnswerReverser` 可校准 LLM 草稿 | §7 预留          | **无此入口**，`reverse()` 只走 capability→schema→rules。Phase 2 需新增 `groundProposal()` |
+| `SkeletonGenerator` 可替换     | §7 预留          | 具体类单例，路由层替换即可，无 DI 接口                                                          |
+| 现有 LLM/AI 集成                | —              | **无**，全新引入                                                                     |
 
 ### 1.3 Phase 2 要解决的核心痛点
 
@@ -33,12 +36,15 @@ Phase 1 解决了"规则瞎编"和"不知道能考什么"，但出题仍是"勾�
 
 ### 1.4 关键约束（本次 brainstorming 确认）
 
-- **形态**：对话式打磨（chat 侧栏，LLM 当编辑搭档，非 autonomous 草稿生成器）
-- **AI 上下文**：题目状态 + 能力图谱 + 标准答案 Schema + 记录数据（最激进 grounding；标准答案是老师编的示范数据，敏感性低）
-- **Provider**：多 provider 可配（`LLMClient` 抽象，env 切换，前期接 DeepSeek）
-- **题型范围**：仅实操题，挂在 QuestionEditor 三段式旁
+* **形态**：对话式打磨（chat 侧栏，LLM 当编辑搭档，非 autonomous 草稿生成器）
 
----
+* **AI 上下文**：题目状态 + 能力图谱 + 标准答案 Schema + 记录数据（最激进 grounding；标准答案是老师编的示范数据，敏感性低）
+
+* **Provider**：多 provider 可配（`LLMClient` 抽象，env 切换，前期接 DeepSeek）
+
+* **题型范围**：仅实操题，挂在 QuestionEditor 三段式旁
+
+***
 
 ## 2. 目标与非目标
 
@@ -52,13 +58,17 @@ Phase 1 解决了"规则瞎编"和"不知道能考什么"，但出题仍是"勾�
 
 ### 2.2 非目标
 
-- ❌ **不 autonomous 生成整题草稿**（用户选了对话式打磨，非一键出题）
-- ❌ **不支持视图/表单/记录值规则的 AI 建议**（grounding 有歧义，留 Phase 3）
-- ❌ **不覆盖选择题/填空题**（仅实操题）
-- ❌ **不让 AI 直接静默改题目**（每条改动都要老师点【应用】）
-- ❌ **不持久化对话历史**（UI 临时态；如需留存另起 feature）
+* ❌ **不 autonomous 生成整题草稿**（用户选了对话式打磨，非一键出题）
 
----
+* ❌ **不支持视图/表单/记录值规则的 AI 建议**（grounding 有歧义，留 Phase 3）
+
+* ❌ **不覆盖选择题/填空题**（仅实操题）
+
+* ❌ **不让 AI 直接静默改题目**（每条改动都要老师点【应用】）
+
+* ❌ **不持久化对话历史**（UI 临时态；如需留存另起 feature）
+
+***
 
 ## 3. 整体架构
 
@@ -95,18 +105,24 @@ server/src/
 以老师问"看看我这题还能怎么完善"为例：
 
 1. **前端** POST `/api/coaching/chat`，body = `{ questionState, history, fileId?, accessToken? }`
-   - `questionState` = 标题/描述/已选能力/已生成 suggestions/已应用 rules/难度/分值
-   - `fileId/accessToken` 仅在已导入标准答案时带
+
+   * `questionState` = 标题/描述/已选能力/已生成 suggestions/已应用 rules/难度/分值
+
+   * `fileId/accessToken` 仅在已导入标准答案时带
 2. **coaching-service** 建系统提示（角色 + 66 项能力图谱摘要 + tool 清单），调 `LLMClient.chat({ messages, tools, stream })`
-3. **LLM 发 tool_calls**（如 `get_standard_answer_schema()`、`get_records("员工表")`）
-   - 服务端**本地**执行（复用 [KingsoftAdapter](file:///data/wps_dbsheet_examination_system/packages/server/src/engine/adapters/kingsoft-adapter.ts)），**accessToken 永不出服务端、永不进 LLM**；只把数据结果喂回 LLM
-   - 循环直到 LLM 产出最终内容
+3. **LLM 发 tool\_calls**（如 `get_standard_answer_schema()`、`get_records("员工表")`）
+
+   * 服务端**本地**执行（复用 [KingsoftAdapter](file:///data/wps_dbsheet_examination_system/packages/server/src/engine/adapters/kingsoft-adapter.ts)），**accessToken 永不出服务端、永不进 LLM**；只把数据结果喂回 LLM
+
+   * 循环直到 LLM 产出最终内容
 4. **LLM 最终内容** = 给老师的文字 + 尾部一个 ` ```proposals ` JSON 块（跨 provider 兼容约定）
-5. **服务端**解析 JSON 块 → 逐条校验建议卡 → **`add_rule` 卡此时就地 ground**（调 `groundProposal` 用真实 Schema 填参数）→ 校验/ground 失败的卡丢弃并附 note
+5. **服务端**解析 JSON 块 → 逐条校验建议卡 → **`add_rule`** **卡此时就地 ground**（调 `groundProposal` 用真实 Schema 填参数）→ 校验/ground 失败的卡丢弃并附 note
 6. **SSE 流式**推给前端：文字 delta 边来边显；最终一个 event 带 `proposals[]`
 7. 前端渲染文字 + 建议卡。老师点【应用】：
-   - `add_capability` / `rewrite_description` / `adjust_score` / `remove_rule` / `add_hint` → **纯前端**改 QuestionEditor 状态
-   - `add_rule` → 卡里已是 ground 好的完整 `AnswerRule`，**纯前端**加入 suggestions/rules
+
+   * `add_capability` / `rewrite_description` / `adjust_score` / `remove_rule` / `add_hint` → **纯前端**改 QuestionEditor 状态
+
+   * `add_rule` → 卡里已是 ground 好的完整 `AnswerRule`，**纯前端**加入 suggestions/rules
 8. 改动反映到三段式 UI，老师继续聊
 
 **端点极简**：只有一个 `POST /api/coaching/chat`（流式）。【应用】是前端状态变更，无需额外端点（ground 在第 5 步就做完了，避免 apply 时二次往返）。
@@ -119,11 +135,13 @@ server/src/
 
 ### 3.4 上下文策略
 
-- **始终塞系统提示**（不做成 tool）：题目状态（小）+ 66 项能力摘要（id/name/domain/scorable/promptHints，~5KB）
-- **走 tool-calling 按需拉**：Schema / 记录（可能大），避免每轮全量塞
-- **无标准答案降级**：若老师还没导入标准答案，AI 无法 ground → `add_rule` 卡被抑制，但仍可给 `add_capability` / `rewrite_description` 等建议。自然引导老师走 Phase 1 流程顺序
+* **始终塞系统提示**（不做成 tool）：题目状态（小）+ 66 项能力摘要（id/name/domain/scorable/promptHints，\~5KB）
 
----
+* **走 tool-calling 按需拉**：Schema / 记录（可能大），避免每轮全量塞
+
+* **无标准答案降级**：若老师还没导入标准答案，AI 无法 ground → `add_rule` 卡被抑制，但仍可给 `add_capability` / `rewrite_description` 等建议。自然引导老师走 Phase 1 流程顺序
+
+***
 
 ## 4. 后端详细设计
 
@@ -172,11 +190,11 @@ LLM_RATE_LIMIT_PER_MIN=20  # 每老师限流
 
 ### 4.3 Tool 清单（3 个，按需拉）
 
-| Tool | 参数 | 返回 | Handler | 何时可用 |
-|------|------|------|---------|----------|
-| `get_capability_detail` | `capabilityId` | 完整能力（含 examPatterns/ruleActions/prerequisites） | `findCapability` | 始终 |
-| `get_standard_answer_schema` | — | sheets/fields/views 摘要 | `KingsoftAdapter.getSchema()` | 已导入标准答案 |
-| `get_records` | `tableName` | 该表记录 | `KingsoftAdapter.getRecordsByTableName()` | 已导入标准答案 |
+| Tool                         | 参数             | 返回                                             | Handler                                   | 何时可用    |
+| ---------------------------- | -------------- | ---------------------------------------------- | ----------------------------------------- | ------- |
+| `get_capability_detail`      | `capabilityId` | 完整能力（含 examPatterns/ruleActions/prerequisites） | `findCapability`                          | 始终      |
+| `get_standard_answer_schema` | —              | sheets/fields/views 摘要                         | `KingsoftAdapter.getSchema()`             | 已导入标准答案 |
+| `get_records`                | `tableName`    | 该表记录                                           | `KingsoftAdapter.getRecordsByTableName()` | 已导入标准答案 |
 
 **体积保护**：`get_records` 截断至 50 条 / 8KB，超出附 note；`get_standard_answer_schema` 字段数超 200 截断。防 token 爆炸。
 
@@ -195,15 +213,15 @@ export type Proposal =
 
 LLM 回复格式约定（跨 provider）：先给老师文字，尾部一个 ` ```proposals ` JSON 数组块。服务端解析后剥离该块、逐条校验：
 
-| 卡类型 | 校验 |
-|--------|------|
-| `add_capability` | id 在图谱内、未已选 |
-| `rewrite_description` | 非空且与当前不同 |
-| `adjust_score` / `remove_rule` | ruleId 在当前 suggestions/rules 内 |
-| `add_hint` | 非空 |
-| `add_rule` | action ∈ 白名单、tableName 在 Schema 内 |
+| 卡类型                            | 校验                                |
+| ------------------------------ | --------------------------------- |
+| `add_capability`               | id 在图谱内、未已选                       |
+| `rewrite_description`          | 非空且与当前不同                          |
+| `adjust_score` / `remove_rule` | ruleId 在当前 suggestions/rules 内    |
+| `add_hint`                     | 非空                                |
+| `add_rule`                     | action ∈ 白名单、tableName 在 Schema 内 |
 
-**`add_rule` 白名单**（MVP 只支持能从 Schema 确定性 ground 的字段级/表级 action）：
+**`add_rule`** **白名单**（MVP 只支持能从 Schema 确定性 ground 的字段级/表级 action）：
 `check_field` / `check_field_options` / `check_field_required` / `check_field_unique` / `check_field_format` / `check_field_link_target` / `check_table_exists` / `check_table_name` / `check_table_fields` / `check_field_count`
 
 视图/表单/记录值/记录数/关联记录规则**不支持**（grounding 有歧义：需 viewName/formName/或从记录里挑值）。AI 在系统提示里被明确告知不要提这类卡；若提了，校验丢弃并附 note。Phase 3 可扩。
@@ -218,13 +236,15 @@ groundProposal(
 ```
 
 1. 在 schema 中找 sheet（严格按 tableName，找不到返回 error）
-2. 按 action 从真实 schema 解析参数（**复用 [answer-reverser.ts](file:///data/wps_dbsheet_examination_system/packages/server/src/engine/answer-reverser.ts) 已有的 `extractOptions`/`extractFormat`/`resolveLinkTarget` 等辅助函数**）：
-   - 字段类：定位 fieldName → 解析 type(canonicalType)/options/format/unique/linkTarget
-   - 表类：解析 tableName/sheetCount/fieldNames/fieldCount
+2. 按 action 从真实 schema 解析参数（**复用** **[answer-reverser.ts](file:///data/wps_dbsheet_examination_system/packages/server/src/engine/answer-reverser.ts)** **已有的** **`extractOptions`/`extractFormat`/`resolveLinkTarget`** **等辅助函数**）：
+
+   * 字段类：定位 fieldName → 解析 type(canonicalType)/options/format/unique/linkTarget
+
+   * 表类：解析 tableName/sheetCount/fieldNames/fieldCount
 3. 生成 AnswerRule（id 沿用 `applyTemplate` 的 `capabilityId_action_sheet[_field]_idx` 模式），score=0 待老师分配
 4. 任一步缺数据 → `{ error }`，该卡丢弃并附 note
 
-**编排细节**：本轮若有 `add_rule` 卡且 schema 尚未取（AI 没调 tool），orchestrator 用 fileId/token 取一次 schema 再 ground。正常情况 AI 提 add_rule 前必已调过 `get_standard_answer_schema`，schema 已在手。
+**编排细节**：本轮若有 `add_rule` 卡且 schema 尚未取（AI 没调 tool），orchestrator 用 fileId/token 取一次 schema 再 ground。正常情况 AI 提 add\_rule 前必已调过 `get_standard_answer_schema`，schema 已在手。
 
 ### 4.6 路由
 
@@ -232,16 +252,20 @@ groundProposal(
 
 请求：`{ questionState, history[], fileId?, accessToken? }`
 响应事件流：
-- `event: delta` → `{ text }` 文本增量
-- `event: proposals` → `{ proposals: Proposal[], notes: string[] }` 最终建议卡（已 ground、已校验）
-- `event: done` → `{ usage }`
-- `event: error` → `{ message }`
+
+* `event: delta` → `{ text }` 文本增量
+
+* `event: proposals` → `{ proposals: Proposal[], notes: string[] }` 最终建议卡（已 ground、已校验）
+
+* `event: done` → `{ usage }`
+
+* `event: error` → `{ message }`
 
 **限流**：每教师 `LLM_RATE_LIMIT_PER_MIN`（默认 20）轮，超限 429。fileId/accessToken 仅存请求内存，不持久化（沿用 Phase 1 token 安全模式）。
 
 ### 4.7 系统提示结构
 
-```
+````
 你是 WPS 多维表格实操题出题教练…
 【当前题目状态】{questionState JSON}
 【能力图谱 66 项】{id/name/domain/scorable/promptHints 摘要}
@@ -251,9 +275,9 @@ groundProposal(
 - add_rule 仅白名单 action；只给 action+tableName+fieldName?，参数系统从标准答案解析，你不要给参数
 - 视图/表单/记录值规则不要提
 【回复格式】先文字，最后 ```proposals JSON 块；无建议给 []
-```
+````
 
----
+***
 
 ## 5. 前端详细设计
 
@@ -273,7 +297,7 @@ QuestionEditor.tsx（扩展）
 └── 类型补充到 types.ts
 ```
 
-**形态选 Drawer**（右侧 ~480px，浮动按钮触发）：对既有单列 `maxWidth:1000` 布局零侵入，老师按需召出/收起，符合"侧栏搭档"定位。
+**形态选 Drawer**（右侧 \~480px，浮动按钮触发）：对既有单列 `maxWidth:1000` 布局零侵入，老师按需召出/收起，符合"侧栏搭档"定位。
 
 ### 5.2 建议卡应用 handler（QuestionEditor 持有，下传 CoachingPanel）
 
@@ -339,12 +363,17 @@ export const coachingApi = {
 
 ### 5.5 CoachingPanel 内部状态与 UX
 
-- `messages: { id, role, text }[]`、`proposalsByMsg: Map<id, {proposal, status}[]>`（status: pending/applied/dismissed）、`input`、`streaming`、`abortController`
-- **空态**：占位语 + 三个建议提问（"看看这题还能怎么完善" / "帮我补一个单选字段考点" / "描述写得更地道点"）一键发送
-- **流式中**：打字指示 + 【停止】（abort AbortController）
-- **无标准答案**：顶部 banner「未导入标准答案，AI 看不到你的表，规则类建议不可用」
-- **已应用卡**：标 ✓ 已应用、置灰；【忽略】移除该卡
-- **历史**：`history` 只回传每条消息的文字 `{role, content}`，proposals 不回传（UI 临时态，保持简单）
+* `messages: { id, role, text }[]`、`proposalsByMsg: Map<id, {proposal, status}[]>`（status: pending/applied/dismissed）、`input`、`streaming`、`abortController`
+
+* **空态**：占位语 + 三个建议提问（"看看这题还能怎么完善" / "帮我补一个单选字段考点" / "描述写得更地道点"）一键发送
+
+* **流式中**：打字指示 + 【停止】（abort AbortController）
+
+* **无标准答案**：顶部 banner「未导入标准答案，AI 看不到你的表，规则类建议不可用」
+
+* **已应用卡**：标 ✓ 已应用、置灰；【忽略】移除该卡
+
+* **历史**：`history` 只回传每条消息的文字 `{role, content}`，proposals 不回传（UI 临时态，保持简单）
 
 ### 5.6 新增前端文件
 
@@ -357,76 +386,76 @@ packages/client/src/types.ts    （加 Proposal/ChatMessage/QuestionState/Coachi
 packages/client/src/services/api.ts  （加 coachingApi）
 ```
 
----
+***
 
 ## 6. 错误处理与边界
 
-| 场景 | 处理 |
-|------|------|
-| LLM 不可达/超时 | `LLM_TIMEOUT_MS` 触发 abort → error event「AI 暂不可用」；前端可重试 |
-| LLM 回复无 proposals 块 / JSON 损坏 | 当作无建议卡，文字照常显示，附 note |
-| LLM 幻觉（白名单外 action / 不存在 capabilityId / 不存在 tableName） | 校验阶段丢弃，附 note「已忽略无效建议：…」 |
-| grounding 失败（字段不存在/缺数据） | `groundProposal` 返回 `{error}`，该卡丢弃 + note |
-| accessToken 过期 / WPS 401 | tool 调用透传 401；CoachingPanel 提示「令牌过期，请重新导入」；AI 降级不再提 add_rule |
-| 无标准答案 | schema/records tool 返回 `{available:false}`；AI 仅给非规则类建议；顶部 banner |
-| 记录过大 | `get_records` 截断 50 条/8KB + note |
-| 限流（>20 轮/分） | 429 + 前端提示 |
-| 流式中断（网络/abort） | 保留已收文字，标「已中断」，可重发 |
-| env 配置错误（缺 API_KEY） | 启动 config 校验；调用抛 500「AI 服务未配置」 |
-| 竞态（AI 回复前老师手改状态） | questionState 每轮现取；应用时按最新状态校验，失败给 reason |
-| LLM 调用未定义 tool | 仅注册 3 个 tool，未知 tool_call 回「未知工具」结果 |
+| 场景                                                     | 处理                                                               |
+| ------------------------------------------------------ | ---------------------------------------------------------------- |
+| LLM 不可达/超时                                             | `LLM_TIMEOUT_MS` 触发 abort → error event「AI 暂不可用」；前端可重试           |
+| LLM 回复无 proposals 块 / JSON 损坏                          | 当作无建议卡，文字照常显示，附 note                                             |
+| LLM 幻觉（白名单外 action / 不存在 capabilityId / 不存在 tableName） | 校验阶段丢弃，附 note「已忽略无效建议：…」                                         |
+| grounding 失败（字段不存在/缺数据）                                | `groundProposal` 返回 `{error}`，该卡丢弃 + note                        |
+| accessToken 过期 / WPS 401                               | tool 调用透传 401；CoachingPanel 提示「令牌过期，请重新导入」；AI 降级不再提 add\_rule    |
+| 无标准答案                                                  | schema/records tool 返回 `{available:false}`；AI 仅给非规则类建议；顶部 banner |
+| 记录过大                                                   | `get_records` 截断 50 条/8KB + note                                 |
+| 限流（>20 轮/分）                                            | 429 + 前端提示                                                       |
+| 流式中断（网络/abort）                                         | 保留已收文字，标「已中断」，可重发                                                |
+| env 配置错误（缺 API\_KEY）                                   | 启动 config 校验；调用抛 500「AI 服务未配置」                                   |
+| 竞态（AI 回复前老师手改状态）                                       | questionState 每轮现取；应用时按最新状态校验，失败给 reason                         |
+| LLM 调用未定义 tool                                         | 仅注册 3 个 tool，未知 tool\_call 回「未知工具」结果                             |
 
----
+***
 
 ## 7. 测试策略
 
-| 层 | 测什么 | mock |
-|----|--------|------|
-| **LLMClient 契约** | 固定 chunks（delta+tool_calls+stop）下，service 正确循环/聚合/执行 tool/产 proposals；超时处理 | fake LLMClient |
-| **Tool handler** | get_capability_detail 合法/非法；schema 有/无凭据/401；records 截断（>50 条） | mock KingsoftAdapter |
-| **建议卡校验** | 每类型合法/非法；白名单外 action 丢；已选 capability 丢；不存在的 ruleId 丢 | — |
-| **groundProposal** | 字段类正确解析 type/options/format/unique/linkTarget；表类正确；字段不存在→{error}；与反向器既有辅助函数一致 | mock schema |
-| **coaching-service 集成** | 端到端一轮（提问→调 tool→返 add_rule→ground→校验→输出）；降级路径；proposals 块解析（正常/缺块/损坏） | mock LLMClient + adapter |
-| **路由** | 401；429 限流；SSE 事件格式；fileId/accessToken 不写库 | mock service |
-| **前端** | applyProposal 各类型正确 mutate；SSE parser 解析 delta/proposals/error；竞态失败显示 | — |
+| 层                       | 测什么                                                                           | mock                     |
+| ----------------------- | ----------------------------------------------------------------------------- | ------------------------ |
+| **LLMClient 契约**        | 固定 chunks（delta+tool\_calls+stop）下，service 正确循环/聚合/执行 tool/产 proposals；超时处理   | fake LLMClient           |
+| **Tool handler**        | get\_capability\_detail 合法/非法；schema 有/无凭据/401；records 截断（>50 条）              | mock KingsoftAdapter     |
+| **建议卡校验**               | 每类型合法/非法；白名单外 action 丢；已选 capability 丢；不存在的 ruleId 丢                          | —                        |
+| **groundProposal**      | 字段类正确解析 type/options/format/unique/linkTarget；表类正确；字段不存在→{error}；与反向器既有辅助函数一致 | mock schema              |
+| **coaching-service 集成** | 端到端一轮（提问→调 tool→返 add\_rule→ground→校验→输出）；降级路径；proposals 块解析（正常/缺块/损坏）        | mock LLMClient + adapter |
+| **路由**                  | 401；429 限流；SSE 事件格式；fileId/accessToken 不写库                                    | mock service             |
+| **前端**                  | applyProposal 各类型正确 mutate；SSE parser 解析 delta/proposals/error；竞态失败显示         | —                        |
 
 **不测**：真实 LLM 调用、真实 WPS API（沿用 Phase 1 mock 做法）。
 
----
+***
 
 ## 8. Phase 1 不变量保护
 
-| 不变量 | 保护 | 验证 |
-|--------|------|------|
-| rule-engine.ts 零改动 | coaching 不 import 进 rule-engine | 既有测试全过 |
-| grading-service.ts 零改动 | coaching 不进判分链路 | 既有测试全过 |
-| AnswerRule 格式不变 | groundProposal 复用 `rule-engine.AnswerRule` | 类型同源 |
-| 参数 100% 真实 | LLM 不产参数，groundProposal 从 schema 解析 | groundProposal 测试断言 |
-| accessToken 不持久化 | 路由不写库、日志 redact token | 路由测试 + 日志审查 |
-| 非实操题不受影响 | CoachingPanel 门控 `type==='practical'` | 前端测试 |
+| 不变量                    | 保护                                         | 验证                  |
+| ---------------------- | ------------------------------------------ | ------------------- |
+| rule-engine.ts 零改动     | coaching 不 import 进 rule-engine            | 既有测试全过              |
+| grading-service.ts 零改动 | coaching 不进判分链路                            | 既有测试全过              |
+| AnswerRule 格式不变        | groundProposal 复用 `rule-engine.AnswerRule` | 类型同源                |
+| 参数 100% 真实             | LLM 不产参数，groundProposal 从 schema 解析        | groundProposal 测试断言 |
+| accessToken 不持久化       | 路由不写库、日志 redact token                      | 路由测试 + 日志审查         |
+| 非实操题不受影响               | CoachingPanel 门控 `type==='practical'`      | 前端测试                |
 
 **回归基线**：Phase 1 既有测试（capability-graph 完整性 / skeleton-generator / answer-reverser / reverse-rules 路由）全过 = PR 合并门槛。
 
----
+***
 
 ## 9. 实现顺序
 
-| 步骤 | 内容 | 依赖 |
-|------|------|------|
-| 1 | config + env（`LLM_*`）+ .env.example | 无 |
-| 2 | LLMClient 接口 + OpenAICompatibleClient + 契约测试 | 1 |
-| 3 | coaching/tools.ts（3 tool 定义+handler）+ 测试 | 1 |
-| 4 | coaching/proposals.ts（类型+校验）+ 测试 | 无 |
-| 5 | answer-reverser.groundProposal() + 测试（复用既有辅助函数） | 4 |
-| 6 | coaching/context-builder.ts + prompt-templates.ts | 3,4 |
-| 7 | coaching-service.ts（编排）+ 集成测试 | 2,3,5,6 |
-| 8 | routes/coaching.ts（SSE+鉴权+限流）+ 路由测试 | 7 |
-| 9 | 前端 types + coachingApi（SSE parser）+ 测试 | 8 |
-| 10 | ProposalCard + CoachingPanel + applyProposal | 9 |
-| 11 | AnswerImporter 凭据上提 + QuestionEditor 接线 + 门控 | 10 |
-| 12 | 端到端手测（接 DeepSeek）+ 回归 Phase 1 | 全部 |
+| 步骤 | 内容                                                | 依赖      |
+| -- | ------------------------------------------------- | ------- |
+| 1  | config + env（`LLM_*`）+ .env.example               | 无       |
+| 2  | LLMClient 接口 + OpenAICompatibleClient + 契约测试      | 1       |
+| 3  | coaching/tools.ts（3 tool 定义+handler）+ 测试          | 1       |
+| 4  | coaching/proposals.ts（类型+校验）+ 测试                  | 无       |
+| 5  | answer-reverser.groundProposal() + 测试（复用既有辅助函数）   | 4       |
+| 6  | coaching/context-builder.ts + prompt-templates.ts | 3,4     |
+| 7  | coaching-service.ts（编排）+ 集成测试                     | 2,3,5,6 |
+| 8  | routes/coaching.ts（SSE+鉴权+限流）+ 路由测试               | 7       |
+| 9  | 前端 types + coachingApi（SSE parser）+ 测试            | 8       |
+| 10 | ProposalCard + CoachingPanel + applyProposal      | 9       |
+| 11 | AnswerImporter 凭据上提 + QuestionEditor 接线 + 门控      | 10      |
+| 12 | 端到端手测（接 DeepSeek）+ 回归 Phase 1                     | 全部      |
 
----
+***
 
 ## 10. 验收标准
 
@@ -440,18 +469,23 @@ packages/client/src/services/api.ts  （加 coachingApi）
 8. Phase 1 既有测试全过、判分链路无回归
 9. 非实操题不渲染 CoachingPanel
 
----
+***
 
 ## 11. Phase 3 预留
 
-- **扩展 `add_rule` 白名单**：视图类（需 viewName）、表单类（需 formName）、记录值类（需从记录挑值的策略）的 grounding 算法
-- **OllamaClient 原生实装**：数据零出境场景
-- **对话历史持久化**：跨会话保留打磨记录（当前为 UI 临时态）
-- **AI 解释规则**：选某条规则让 AI 解释为何这样判分（教学复盘场景）
+* **扩展** **`add_rule`** **白名单**：视图类（需 viewName）、表单类（需 formName）、记录值类（需从记录挑值的策略）的 grounding 算法
 
----
+* **OllamaClient 原生实装**：数据零出境场景
+
+* **对话历史持久化**：跨会话保留打磨记录（当前为 UI 临时态）
+
+* **AI 解释规则**：选某条规则让 AI 解释为何这样判分（教学复盘场景）
+
+***
 
 ## 12. 参考资料
 
-- Phase 1 spec：[2026-07-07-exam-authoring-assist.md](./2026-07-07-exam-authoring-assist.md)
-- 现有代码：[rule-engine.ts](file:///data/wps_dbsheet_examination_system/packages/server/src/engine/rule-engine.ts)、[answer-reverser.ts](file:///data/wps_dbsheet_examination_system/packages/server/src/engine/answer-reverser.ts)、[kingsoft-adapter.ts](file:///data/wps_dbsheet_examination_system/packages/server/src/engine/adapters/kingsoft-adapter.ts)、[grading-service.ts](file:///data/wps_dbsheet_examination_system/packages/server/src/services/grading-service.ts)、[QuestionEditor.tsx](file:///data/wps_dbsheet_examination_system/packages/client/src/pages/teacher/QuestionEditor.tsx)
+* Phase 1 spec：[2026-07-07-exam-authoring-assist.md](./2026-07-07-exam-authoring-assist.md)
+
+* 现有代码：[rule-engine.ts](file:///data/wps_dbsheet_examination_system/packages/server/src/engine/rule-engine.ts)、[answer-reverser.ts](file:///data/wps_dbsheet_examination_system/packages/server/src/engine/answer-reverser.ts)、[kingsoft-adapter.ts](file:///data/wps_dbsheet_examination_system/packages/server/src/engine/adapters/kingsoft-adapter.ts)、[grading-service.ts](file:///data/wps_dbsheet_examination_system/packages/server/src/services/grading-service.ts)、[QuestionEditor.tsx](file:///data/wps_dbsheet_examination_system/packages/client/src/pages/teacher/QuestionEditor.tsx)
+

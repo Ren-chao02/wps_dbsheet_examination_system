@@ -15,19 +15,19 @@ import {
   Input,
   Form,
   Progress,
-  Divider,
+  Upload,
+  Modal,
 } from 'antd';
 import {
   ReloadOutlined,
-  LinkOutlined,
   SafetyOutlined,
   ClockCircleOutlined,
   KeyOutlined,
   EyeOutlined,
   EyeInvisibleOutlined,
   CopyOutlined,
-  ExperimentOutlined,
   SaveOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 import api from '../../services/api';
@@ -48,13 +48,35 @@ export function WpsTokenManager() {
   const [refreshing, setRefreshing] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [showToken, setShowToken] = useState(false);
+  const [showRefreshToken, setShowRefreshToken] = useState(false);
   const [manualFormVisible, setManualFormVisible] = useState(false);
   const [manualForm] = Form.useForm();
+  const [refreshModalOpen, setRefreshModalOpen] = useState(false);
+  const [refreshForm] = Form.useForm();
 
   useEffect(() => {
     setMounted(true);
     setRemainingSeconds(getWpsTokenRemainingSeconds());
-  }, [getWpsTokenRemainingSeconds]);
+
+    // 启动时从服务端加载持久化的 Token
+    const loadFromServer = async () => {
+      try {
+        const res = await api.get('/wps-config');
+        if (res.data?.data) {
+          const serverToken = res.data.data;
+          setWpsToken({
+            accessToken: serverToken.accessToken,
+            refreshToken: serverToken.refreshToken,
+            expiresAt: serverToken.expiresAt,
+            refreshExpiresAt: serverToken.refreshExpiresAt,
+          });
+        }
+      } catch {
+        // 服务端无数据，使用本地 localStorage 中的 token（已在 store init 中加载）
+      }
+    };
+    loadFromServer();
+  }, [getWpsTokenRemainingSeconds, setWpsToken]);
 
   // 每秒更新倒计时
   useEffect(() => {
@@ -89,14 +111,52 @@ export function WpsTokenManager() {
 
   const handleRefresh = async () => {
     if (!wpsToken?.refreshToken) {
-      message.warning('没有可用的 refresh_token，请先完成 WPS 授权');
+      message.warning('没有可用的 refresh_token，请手动回填 Token');
       return;
     }
-
-    setRefreshing(true);
+    // 预填表单
+    refreshForm.setFieldsValue({
+      grantType: 'refresh_token',
+      refreshToken: wpsToken.refreshToken,
+      clientId: '',
+      clientSecret: '',
+    });
+    // 尝试从服务端拉取已保存的凭据
     try {
+      const cred = await api.get('/wps-token/credentials');
+      if (cred.data.apiKey && cred.data.apiSecret) {
+        refreshForm.setFieldsValue({
+          clientId: cred.data.apiKey,
+          clientSecret: cred.data.apiSecret,
+        });
+      }
+    } catch {
+      // 获取失败，保持空值让用户手动填写
+    }
+    setRefreshModalOpen(true);
+  };
+
+  const handleRefreshSubmit = async () => {
+    try {
+      const values = await refreshForm.validateFields();
+      setRefreshing(true);
+
+      // 如果填写了 client_id/client_secret，同步保存到服务端 .env
+      if (values.clientId && values.clientSecret) {
+        try {
+          await api.post('/wps-token/credentials', {
+            apiKey: values.clientId,
+            apiSecret: values.clientSecret,
+          });
+        } catch {
+          // 凭据保存失败不阻塞刷新流程
+        }
+      }
+
       const res = await api.post<WpsTokenRefreshResponse>('/wps-token/refresh', {
-        refreshToken: wpsToken.refreshToken,
+        refreshToken: values.refreshToken,
+        clientId: values.clientId || undefined,
+        clientSecret: values.clientSecret || undefined,
       });
 
       const expiresAt = Date.now() + res.data.expiresIn * 1000;
@@ -110,6 +170,20 @@ export function WpsTokenManager() {
       });
 
       setRemainingSeconds(res.data.expiresIn);
+      setRefreshModalOpen(false);
+
+      // 持久化到服务端
+      try {
+        await api.post('/wps-config', {
+          accessToken: res.data.accessToken,
+          refreshToken: res.data.refreshToken,
+          expiresIn: res.data.expiresIn,
+          refreshExpiresIn: res.data.refreshExpiresIn || 2592000,
+        });
+      } catch {
+        // 服务端持久化失败不阻塞
+      }
+
       message.success('access_token 刷新成功');
     } catch (err: any) {
       const msg = err.response?.data?.message || err.response?.data?.detail || '刷新失败';
@@ -123,16 +197,11 @@ export function WpsTokenManager() {
     }
   };
 
-  const handleAuthorize = () => {
-    const clientId = import.meta.env.VITE_WPS_CLIENT_ID || '';
-    const redirectUri = `${window.location.origin}/teacher/wps-token`;
-    const authUrl = `https://open.wps.cn/oauth2/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=all`;
-    window.location.href = authUrl;
-  };
-
   const handleClear = () => {
     clearWpsToken();
-    message.success('已清除本地 Token 缓存');
+    // 同时清除服务端 Token
+    api.delete('/wps-config').catch(() => {});
+    message.success('已清除本地和服务端 Token 缓存');
   };
 
   const handleCopyToken = () => {
@@ -144,8 +213,13 @@ export function WpsTokenManager() {
     });
   };
 
-  const handleOpenApiExplorer = () => {
-    window.open('https://open.wps.cn/api-explorer/', '_blank');
+  const handleCopyRefreshToken = () => {
+    if (!wpsToken?.refreshToken) return;
+    navigator.clipboard.writeText(wpsToken.refreshToken).then(() => {
+      message.success('refresh_token 已复制到剪贴板');
+    }).catch(() => {
+      message.error('复制失败，请手动复制');
+    });
   };
 
   const handleManualUpdate = async (values: {
@@ -174,47 +248,21 @@ export function WpsTokenManager() {
     setRemainingSeconds(values.expiresIn);
     setManualFormVisible(false);
     manualForm.resetFields();
+
+    // 持久化到服务端
+    try {
+      await api.post('/wps-config', {
+        accessToken: values.accessToken,
+        refreshToken: values.refreshToken || '',
+        expiresIn: values.expiresIn || 7200,
+        refreshExpiresIn: values.refreshExpiresIn || 2592000,
+      });
+    } catch {
+      // 服务端持久化失败不阻塞
+    }
+
     message.success('Token 已手动更新');
   };
-
-  // 页面加载时处理 OAuth 回调 code
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    if (!code) return;
-
-    const exchangeCode = async () => {
-      setRefreshing(true);
-      try {
-        const redirectUri = `${window.location.origin}/teacher/wps-token`;
-        const res = await api.post<WpsTokenRefreshResponse>('/wps-token', {
-          code,
-          redirectUri,
-        });
-
-        const expiresAt = Date.now() + res.data.expiresIn * 1000;
-        const refreshExpiresAt = Date.now() + res.data.refreshExpiresIn * 1000;
-
-        setWpsToken({
-          accessToken: res.data.accessToken,
-          refreshToken: res.data.refreshToken,
-          expiresAt,
-          refreshExpiresAt,
-        });
-
-        // 清除 URL 上的 code 参数
-        window.history.replaceState({}, document.title, window.location.pathname);
-        message.success('WPS 授权成功，access_token 已获取');
-      } catch (err: any) {
-        const msg = err.response?.data?.message || err.response?.data?.detail || '授权失败';
-        message.error(msg);
-      } finally {
-        setRefreshing(false);
-      }
-    };
-
-    exchangeCode();
-  }, [setWpsToken]);
 
   if (!mounted) {
     return (
@@ -245,15 +293,15 @@ export function WpsTokenManager() {
             >
               <Space direction="vertical" style={{ width: '100%' }} align="center">
                 <Text type="secondary">
-                  点击下方的"前往 WPS 授权"按钮完成 OAuth2 授权，或点击下方"手动回填 Token"粘贴从 API Explorer 获得的 token。
+                  请从 WPS API Explorer 获取 access_token 后，点击下方按钮手动回填。
                 </Text>
                 <Button
                   type="primary"
-                  icon={<LinkOutlined />}
+                  icon={<SaveOutlined />}
                   size="large"
-                  onClick={handleAuthorize}
+                  onClick={() => { setManualFormVisible(true); manualForm.resetFields(); }}
                 >
-                  前往 WPS 授权
+                  手动回填 Token
                 </Button>
               </Space>
             </Empty>
@@ -333,6 +381,38 @@ export function WpsTokenManager() {
                 )}
               </Space>
             </Card>
+
+            <Card title="当前 refresh_token">
+              <Space direction="vertical" style={{ width: '100%' }}>
+                <Input.Password
+                  value={wpsToken.refreshToken || '无'}
+                  visibilityToggle={false}
+                  readOnly
+                  addonBefore={<SafetyOutlined />}
+                  suffix={
+                    <Space>
+                      <Button
+                        type="text"
+                        icon={showRefreshToken ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                        onClick={() => setShowRefreshToken(s => !s)}
+                        title={showRefreshToken ? '隐藏' : '显示'}
+                      />
+                      <Button
+                        type="text"
+                        icon={<CopyOutlined />}
+                        onClick={handleCopyRefreshToken}
+                        title="复制"
+                      />
+                    </Space>
+                  }
+                />
+                {showRefreshToken && wpsToken.refreshToken && (
+                  <Paragraph copyable={{ text: wpsToken.refreshToken }}>
+                    <Text code style={{ wordBreak: 'break-all' }}>{wpsToken.refreshToken}</Text>
+                  </Paragraph>
+                )}
+              </Space>
+            </Card>
           </>
         )}
 
@@ -350,28 +430,14 @@ export function WpsTokenManager() {
               </Button>
             )}
             <Button
-              icon={<ExperimentOutlined />}
-              onClick={handleOpenApiExplorer}
-              size="large"
-            >
-              在 API Explorer 刷新
-            </Button>
-            <Button
               icon={<SaveOutlined />}
-              onClick={() => setManualFormVisible(v => !v)}
+              onClick={() => { setManualFormVisible(v => !v); if (!manualFormVisible) manualForm.resetFields(); }}
               size="large"
             >
               手动回填 Token
             </Button>
             {wpsToken ? (
               <>
-                <Button
-                  icon={<LinkOutlined />}
-                  onClick={handleAuthorize}
-                  size="large"
-                >
-                  重新授权
-                </Button>
                 <Button
                   danger
                   onClick={handleClear}
@@ -392,11 +458,42 @@ export function WpsTokenManager() {
               message="从 WPS API Explorer 获得新 token 后，可在此回填到系统。"
               style={{ marginBottom: 16 }}
             />
+            <Card size="small" title="一键解析 JSON" style={{ marginBottom: 16 }}>
+              <Upload.Dragger
+                accept=".json"
+                maxCount={1}
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  const reader = new FileReader();
+                  reader.onload = (e) => {
+                    try {
+                      const json = JSON.parse(e.target?.result as string);
+                      manualForm.setFieldsValue({
+                        accessToken: json.access_token || '',
+                        refreshToken: json.refresh_token || '',
+                        expiresIn: json.expires_in || 7200,
+                        refreshExpiresIn: json.refresh_expires_in || 2592000,
+                      });
+                      message.success('已自动识别并填充下方字段（有效期已从 JSON 中提取）');
+                    } catch {
+                      message.error('JSON 格式无效，请检查文件内容');
+                    }
+                  };
+                  reader.readAsText(file);
+                  return false; // 阻止自动上传
+                }}
+              >
+                <p className="ant-upload-drag-icon" style={{ marginBottom: 0 }}>
+                  <UploadOutlined style={{ fontSize: 24, color: '#1677ff' }} />
+                </p>
+                <p className="ant-upload-text">点击或拖拽上传 token.json</p>
+                <p className="ant-upload-hint">从 API Explorer 下载的 JSON 文件</p>
+              </Upload.Dragger>
+            </Card>
             <Form
               form={manualForm}
               layout="vertical"
               onFinish={handleManualUpdate}
-              initialValues={{ expiresIn: 7200, refreshExpiresIn: 2592000 }}
             >
               <Form.Item
                 name="accessToken"
@@ -444,6 +541,36 @@ export function WpsTokenManager() {
           </Card>
         )}
 
+        <Modal
+          title="刷新 access_token"
+          open={refreshModalOpen}
+          onCancel={() => setRefreshModalOpen(false)}
+          onOk={handleRefreshSubmit}
+          confirmLoading={refreshing}
+          okText="刷新"
+          cancelText="取消"
+          destroyOnClose
+        >
+          <Form form={refreshForm} layout="vertical" style={{ marginTop: 16 }}>
+            <Form.Item name="grantType" label="grant_type">
+              <Input readOnly disabled />
+            </Form.Item>
+            <Form.Item
+              name="refreshToken"
+              label="refresh_token"
+              rules={[{ required: true, message: '请输入 refresh_token' }]}
+            >
+              <Input.Password placeholder="refresh_token" />
+            </Form.Item>
+            <Form.Item name="clientId" label="client_id（可选）">
+              <Input.Password placeholder="App Key，不填则使用服务端配置" />
+            </Form.Item>
+            <Form.Item name="clientSecret" label="client_secret（可选）">
+              <Input.Password placeholder="App Secret，不填则使用服务端配置" />
+            </Form.Item>
+          </Form>
+        </Modal>
+
         {wpsToken && remainingSeconds <= 600 && remainingSeconds > 0 && (
           <Alert
             message="access_token 即将过期"
@@ -461,7 +588,7 @@ export function WpsTokenManager() {
         {wpsToken && remainingSeconds <= 0 && (
           <Alert
             message="access_token 已过期"
-            description="当前 Token 已失效，请刷新或重新授权。"
+            description="当前 Token 已失效，请手动回填新 Token。"
             type="error"
             showIcon
             action={

@@ -259,10 +259,11 @@ class ExportService {
     if (!Array.isArray(data) || data.length === 0) return [];
 
     // 如果有列配置，按配置转换数据
-    if (options.columns && options.columns.length > 0) {
+    const columns = options.columns;
+    if (columns && columns.length > 0) {
       return data.map(item => {
         const row: any = {};
-        for (const col of options.columns) {
+        for (const col of columns) {
           let value = item[col.key];
 
           // 应用格式化函数

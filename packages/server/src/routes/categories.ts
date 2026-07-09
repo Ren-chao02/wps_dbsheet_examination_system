@@ -103,14 +103,14 @@ function validateMaxDepth(currentLevel: number, maxDepth: number = 5): void {
  * 检查是否形成循环引用
  */
 async function checkCircularReference(nodeId: string, targetParentId: string): Promise<boolean> {
-  let currentId = targetParentId;
+  let currentId: string | null = targetParentId;
   
   while (currentId) {
     if (currentId === nodeId) {
       return true; // 形成循环
     }
     
-    const node = await prisma.questionCategory.findUnique({
+    const node: { parentId: string | null } | null = await prisma.questionCategory.findUnique({
       where: { id: currentId },
       select: { parentId: true },
     });
@@ -597,10 +597,12 @@ categoryRouter.get('/stats/overview', async (_req: Request, res: Response) => {
       prisma.questionCategory.count({ where: { parentId: null } }),
       prisma.questionCategory.aggregate({ _max: { level: true } }),
       // 统计每个一级分类下的题目数量
-      prisma.questionCategory.groupBy({
-        by: ['primaryCategoryId'],
+      prisma.questionCategory.findMany({
         where: { parentId: null },
-        _count: { primaryQuestions: true },
+        select: {
+          id: true,
+          _count: { select: { primaryQuestions: true } },
+        },
       }),
     ]);
 
@@ -611,10 +613,10 @@ categoryRouter.get('/stats/overview', async (_req: Request, res: Response) => {
           active: activeCategories,
           inactive: totalCategories - activeCategories,
           rootLevel: rootCategories,
-          maxDepth: maxLevel._max.level || 0,
+          maxDepth: maxLevel._max?.level ?? 0,
         },
         distribution: categoriesWithQuestions.map(item => ({
-          categoryId: item.primaryCategoryId,
+          categoryId: item.id,
           questionCount: item._count.primaryQuestions,
         })),
       },
@@ -635,7 +637,12 @@ async function getBreadcrumbs(categoryId: string): Promise<any[]> {
   let currentId: string | null = categoryId;
 
   while (currentId) {
-    const category = await prisma.questionCategory.findUnique({
+    const category: {
+      id: string;
+      name: string;
+      parentId: string | null;
+      level: number;
+    } | null = await prisma.questionCategory.findUnique({
       where: { id: currentId },
       select: { id: true, name: true, parentId: true, level: true },
     });

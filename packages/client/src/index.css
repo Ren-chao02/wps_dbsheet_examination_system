@@ -1,88 +1,317 @@
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* Apple HIG Design System — Global Tokens   */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+:root {
+  --apple-bg-root: #f2f2f7;
+  --apple-bg-surface: rgba(255,255,255,0.82);
+  --apple-bg-sidebar: #f9f9fb;
+  --apple-bg-card: #ffffff;
+  --apple-text-h1: #1d1d1f;
+  --apple-text-body: #3a3a3c;
+  --apple-text-secondary: #86868b;
+  --apple-text-label: #aeaeb2;
+  --apple-accent: #007aff;
+  --apple-accent-hover: #0066d6;
+  --apple-accent-bg: rgba(0,122,255,0.08);
+  --apple-green: #34c759;
+  --apple-red: #ff3b30;
+  --apple-orange: #ff9f0a;
+  --apple-border-subtle: #e5e5ea;
+  --apple-border-light: #ececf0;
+  --apple-shadow-card: 0 1px 3px rgba(0,0,0,0.04);
+  --apple-shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+  --apple-radius-sm: 6px;
+  --apple-radius-md: 10px;
+  --apple-radius-lg: 14px;
+  --apple-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+
+  /* Spring Physics */
+  --spring-smooth: cubic-bezier(0, 0, 0.2, 1);
+  --spring-bouncy: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  --spring-snappy: cubic-bezier(0.2, 0, 0, 1);
 }
+
+/* ━━━ Base ━━━ */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background: #f5f5f5;
+  font-family: var(--apple-font);
+  background: var(--apple-bg-root);
+  color: var(--apple-text-body);
+  font-size: 14px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
-#root {
-  min-height: 100vh;
+#root { min-height: 100vh; }
+
+/* ━━━ Spring Animations ━━━ */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; } to { opacity: 1; }
+}
+@keyframes zoomIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(10px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* antd Component Overrides — Apple Style    */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* === Card === */
+.ant-card {
+  border: 0.5px solid var(--apple-border-light) !important;
+  box-shadow: var(--apple-shadow-card) !important;
+  border-radius: var(--apple-radius-lg) !important;
+  transition: box-shadow 0.2s var(--spring-smooth), border-color 0.2s var(--spring-smooth);
+}
+.ant-card:hover { border-color: var(--apple-border-subtle) !important; box-shadow: var(--apple-shadow-md) !important; }
+.ant-card-bordered { border: 0.5px solid var(--apple-border-light) !important; }
+.ant-card .ant-card { box-shadow: none !important; border: 0.5px solid #f3f4f6 !important; }
+.ant-card .ant-card:hover { border-color: var(--apple-border-light) !important; }
+
+/* === Button === */
+.ant-btn {
+  transition: all 0.2s var(--spring-smooth);
+  border-radius: var(--apple-radius-md);
+}
+.ant-btn:hover:not(:disabled) { transform: translateY(-1px); }
+.ant-btn:active:not(:disabled) { transform: translateY(0); transition: transform 0.08s var(--spring-snappy); }
+.ant-btn-primary { background: var(--apple-accent) !important; border-color: var(--apple-accent) !important; }
+.ant-btn-primary:hover:not(:disabled) { background: var(--apple-accent-hover) !important; box-shadow: 0 4px 14px rgba(0,122,255,0.35) !important; }
+.ant-btn-default:hover:not(:disabled):not(.ant-btn-dangerous) { border-color: var(--apple-accent) !important; }
+.ant-btn-dangerous:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(255,59,48,0.3) !important; }
+.ant-btn-link:hover:not(:disabled) { transform: none; }
+.ant-btn-text:hover:not(:disabled), .ant-btn-ghost:hover:not(:disabled) { background: var(--apple-accent-bg) !important; }
+
+/* === Table === */
+.ant-table { font-size: 13px; }
+.ant-table-thead > tr > th {
+  background: #fafafa !important; color: var(--apple-text-label) !important;
+  font-weight: 500 !important; font-size: 12px !important;
+  border-bottom: 0.5px solid var(--apple-border-light) !important;
+}
+.ant-table-tbody > tr > td { border-bottom: 0.5px solid var(--apple-border-light) !important; }
+.ant-table-tbody > tr:hover > td { background: rgba(0,122,255,0.02) !important; }
+
+/* === Tag === */
+.ant-tag { border-radius: 20px; font-size: 11px; font-weight: 500; border: none; }
+
+/* === Menu (sidebar) === */
+.ant-menu { font-family: var(--apple-font); }
+.ant-menu-item { border-radius: var(--apple-radius-md) !important; margin: 0 8px 1px !important; width: auto !important; }
+.ant-menu-item-selected { background: var(--apple-accent-bg) !important; color: var(--apple-accent) !important; }
+
+/* === Input / Select === */
+.ant-input, .ant-picker, .ant-select-selector {
+  border-radius: var(--apple-radius-md) !important;
+  border-color: var(--apple-border-subtle) !important;
+  transition: border-color 0.15s var(--spring-smooth), box-shadow 0.15s var(--spring-smooth) !important;
+}
+.ant-input:focus, .ant-picker-focused, .ant-select-focused .ant-select-selector {
+  border-color: var(--apple-accent) !important;
+  box-shadow: 0 0 0 3px rgba(0,122,255,0.12) !important;
+}
+
+/* === Modal === */
+.ant-modal-content { border-radius: var(--apple-radius-lg) !important; }
+
+/* === Tabs === */
+.ant-tabs-tab { font-family: var(--apple-font); }
+.ant-tabs-ink-bar { background: var(--apple-accent) !important; }
+
+/* === Layout Sider === */
+.ant-layout-sider { background: var(--apple-bg-sidebar) !important; }
+
+/* === Breadcrumb === */
+.ant-breadcrumb { font-size: 13px; }
+
+/* === Statistic === */
+.ant-statistic-title { font-size: 12px; color: var(--apple-text-label); }
+.ant-statistic-content { font-family: var(--apple-font); }
+
+/* === Spin === */
+.ant-spin-dot-item { background: var(--apple-accent) !important; }
+
+/* === Page transitions === */
+.ant-layout-content {
+  animation: slideUp 0.35s var(--spring-smooth) both;
+}
+
+/* Stagger children in cards */
+.ant-row > .ant-col { opacity: 0; animation: slideUp 0.4s var(--spring-smooth) forwards; }
+.ant-row > .ant-col:nth-child(1) { animation-delay: 0s; }
+.ant-row > .ant-col:nth-child(2) { animation-delay: 0.04s; }
+.ant-row > .ant-col:nth-child(3) { animation-delay: 0.08s; }
+.ant-row > .ant-col:nth-child(4) { animation-delay: 0.12s; }
+.ant-row > .ant-col:nth-child(5) { animation-delay: 0.16s; }
+.ant-row > .ant-col:nth-child(6) { animation-delay: 0.20s; }
+.ant-row > .ant-col:nth-child(7) { animation-delay: 0.24s; }
+.ant-row > .ant-col:nth-child(8) { animation-delay: 0.28s; }
+
+/* ━━━ Login Page ━━━ */
 .login-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex; justify-content: center; align-items: center; min-height: 100vh;
+  background: linear-gradient(135deg, #e8edf5 0%, #f2f2f7 100%);
 }
-
 .login-card {
-  width: 400px;
-  padding: 40px;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  width: 380px; padding: 36px; background: #fff;
+  border-radius: var(--apple-radius-lg); border: 0.5px solid var(--apple-border-light);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+  animation: zoomIn 0.35s var(--spring-bouncy) both;
+}
+.login-card h1 { text-align: center; margin-bottom: 24px; color: var(--apple-text-h1); font-weight: 700; }
+
+/* ━━━ Page containers ━━━ */
+.page-container { padding: 24px; max-width: 1400px; margin: 0 auto; }
+.page-header { margin-bottom: 24px; }
+.page-header h2 { margin-bottom: 4px; color: var(--apple-text-h1); }
+
+/* ━━━ Existing CSS kept for compat ━━━ */
+.category-manager-btn { position: relative; overflow: hidden; transition: all 0.3s ease; }
+.category-manager-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,122,255,0.5) !important; }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* Extended Showcase Components — Apple HIG  */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* === Switch (iOS Toggle) === */
+.ant-switch { background: rgba(120,120,128,0.16) !important; min-width: 52px !important; height: 32px !important; line-height: 32px !important; }
+.ant-switch-checked { background: var(--apple-green) !important; }
+.ant-switch-handle { width: 28px !important; height: 28px !important; top: 2px !important; left: 2px !important; }
+.ant-switch-checked .ant-switch-handle { left: calc(100% - 30px) !important; }
+.ant-switch-handle::before { border-radius: 50% !important; box-shadow: 0 2px 4px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.04) !important; }
+.ant-switch-inner { display: none !important; }
+
+/* === Steps (Stepper) === */
+.ant-steps-item-process .ant-steps-item-icon {
+  background: var(--apple-accent) !important; border-color: var(--apple-accent) !important;
+}
+.ant-steps-item-finish .ant-steps-item-icon {
+  background: var(--apple-green) !important; border-color: var(--apple-green) !important;
+}
+.ant-steps-item-finish .ant-steps-item-icon > .ant-steps-icon { color: #fff !important; }
+.ant-steps-item-finish > .ant-steps-item-container > .ant-steps-item-content > .ant-steps-item-title::after {
+  background: var(--apple-green) !important;
+}
+.ant-steps-item-title { font-family: var(--apple-font) !important; font-size: 14px !important; }
+
+/* === Progress === */
+.ant-progress-bg { background: var(--apple-accent) !important; }
+.ant-progress-circle .ant-progress-text { font-family: var(--apple-font) !important; font-weight: 600 !important; }
+.ant-progress-text { font-family: var(--apple-font) !important; }
+
+/* === Empty State === */
+.ant-empty-description { color: var(--apple-text-label) !important; font-family: var(--apple-font) !important; }
+.ant-empty-image svg { opacity: 0.3; }
+
+/* === Descriptions (Detail page) === */
+.ant-descriptions-item-label {
+  font-size: 12px !important; color: var(--apple-text-label) !important;
+  font-weight: 500 !important; font-family: var(--apple-font) !important;
+}
+.ant-descriptions-item-content {
+  font-size: 14px !important; color: var(--apple-text-h1) !important;
+  font-family: var(--apple-font) !important;
 }
 
-.login-card h1 {
-  text-align: center;
-  margin-bottom: 32px;
-  color: #1a1a1a;
+/* === Badge === */
+.ant-badge-count {
+  font-family: var(--apple-font) !important; font-weight: 600 !important;
+  box-shadow: none !important;
 }
 
-.page-container {
-  padding: 24px;
-  max-width: 1400px;
-  margin: 0 auto;
+/* === Alert === */
+.ant-alert { border-radius: var(--apple-radius-lg) !important; border: none !important; font-family: var(--apple-font) !important; }
+.ant-alert-info { background: var(--apple-accent-bg) !important; }
+.ant-alert-success { background: rgba(52,199,89,0.1) !important; }
+.ant-alert-warning { background: rgba(255,159,10,0.1) !important; }
+.ant-alert-error { background: rgba(255,59,48,0.08) !important; }
+
+/* === Segmented Control === */
+.ant-segmented {
+  background: rgba(120,120,128,0.08) !important; border-radius: 9px !important; padding: 2px !important;
+}
+.ant-segmented-item { border-radius: 7px !important; font-family: var(--apple-font) !important; }
+.ant-segmented-item-selected {
+  background: #fff !important; box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04) !important;
 }
 
-.page-header {
-  margin-bottom: 24px;
+/* === Pagination === */
+.ant-pagination-item { border-radius: var(--apple-radius-md) !important; font-family: var(--apple-font) !important; }
+.ant-pagination-item-active { background: var(--apple-accent) !important; border-color: var(--apple-accent) !important; }
+.ant-pagination-item-active a { color: #fff !important; }
+
+/* === Form Labels === */
+.ant-form-item-label > label {
+  font-size: 13px !important; font-weight: 500 !important; color: var(--apple-text-body) !important;
+  font-family: var(--apple-font) !important;
 }
 
-.page-header h2 {
-  margin-bottom: 4px;
+/* === Radio & Checkbox === */
+.ant-radio-checked .ant-radio-inner { border-color: var(--apple-accent) !important; background: var(--apple-accent) !important; }
+.ant-checkbox-checked .ant-checkbox-inner { background: var(--apple-accent) !important; border-color: var(--apple-accent) !important; }
+.ant-checkbox-inner { border-radius: var(--apple-radius-sm) !important; }
+
+/* === Select Dropdown === */
+.ant-select-dropdown { border-radius: var(--apple-radius-md) !important; }
+.ant-select-item { font-family: var(--apple-font) !important; border-radius: var(--apple-radius-sm) !important; margin: 2px 4px !important; }
+.ant-select-item-option-selected { background: var(--apple-accent-bg) !important; color: var(--apple-accent) !important; }
+
+/* === DatePicker / Picker === */
+.ant-picker-cell-selected .ant-picker-cell-inner { background: var(--apple-accent) !important; }
+.ant-picker-today .ant-picker-cell-inner::before { border-color: var(--apple-accent) !important; }
+
+/* === Tooltip === */
+.ant-tooltip-inner { border-radius: var(--apple-radius-md) !important; font-family: var(--apple-font) !important; }
+
+/* === Popover === */
+.ant-popover-inner { border-radius: var(--apple-radius-lg) !important; }
+
+/* === Drawer === */
+.ant-drawer-content { border-radius: var(--apple-radius-lg) var(--apple-radius-lg) 0 0 !important; }
+
+/* === Skeleton === */
+.ant-skeleton { font-family: var(--apple-font) !important; }
+
+/* === Result === */
+.ant-result-title { font-family: var(--apple-font) !important; color: var(--apple-text-h1) !important; }
+.ant-result-subtitle { font-family: var(--apple-font) !important; color: var(--apple-text-label) !important; }
+
+/* === Dropdown menu === */
+.ant-dropdown-menu { border-radius: var(--apple-radius-md) !important; padding: 4px !important; }
+.ant-dropdown-menu-item {
+  border-radius: var(--apple-radius-sm) !important; margin: 2px 4px !important;
+  font-family: var(--apple-font) !important;
+}
+/* Dropdown popup panel — Apple elevated card shadow */
+.ant-dropdown-menu {
+  border: 0.5px solid #e5e5ea !important;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06) !important;
 }
 
-/* ✨ 知识点分类管理按钮样式 */
-.category-manager-btn {
-  position: relative;
-  overflow: hidden;
-  transition: all 0.3s ease;
-}
+/* === Tabs enhancement === */
+.ant-tabs-tab-btn { font-family: var(--apple-font) !important; }
+.ant-tabs-tab:hover { color: var(--apple-text-h1) !important; }
+.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn { color: var(--apple-accent) !important; }
 
-.category-manager-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5) !important;
-}
+/* === Notification === */
+.ant-notification-notice { border-radius: var(--apple-radius-lg) !important; font-family: var(--apple-font) !important; }
 
-.category-manager-btn::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: linear-gradient(
-    to bottom right,
-    rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.1) 50%,
-    rgba(255, 255, 255, 0) 100%
-  );
-  transform: rotate(45deg);
-  transition: all 0.6s ease;
-}
-
-.category-manager-btn:hover::before {
-  animation: shimmer 1.5s ease-in-out infinite;
-}
-
-@keyframes shimmer {
-  0% { transform: translateX(-100%) rotate(45deg); }
-  100% { transform: translateX(100%) rotate(45deg); }
-}
+/* === Message === */
+.ant-message-notice-content { border-radius: var(--apple-radius-md) !important; font-family: var(--apple-font) !important; }

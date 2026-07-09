@@ -33,7 +33,7 @@ const ACTION_CONFIG: Record<string, { label: string; color: string; icon: React.
   DELETE: { label: '删除', color: 'red', icon: <DeleteOutlined /> },
   LOGIN: { label: '登录', color: 'default', icon: <UserOutlined /> },
   LOGOUT: { label: '登出', color: 'default', icon: <LogoutOutlined /> },
-  EXPORT: { label: '导出', color: 'purple', icon: <ExportOutlined /> },
+  EXPORT: { label: '导出', color: 'blue', icon: <ExportOutlined /> },
   IMPORT: { label: '导入', color: 'orange', icon: <ImportOutlined /> },
   REVIEW: { label: '审核', color: 'cyan', icon: <SafetyCertificateOutlined /> },
 };

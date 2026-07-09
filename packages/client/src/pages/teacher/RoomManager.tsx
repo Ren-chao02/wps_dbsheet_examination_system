@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react';
 import {
-  Table, Button, Space, Modal, Form, Input, InputNumber, Select, Tag, message,
+  Table, Button, Space, Modal, Form, Input, InputNumber, Tag, message,
   Card, Popconfirm, Typography, Row, Col, Statistic, Descriptions, Empty,
-  Transfer, List, Avatar, Tooltip, Upload
+  List, Avatar, Tooltip, Upload
 } from 'antd';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined,
-  UploadOutlined, UserOutlined, TeamOutlined, ExportOutlined,
+  UploadOutlined, UserOutlined,
   DownloadOutlined, ImportOutlined
 } from '@ant-design/icons';
-import type { TransferItem } from 'antd/es/transfer';
-import type { Key } from 'react';
 import api from '../../services/api';
 
 const { Title, Text } = Typography;
@@ -18,7 +16,6 @@ const { Title, Text } = Typography;
 // ✅ 考场状态配置
 const roomStatusConfig = {
   available: { color: 'success', text: '可用' },
-  occupied: { color: 'processing', text: '使用中' },
   maintenance: { color: 'error', text: '维护中' },
 };
 
@@ -29,12 +26,21 @@ interface ExamRoom {
   capacity: number;
   location?: string;
   equipment: any[];
-  status: 'available' | 'occupied' | 'maintenance';
-  examId: string;
+  status: 'available' | 'maintenance';
   createdAt: string;
   updatedAt: string;
-  exam: { id: string; title: string };
-  invigilators: Array<{ id: string; realName: string | null; username: string; email?: string }>;
+  conflicts?: Array<{
+    examId: string;
+    examTitle: string;
+    startTime: string;
+    endTime: string;
+  }>;
+  assignments?: Array<{
+    id: string;
+    exam: { id: string; title: string; startTime: string; endTime: string };
+    status: string;
+  }>;
+  invigilators: Array<{ id: string; realName: string; username: string }>;
   _count: { students: number };
   students?: Array<{
     studentId: string;
@@ -49,49 +55,22 @@ interface ExamRoom {
   }>;
 }
 
-interface StudentOption {
-  key: string;
-  title: string;
-  realName: string;
-  studentId?: string;
-}
-
 export function RoomManager() {
   const [rooms, setRooms] = useState<ExamRoom[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
-  const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [bulkImportModalOpen, setBulkImportModalOpen] = useState(false);
   const [editingRoom, setEditingRoom] = useState<ExamRoom | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<ExamRoom | null>(null);
   const [form] = Form.useForm();
   const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 });
-  const [examIdFilter, setExamIdFilter] = useState<string>();
-  const [studentOptions, setStudentOptions] = useState<StudentOption[]>([]);
-  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
-  const [examOptions, setExamOptions] = useState<Array<{ id: string; title: string }>>([]);
-
-  // 加载考试选项（用于新增考场时选择所属考试）
-  const fetchExams = async () => {
-    try {
-      const res = await api.get('/exams', { params: { pageSize: 200 } });
-      setExamOptions(res.data?.data || []);
-    } catch (err) {
-      console.error('加载考试列表失败:', err);
-    }
-  };
-
-  useEffect(() => {
-    fetchExams();
-  }, []);
 
   // 加载考场列表
   const fetchRooms = async (page = 1, pageSize = 20) => {
     setLoading(true);
     try {
       const params: any = { page, pageSize };
-      if (examIdFilter) params.examId = examIdFilter;
 
       const res = await api.get('/rooms', { params });
       setRooms(res.data.data || []);
@@ -106,23 +85,7 @@ export function RoomManager() {
 
   useEffect(() => {
     fetchRooms();
-  }, [examIdFilter]);
-
-  // 加载可选学生列表（用于批量分配）
-  const fetchStudents = async () => {
-    try {
-      const res = await api.get('/users', { params: { role: 'student', pageSize: 200 } });
-      const students = (res.data?.data || []).map((s: any) => ({
-        key: s.id,
-        title: `${s.realName || s.username}${s.studentId ? ` (${s.studentId})` : ''}`,
-        realName: s.realName || s.username,
-        studentId: s.studentId,
-      }));
-      setStudentOptions(students);
-    } catch (err) {
-      console.error('加载学生列表失败:', err);
-    }
-  };
+  }, []);
 
   // 创建新考场
   const handleCreate = () => {
@@ -153,14 +116,6 @@ export function RoomManager() {
     } catch (err) {
       message.error('加载详情失败');
     }
-  };
-
-  // 打开分配学生弹窗
-  const handleAssignStudents = (room: ExamRoom) => {
-    setSelectedRoom(room);
-    setSelectedStudents([]);
-    fetchStudents(); // 加载可分配的学生列表
-    setAssignModalOpen(true);
   };
 
   // 保存考场（创建或更新）
@@ -194,30 +149,6 @@ export function RoomManager() {
     }
   };
 
-  // 批量分配学生到考场
-  const handleBatchAssign = async () => {
-    if (!selectedRoom || selectedStudents.length === 0) return;
-
-    try {
-      const res = await api.post(`/rooms/${selectedRoom.id}/students/batch-assign`, {
-        studentIds: selectedStudents,
-      });
-
-      message.success(res.data.message || `成功分配 ${selectedStudents.length} 名学生`);
-      setAssignModalOpen(false);
-
-      // 刷新详情
-      if (selectedRoom) {
-        const detailRes = await api.get(`/rooms/${selectedRoom.id}`);
-        setSelectedRoom(detailRes.data);
-      }
-
-      fetchRooms(pagination.current, pagination.pageSize);
-    } catch (err: any) {
-      message.error(err.response?.data?.message || '分配失败');
-    }
-  };
-
   // 批量导入考场
   const handleBulkImport = async (values: any) => {
     try {
@@ -244,13 +175,6 @@ export function RoomManager() {
       key: 'name',
     },
     {
-      title: '所属考试',
-      key: 'exam',
-      render: (_: any, record: ExamRoom) => (
-        <Tag color="blue">{record.exam.title}</Tag>
-      ),
-    },
-    {
       title: '容量',
       dataIndex: 'capacity',
       key: 'capacity',
@@ -263,8 +187,8 @@ export function RoomManager() {
       width: 80,
       render: (_: any, record: ExamRoom) => (
         <span>
-          <Text strong>{record._count.students}</Text> / {record.capacity}
-          {record._count.students >= record.capacity && (
+          <Text strong>{record._count?.students ?? 0}</Text> / {record.capacity}
+          {(record._count?.students ?? 0) >= record.capacity && (
             <Tag color="error" style={{ marginLeft: 4 }}>满</Tag>
           )}
         </span>
@@ -310,14 +234,6 @@ export function RoomManager() {
           </Button>
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
             编辑
-          </Button>
-          <Button
-            size="small"
-            icon={<TeamOutlined />}
-            onClick={() => handleAssignStudents(record)}
-            disabled={record._count.students >= record.capacity}
-          >
-            分配学生
           </Button>
           <Popconfirm
             title="确定删除该考场？"
@@ -383,18 +299,9 @@ export function RoomManager() {
         <Col span={6}>
           <Card>
             <Statistic
-              title="使用中"
-              value={rooms.filter(r => r.status === 'occupied').length}
-              valueStyle={{ color: '#1890ff' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
               title="总座位数"
               value={rooms.reduce((sum, r) => sum + r.capacity, 0)}
-              valueStyle={{ color: '#722ed1' }}
+              valueStyle={{ color: '#1677ff' }}
             />
           </Card>
         </Col>
@@ -422,19 +329,9 @@ export function RoomManager() {
         onOk={handleSave}
         onCancel={() => setModalOpen(false)}
         width={600}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          {!editingRoom && (
-            <Form.Item name="examId" label="所属考试" rules={[{ required: true, message: '请选择考试' }]}>
-              <Select placeholder="选择该考场所属的考试" showSearch optionFilterProp="children">
-                {examOptions.map(exam => (
-                  <Select.Option key={exam.id} value={exam.id}>{exam.title}</Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-          )}
-
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="code" label="考场编码" rules={[{ required: true, message: '请输入编码' }]}>
@@ -482,8 +379,16 @@ export function RoomManager() {
             <Descriptions bordered column={2} style={{ marginBottom: 16 }}>
               <Descriptions.Item label="考场编码">{selectedRoom.code}</Descriptions.Item>
               <Descriptions.Item label="考场名称">{selectedRoom.name}</Descriptions.Item>
-              <Descriptions.Item label="所属考试">
-                <Tag color="blue">{selectedRoom.exam.title}</Tag>
+              <Descriptions.Item label="关联考试">
+                {selectedRoom.assignments && selectedRoom.assignments.length > 0 ? (
+                  <Space wrap>
+                    {selectedRoom.assignments.map(a => (
+                      <Tag key={a.id} color="blue">{a.exam.title}</Tag>
+                    ))}
+                  </Space>
+                ) : (
+                  <Text type="secondary">未关联考试</Text>
+                )}
               </Descriptions.Item>
               <Descriptions.Item label="状态">
                 <Tag color={roomStatusConfig[selectedRoom.status].color}>
@@ -491,7 +396,7 @@ export function RoomManager() {
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="容纳人数">{selectedRoom.capacity} 人</Descriptions.Item>
-              <Descriptions.Item label="已分配学生">{selectedRoom._count.students} 人</Descriptions.Item>
+              <Descriptions.Item label="已分配学生">{selectedRoom._count?.students ?? 0} 人</Descriptions.Item>
               <Descriptions.Item label="位置" span={2}>{selectedRoom.location || '-'}</Descriptions.Item>
               <Descriptions.Item label="监考老师" span={2}>
                 {selectedRoom.invigilators.length > 0 ? (
@@ -508,7 +413,7 @@ export function RoomManager() {
               </Descriptions.Item>
             </Descriptions>
 
-            <Title level={5}>已分配学生 ({selectedRoom._count.students}/{selectedRoom.capacity})</Title>
+            <Title level={5}>已分配学生 ({selectedRoom._count?.students ?? 0}/{selectedRoom.capacity})</Title>
             {selectedRoom.students && selectedRoom.students.length > 0 ? (
               <List
                 grid={{ gutter: 16, xs: 1, sm: 2, md: 3, lg: 4, xl: 4, xxl: 4 }}
@@ -534,37 +439,6 @@ export function RoomManager() {
             )}
           </>
         )}
-      </Modal>
-
-      {/* 分配学生 Modal */}
-      <Modal
-        title={`分配学生到 ${selectedRoom?.name} (剩余 ${selectedRoom ? selectedRoom.capacity - selectedRoom._count.students : 0} 个座位)`}
-        open={assignModalOpen}
-        onOk={handleBatchAssign}
-        onCancel={() => setAssignModalOpen(false)}
-        width={800}
-        okText="确认分配"
-        okButtonProps={{ disabled: selectedStudents.length === 0 }}
-      >
-        <Transfer
-          dataSource={studentOptions}
-          titles={['可选学生', '已选择']}
-          targetKeys={selectedStudents as Key[]}
-          onChange={(keys) => setSelectedStudents(keys as string[])}
-          render={(item: TransferItem) => item.title as string}
-          listStyle={{ width: 350, height: 400 }}
-          showSearch
-          filterOption={(inputValue, item: any) =>
-            item.title.toLowerCase().includes(inputValue.toLowerCase())
-          }
-        />
-
-        <div style={{ marginTop: 12, padding: '8px 12px', background: '#e6f7ff', borderRadius: 4 }}>
-          <Text type="secondary">
-            已选择 <Text strong>{selectedStudents.length}</Text> 名学生，
-            剩余 <Text strong>{selectedRoom ? selectedRoom.capacity - selectedRoom._count.students : 0}</Text> 个座位
-          </Text>
-        </div>
       </Modal>
 
       {/* 批量导入 Modal */}

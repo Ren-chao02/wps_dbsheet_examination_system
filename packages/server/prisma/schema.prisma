@@ -574,6 +574,22 @@ model WpsConfig {
   @@map("wps_config")
 }
 
+// ==================== LLM 大模型配置 (单例，前端可编辑) ====================
+model LlmConfig {
+  id               String   @id @default("llm_config")
+  provider         String   @default("deepseek")     // deepseek | qwen | glm | ollama
+  apiKey           String   @map("api_key")           // 加密存储的 API Key
+  baseURL          String   @default("") @map("base_url")
+  model            String   @default("deepseek-chat")
+  temperature      Float    @default(0.4)
+  maxTokens        Int      @default(2048) @map("max_tokens")
+  timeoutMs        Int      @default(60000) @map("timeout_ms")
+  rateLimitPerMin  Int      @default(20) @map("rate_limit_per_min")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("llm_config")
+}
+
 model Invitation {
   id          String           @id @default(uuid())
   code        String           @unique

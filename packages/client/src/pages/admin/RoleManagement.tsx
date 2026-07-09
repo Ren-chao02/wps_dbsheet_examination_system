@@ -133,11 +133,11 @@ export default function RoleManagement() {
       render: (v: string | null) => v || '—',
     },
     {
-      title: '操作', key: 'actions', width: 160,
+      title: '操作', key: 'actions', width: 240,
       render: (_: any, r: SystemRole) => (
-        <Space>
+        <Space size="small">
           <Button size="small" icon={<EyeOutlined />} onClick={() => handleView(r)}>详情</Button>
-          {r.roleType === 'custom' && (
+          {r.roleCode !== 'ADMIN' && (
             <>
               <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(r)}>编辑</Button>
               <Popconfirm
@@ -183,7 +183,7 @@ export default function RoleManagement() {
         okText="保存"
         cancelText="取消"
         width={600}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical">
           {!editingRole && (

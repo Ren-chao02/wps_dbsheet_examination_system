@@ -5,12 +5,30 @@ import { authenticate, authorize } from '../middleware/auth';
 import { enqueueGrading, enqueueExamGrading } from '../jobs/grading-queue';
 import { gradeSubmission } from '../services/grading-service';
 
+/**
+ * 将 WPS API 原始错误转为用户可读的友好消息
+ */
+function friendlyError(err: Error): string {
+  const raw = err.message || '';
+  if (/token.*expir|expir.*token|TokenExpired|invalid_token/i.test(raw)) {
+    return 'WPS Token 已过期，请前往「WPS Token 管理」页面重新获取并回填 access_token';
+  }
+  if (/PermissionDenied/i.test(raw) && /access_token/i.test(raw)) {
+    return 'WPS access_token 无效，请确认「WPS Token 管理」中已正确配置有效的 access_token';
+  }
+  if (/404 Not Found/i.test(raw)) {
+    return '未找到对应的 WPS 多维表格文件，请检查学生是否已正确提交';
+  }
+  return `判分过程出错：${raw}`;
+}
+
 export const gradingRouter = Router();
 gradingRouter.use(authenticate);
 
 // POST /api/grading/batch/:examId — 批量自动判分（具体路径必须在参数路径前）
 gradingRouter.post('/batch/:examId', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
+    const { accessToken } = req.body;
     const submissions = await prisma.studentSubmission.findMany({
       where: {
         examId: req.params.examId,
@@ -28,7 +46,7 @@ gradingRouter.post('/batch/:examId', authorize('teacher', 'admin'), async (req: 
 
     for (const sub of submissions) {
       try {
-        const result = await gradeSubmission(sub.id);
+        const result = await gradeSubmission(sub.id, accessToken);
         results.push(result);
       } catch (err: any) {
         errors.push({ submissionId: sub.id, error: err.message });
@@ -50,7 +68,7 @@ gradingRouter.post('/batch/:examId', authorize('teacher', 'admin'), async (req: 
       errors,
     });
   } catch (err: any) {
-    res.status(500).json({ message: '服务器错误', detail: err.message });
+    res.status(500).json({ message: friendlyError(err) });
   }
 });
 
@@ -98,6 +116,7 @@ gradingRouter.get('/:submissionId', async (req: Request, res: Response) => {
 // POST /api/grading/:submissionId — 触发自动判分
 gradingRouter.post('/:submissionId', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
+    const { accessToken } = req.body;
     const submission = await prisma.studentSubmission.findUnique({
       where: { id: req.params.submissionId },
     });
@@ -115,7 +134,7 @@ gradingRouter.post('/:submissionId', authorize('teacher', 'admin'), async (req: 
     });
 
     // 执行自动判分
-    const result = await gradeSubmission(req.params.submissionId);
+    const result = await gradeSubmission(req.params.submissionId, accessToken);
 
     res.json({
       message: result.hasNeedsReview
@@ -124,7 +143,7 @@ gradingRouter.post('/:submissionId', authorize('teacher', 'admin'), async (req: 
       ...result,
     });
   } catch (err: any) {
-    res.status(500).json({ message: '判分失败', detail: err.message });
+    res.status(500).json({ message: friendlyError(err) });
   }
 });
 

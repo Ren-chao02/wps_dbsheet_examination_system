@@ -460,3 +460,157 @@ export interface Account {
   lastLoginAt?: string;
   createdAt: string;
 }
+
+// ========== 出题辅助模块类型 ==========
+// @see docs/superpowers/specs/2026-07-07-exam-authoring-assist.md
+// 与 server 端 capability-graph.ts / answer-reverser.ts / skeleton-generator.ts 对齐
+
+export type CapabilityDomain = 'tables' | 'fields' | 'field_props' | 'views' | 'forms' | 'records';
+export type Scorable = 'auto' | 'manual' | 'needsReview';
+
+export interface ParamResolver {
+  param: string;
+  from?: string;       // 从 Match 取值的字段名
+  value?: any;         // 固定值
+}
+
+export interface RuleTemplate {
+  action: string;
+  paramResolvers: ParamResolver[];
+}
+
+export interface ExamPattern {
+  title: string;
+  description: string;
+  suggestedScore: number;
+  ruleTemplate: RuleTemplate | null;  // null 表示人工评分
+}
+
+export interface Capability {
+  id: string;
+  domain: CapabilityDomain;
+  name: string;
+  description: string;
+  wpsConcept: string;
+  scorable: Scorable;
+  ruleActions: string[];
+  examPatterns: ExamPattern[];
+  prerequisites?: string[];
+  defaultDifficulty: 'easy' | 'medium' | 'hard';
+  apiSupport?: {
+    schema?: boolean;
+    endpoint?: string;
+    limitations?: string;
+  };
+  promptHints?: string;
+}
+
+export interface CapabilityDomainInfo {
+  id: CapabilityDomain;
+  label: string;
+  count: number;
+}
+
+export interface CapabilityGraphResponse {
+  data: {
+    domains: CapabilityDomainInfo[];
+    capabilities: Capability[];
+  };
+  total: number;
+}
+
+/** 题目骨架（POST /api/questions/skeleton 响应） */
+export interface QuestionSkeleton {
+  title: string;
+  description: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  suggestedScore: number;
+  ruleTemplates: RuleTemplate[];
+  selectedCapabilities: Array<{
+    id: string;
+    name: string;
+    domain: CapabilityDomain;
+    scorable: Scorable;
+  }>;
+  warnings: string[];
+}
+
+/** 反向生成的规则建议 */
+export interface RuleSuggestion {
+  rule: AnswerRule;
+  source: {
+    sheetName: string;
+    sheetId: number;
+    fieldName?: string;
+    capabilityId: string;
+  };
+  editable: boolean;       // 缺参数的规则为 true
+  selected: boolean;       // 默认是否勾选
+  missingParams: string[]; // 缺失的参数名
+}
+
+export interface SchemaSummary {
+  sheets: { name: string; fieldCount: number; viewCount: number }[];
+  forms: { name: string; fieldCount: number }[];
+}
+
+/** POST /api/questions/reverse-rules 响应 */
+export interface ReverseOutput {
+  suggestions: RuleSuggestion[];
+  schemaSummary: SchemaSummary;
+  notes: string[];
+}
+
+// ============================================================
+// Phase 2：AI 对话式教练
+// ============================================================
+
+/** AI 建议卡（与服务端 proposals.ts 对齐，6 种类型） */
+export type Proposal =
+  | { type: 'add_capability'; capabilityId: string; reason: string }
+  | { type: 'rewrite_description'; newDescription: string; reason: string }
+  | { type: 'adjust_score'; ruleId: string; newScore: number; reason: string }
+  | { type: 'remove_rule'; ruleId: string; reason: string }
+  | { type: 'add_hint'; hint: string; reason: string }
+  | {
+      type: 'add_rule';
+      action: string;
+      tableName: string;
+      fieldName?: string;
+      reason: string;
+      /** 服务端 ground 后回填；LLM 不产出 */
+      groundedRule?: AnswerRule;
+    };
+
+/** 对话历史（仅文字，proposals 是 UI 临时态不回传） */
+export interface CoachingMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/** 题目状态（每轮发送前从表单现场拼装，让 AI 看到最新状态） */
+export interface QuestionState {
+  title: string;
+  description: string;
+  type: string;
+  difficulty: string;
+  score: number;
+  selectedCapabilityIds: string[];
+  currentRules: Array<{
+    id: string;
+    action: string;
+    tableName?: string;
+    fieldName?: string;
+    score: number;
+  }>;
+  hints?: string;
+}
+
+/** POST /api/coaching/chat 请求体 */
+export interface CoachingChatParams {
+  questionState: QuestionState;
+  history: CoachingMessage[];
+  fileId?: string;
+  accessToken?: string;
+  apiSecret?: string;
+}

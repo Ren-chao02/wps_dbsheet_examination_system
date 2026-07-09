@@ -10,14 +10,11 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { PrismaClient, BehaviorType, RiskLevel } from '@prisma/client';
+import { BehaviorType, RiskLevel } from '@prisma/client';
 import { authenticate, authorize } from '../middleware/auth'; // ✅ 修复Bug#2：导入认证中间件
+import { prisma } from '../config/prisma';
 
 const router = Router();
-
-// ⚠️ 注意：由于行为日志模型定义在独立的schema-behavior.prisma文件中，
-// 此处需要创建单独的PrismaClient实例。未来应将behavior schema合并到主schema中以优化连接池管理。
-const prisma = new PrismaClient();
 const recordBehaviorSchema = z.object({
   examId: z.string().uuid(),
   studentId: z.string().uuid(),

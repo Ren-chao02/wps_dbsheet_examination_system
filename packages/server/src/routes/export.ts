@@ -10,9 +10,9 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 import { ExportFormat, exportService, TaskStatus } from '../services/export-service';
 import { PrismaClient } from '@prisma/client';
-import { v4 as uuidv4 } from 'uuid';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -80,7 +80,7 @@ async function fetchEntityData(
 
     case 'student':
       return prisma.user.findMany({
-        where: { role: 'STUDENT', ...(filters || {}) },
+        where: { role: 'student', ...(filters || {}) },
         select: {
           id: true, username: true, realName: true, studentId: true,
           email: true, department: { select: { name: true } },
@@ -145,11 +145,11 @@ async function fetchEntityData(
 router.post('/trigger', async (req: Request, res: Response) => {
   try {
     const body = triggerExportSchema.parse(req.body);
-    const taskId = uuidv4();
+    const taskId = randomUUID();
     const userId = (req as any).user?.id || 'anonymous';
 
     // 创建任务记录
-    const task = {
+    const task: any = {
       id: taskId,
       userId,
       entityType: body.entityType,

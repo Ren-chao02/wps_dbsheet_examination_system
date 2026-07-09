@@ -3,7 +3,8 @@ import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { hashString, shuffleWithSeed } from '../utils/helpers';
 import { isIpAllowed } from '../utils/ip-utils';
-import { gradeSubmission } from '../services/grading-service';
+
+import { autoEndExpiredExams, studentExamVisibilityOR } from '../utils/exam-utils';
 
 export const myExamRouter = Router();
 myExamRouter.use(authenticate);
@@ -12,6 +13,8 @@ myExamRouter.use(authorize('student'));
 // GET /api/my-exams — 学生的考试列表
 myExamRouter.get('/', async (req: Request, res: Response) => {
   try {
+    await autoEndExpiredExams();
+
     const { status } = req.query;
 
     const where: any = {};
@@ -21,6 +24,8 @@ myExamRouter.get('/', async (req: Request, res: Response) => {
     } else {
       where.status = { in: ['published', 'in_progress', 'ended'] };
     }
+    // 可见性过滤口径与 student-profile / history 一致（见 studentExamVisibilityOR）
+    where.OR = studentExamVisibilityOR(req.user!.userId);
 
     const exams = await prisma.exam.findMany({
       where,
@@ -37,7 +42,7 @@ myExamRouter.get('/', async (req: Request, res: Response) => {
         passScore: true,
         status: true,
         creator: { select: { realName: true } },
-        batch: { select: { name: true } },
+        batch: { select: { name: true, startTime: true, endTime: true, examDuration: true, examMode: true } },
         _count: { select: { examQuestions: true } },
       },
     });
@@ -57,13 +62,17 @@ myExamRouter.get('/', async (req: Request, res: Response) => {
     const roomAssignments = await prisma.examRoomStudent.findMany({
       where: {
         studentId: req.user!.userId,
-        room: { examId: { in: examIds } },
+        assignment: { examId: { in: examIds } },
       },
       include: {
-        room: { select: { examId: true, name: true } },
+        assignment: {
+          include: {
+            room: { select: { name: true } },
+          },
+        },
       },
     });
-    const roomMap = new Map(roomAssignments.map(r => [r.room.examId, r.room.name]));
+    const roomMap = new Map(roomAssignments.map(r => [r.assignment.examId, r.assignment.room.name]));
 
     res.json(exams.map(exam => ({
       ...exam,
@@ -76,6 +85,46 @@ myExamRouter.get('/', async (req: Request, res: Response) => {
         submittedAt: subMap.get(exam.id)!.submittedAt,
       } : null,
     })));
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// GET /api/my-exams/history — 学生的成绩历史（仅已评分）
+// 注意：必须定义在 /:id 之前，否则 /history 会被 :id 参数路由匹配
+myExamRouter.get('/history', async (req: Request, res: Response) => {
+  try {
+    const submissions = await prisma.studentSubmission.findMany({
+      where: {
+        studentId: req.user!.userId,
+        status: 'graded',
+        exam: {
+          status: { in: ['published', 'in_progress', 'ended'] },
+          OR: studentExamVisibilityOR(req.user!.userId),
+        },
+      },
+      orderBy: { gradedAt: 'desc' },
+      select: {
+        id: true,
+        status: true,
+        totalScore: true,
+        submittedAt: true,
+        gradedAt: true,
+        graderComment: true,
+        exam: {
+          select: {
+            id: true,
+            title: true,
+            totalScore: true,
+            passScore: true,
+            startTime: true,
+            endTime: true,
+          },
+        },
+      },
+    });
+
+    res.json(submissions);
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
@@ -149,7 +198,7 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
       },
     });
 
-    // Get exam questions (for ExamDoing page to load questions on resume)
+    // Get exam questions (for the exam doing page to load questions on resume)
     let examQuestions = await prisma.examQuestion.findMany({
       where: { examId: req.params.id },
       include: { question: true },
@@ -169,57 +218,9 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
       sortOrder: eq.sortOrder,
     }));
 
-    res.json({ exam, submission, questions });
-  } catch {
-    res.status(500).json({ message: '服务器错误' });
-  }
-});
-
-// POST /api/my-exams/:id/start — 开始答题
-myExamRouter.post('/:id/start', async (req: Request, res: Response) => {
-  try {
-    const exam = await prisma.exam.findUnique({
-      where: { id: req.params.id },
-      include: {
-        batch: { select: { ipLimitEnabled: true, allowedIps: true } },
-        examQuestions: {
-          include: { question: true },
-          orderBy: { sortOrder: 'asc' },
-        },
-      },
-    });
-
-    if (!exam) {
-      return res.status(404).json({ message: '考试不存在' });
-    }
-    if (exam.status !== 'published' && exam.status !== 'in_progress') {
-      return res.status(400).json({ message: '考试未发布或已结束' });
-    }
-
-    // IP 白名单校验
-    if (exam.batch?.ipLimitEnabled) {
-      const clientIp = ((req.headers['x-forwarded-for'] as string) || req.ip || req.socket.remoteAddress || '')
-        .split(',')[0]
-        .trim();
-      const allowed = isIpAllowed(clientIp, (exam.batch.allowedIps as string[]) || []);
-      if (!allowed) {
-        return res.status(403).json({
-          message: '当前 IP 不在允许访问范围内，请联系管理员确认白名单配置',
-          clientIp,
-        });
-      }
-    }
-
-    // Get sorted questions
-    let examQuestions = exam.examQuestions;
-    const settings = (exam.settings || {}) as any;
-    if (settings.shuffleQuestions) {
-      const seed = hashString(req.params.id + req.user!.userId);
-      examQuestions = shuffleWithSeed(examQuestions, seed);
-    }
-
-    // Check if already has submission
-    const existing = await prisma.studentSubmission.findUnique({
+    // 查询 WPS 表格分配信息（用于 WPS 实操版界面）
+    let wpsTable: { shareUrl: string; fileId: string } | null = null;
+    const tableAssignment = await prisma.examTableAssignment.findUnique({
       where: {
         examId_studentId: {
           examId: req.params.id,
@@ -227,58 +228,16 @@ myExamRouter.post('/:id/start', async (req: Request, res: Response) => {
         },
       },
     });
-
-    if (existing) {
-      return res.json({
-        submission: existing,
-        questions: examQuestions.map(eq => ({
-          ...eq.question,
-          scoreOverride: eq.scoreOverride,
-          sortOrder: eq.sortOrder,
-        })),
-      });
+    if (tableAssignment?.shareUrl) {
+      wpsTable = { shareUrl: tableAssignment.shareUrl, fileId: tableAssignment.fileId };
     }
 
-    // Create submission
-    const submission = await prisma.studentSubmission.create({
-      data: {
-        examId: req.params.id,
-        studentId: req.user!.userId,
-        status: 'in_progress',
-        startedAt: new Date(),
-        details: {
-          create: examQuestions.map(eq => ({
-            questionId: eq.questionId,
-          })),
-        },
-      },
-      include: {
-        details: true,
-      },
-    });
-
-    // Create exam session
-    await prisma.examSession.create({
-      data: {
-        submissionId: submission.id,
-        studentId: req.user!.userId,
-        examId: req.params.id,
-        ipAddress: req.ip || req.socket.remoteAddress || null,
-      },
-    });
-
-    res.json({
-      submission,
-      questions: examQuestions.map(eq => ({
-        ...eq.question,
-        scoreOverride: eq.scoreOverride,
-        sortOrder: eq.sortOrder,
-      })),
-    });
+    res.json({ exam, submission, questions, wpsTable });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
 });
+
 
 // POST /api/my-exams/:id/start-wps — 开始 WPS 实操考试
 myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
@@ -286,7 +245,7 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
     const exam = await prisma.exam.findUnique({
       where: { id: req.params.id },
       include: {
-        batch: { select: { ipLimitEnabled: true, allowedIps: true } },
+        batch: { select: { status: true, ipLimitEnabled: true, allowedIps: true, examMode: true, startTime: true, endTime: true, examDuration: true, waitingTime: true, lateTolerance: true } },
         examQuestions: { include: { question: true }, orderBy: { sortOrder: 'asc' } },
       },
     });
@@ -295,6 +254,9 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
     if (exam.status !== 'published' && exam.status !== 'in_progress') {
       return res.status(400).json({ message: '考试未发布或已结束' });
     }
+    if (exam.batch && exam.batch.status !== 'active') {
+      return res.status(400).json({ message: '考试所属批次尚未激活，无法开始考试' });
+    }
 
     // IP 白名单校验
     if (exam.batch?.ipLimitEnabled) {
@@ -310,10 +272,58 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
       }
     }
 
-    const settings = (exam.settings || {}) as any;
-    if (!settings.requiresWpsTable) {
-      return res.status(400).json({ message: '该考试不是 WPS 实操考试' });
+    // 考试模式时间校验（与 start 一致）
+    const batch = exam.batch;
+    if (batch) {
+      const examMode = batch.examMode || 'unified';
+      const effectiveStart = exam.startTime ? new Date(exam.startTime).getTime() : null;
+      const effectiveEnd = exam.endTime ? new Date(exam.endTime).getTime() : null;
+      const effectiveDuration = batch.examDuration || exam.durationMinutes || 0;
+      const waitingTime = batch.waitingTime || 0;
+      const lateTolerance = batch.lateTolerance || 0;
+      const now = Date.now();
+
+      if (examMode === 'unified') {
+        if (effectiveStart) {
+          const waitingStart = effectiveStart - waitingTime * 60 * 1000;
+          if (now < waitingStart) {
+            return res.status(400).json({ message: '候考时间未到，请在考试开始前进入' });
+          }
+          const lateCutoff = effectiveStart + lateTolerance * 60 * 1000;
+          if (now > lateCutoff) {
+            return res.status(400).json({ message: '已超过迟到时间，无法进入考试' });
+          }
+        }
+        if (effectiveEnd && now > effectiveEnd) {
+          return res.status(400).json({ message: '考试已结束' });
+        }
+      } else if (examMode === 'flexible') {
+        if (effectiveStart && now < effectiveStart) {
+          return res.status(400).json({ message: '批次考试尚未开始' });
+        }
+        if (effectiveEnd && effectiveDuration > 0) {
+          const minEntryEnd = effectiveEnd - effectiveDuration * 60 * 1000;
+          if (now > minEntryEnd) {
+            return res.status(400).json({ message: '剩余考试时间不足，无法进入考试' });
+          }
+        }
+        if (effectiveEnd && effectiveDuration <= 0 && now > effectiveEnd) {
+          return res.status(400).json({ message: '批次考试已结束' });
+        }
+      }
     }
+
+    // 校验考生是否已分配到该考试
+    const isAssignedWps = await prisma.examRoomStudent.findFirst({
+      where: {
+        studentId: req.user!.userId,
+        assignment: { examId: req.params.id },
+      },
+    });
+    if (!isAssignedWps) {
+      return res.status(403).json({ message: '您未被分配到该考试，请联系监考老师' });
+    }
+
 
     const assignment = await prisma.examTableAssignment.findUnique({
       where: {
@@ -412,24 +422,9 @@ myExamRouter.post('/:id/heartbeat', async (req: Request, res: Response) => {
         where: { id: session.id },
         data: {
           lastHeartbeat: new Date(),
-          wsConnected: (tabSwitchCount || 0) > 0 ? false : session.wsConnected,
           ipAddress: req.ip || req.socket.remoteAddress || null,
         },
       });
-
-      // Store tab switch count in submission's graderComment temporarily
-      if (tabSwitchCount > 0) {
-        await prisma.studentSubmission.updateMany({
-          where: {
-            examId: req.params.id,
-            studentId: req.user!.userId,
-            status: 'in_progress',
-          },
-          data: {
-            graderComment: `切屏次数: ${tabSwitchCount}`,
-          },
-        });
-      }
     }
 
     res.json({ ok: true });
@@ -475,10 +470,10 @@ myExamRouter.post('/:id/submit', async (req: Request, res: Response) => {
       },
     });
 
-    // 异步触发自动判分，不阻塞响应
-    gradeSubmission(submission.id).catch(err => {
-      console.error(`[my-exams] 自动判分失败: ${submission.id}`, err);
-    });
+    // 自动判分已关闭，改为教师通过"阅卷管理→自动阅卷"手动触发
+    // gradeSubmission(submission.id).catch(err => {
+    //   console.error(`[my-exams] 自动判分失败: ${submission.id}`, err);
+    // });
 
     res.json(updated);
   } catch {
