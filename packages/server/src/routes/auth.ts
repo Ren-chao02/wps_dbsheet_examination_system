@@ -5,12 +5,15 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { config } from '../config';
 import { authenticate, JwtPayload, getUserPermissions } from '../middleware/auth';
+import { generateMathCaptcha, verifyCaptcha } from '../utils/captcha';
 
 export const authRouter = Router();
 
 const loginSchema = z.object({
   username: z.string().min(2).max(64),
   password: z.string().min(6),
+  captchaToken: z.string().min(1, '请输入验证码'),
+  captchaText: z.string().min(1, '请输入验证码'),
 });
 
 const registerSchema = z.object({
@@ -21,10 +24,25 @@ const registerSchema = z.object({
   role: z.enum(['teacher', 'student']).default('student'),
 });
 
+// GET /api/auth/captcha - 获取验证码
+authRouter.get('/captcha', (_req: Request, res: Response) => {
+  try {
+    const { svg, token } = generateMathCaptcha();
+    res.json({ svg, captchaToken: token });
+  } catch {
+    res.status(500).json({ message: '验证码生成失败' });
+  }
+});
+
 // POST /api/auth/login
 authRouter.post('/login', async (req: Request, res: Response) => {
   try {
-    const { username, password } = loginSchema.parse(req.body);
+    const { username, password, captchaToken, captchaText } = loginSchema.parse(req.body);
+
+    // 验证码校验
+    if (!verifyCaptcha(captchaText, captchaToken)) {
+      return res.status(400).json({ message: '验证码错误或已过期，请刷新后重试' });
+    }
 
     const user = await prisma.user.findUnique({ where: { username } });
     if (!user) {
@@ -47,6 +65,7 @@ authRouter.post('/login', async (req: Request, res: Response) => {
     const permissions = await getUserPermissions(user.id);
 
     const payload: JwtPayload = {
+      id: user.id,
       userId: user.id,
       username: user.username,
       role: user.role,
@@ -168,6 +187,7 @@ authRouter.post('/refresh', authenticate, async (req: Request, res: Response) =>
     const permissions = await getUserPermissions(user.id);
 
     const payload: JwtPayload = {
+      id: user.id,
       userId: user.id,
       username: user.username,
       role: user.role,

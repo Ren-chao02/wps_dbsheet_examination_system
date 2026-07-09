@@ -39,7 +39,7 @@ const BEHAVIOR_TYPE_CONFIG: Record<string, { label: string; color: string; icon:
   QUESTION_NAVIGATE: { label: '题目跳转', color: 'default', icon: <ClockCircleOutlined /> },
   ANSWER_SUBMIT: { label: '提交答案', color: 'green', icon: <CheckCircleOutlined /> },
   EXAM_START: { label: '开始考试', color: 'blue', icon: <CheckCircleOutlined /> },
-  EXAM_END: { label: '结束考试', color: 'purple', icon: <FileTextOutlined /> },
+  EXAM_END: { label: '结束考试', color: 'blue', icon: <FileTextOutlined /> },
 };
 
 // ✅ 风险等级配置

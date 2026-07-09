@@ -41,21 +41,24 @@ const upload = multer({
 // Zod Schemas
 // ============================================================
 
+const phoneRegex = /^1[3-9]\d{9}$/;
+
 const createStudentSchema = z.object({
   username: z.string().min(2).max(64),
   password: z.string().min(6).optional(), // 可选，默认用学号后6位
   realName: z.string().min(1),
   studentId: z.string().min(1), // 学号
   gender: z.enum(['MALE', 'FEMALE']).optional(),
-  phoneNumber: z.string().optional(),
+  phoneNumber: z.string().regex(phoneRegex, '手机号格式不正确').optional().or(z.literal('')),
   email: z.string().email().optional(),
   classRoomId: z.string().uuid().optional(),
 });
 
 const updateStudentSchema = z.object({
   realName: z.string().min(1).optional(),
+  studentId: z.string().min(1).optional(),
   gender: z.enum(['MALE', 'FEMALE']).optional(),
-  phoneNumber: z.string().optional(),
+  phoneNumber: z.string().regex(phoneRegex, '手机号格式不正确').optional().or(z.literal('')),
   email: z.string().email().optional(),
   classRoomId: z.string().uuid().optional(),
   accountStatus: z.enum(['ENABLED', 'DISABLED']).optional(),
@@ -286,6 +289,14 @@ studentRouter.put('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ message: '学生不存在' });
     }
 
+    // 如果更新了 studentId，检查唯一性
+    if (data.studentId && data.studentId !== existing.studentId) {
+      const existingStudentId = await prisma.user.findUnique({ where: { studentId: data.studentId } });
+      if (existingStudentId) {
+        return res.status(409).json({ message: '学号已存在' });
+      }
+    }
+
     // 如果更新了 classRoomId，同步更新 departmentId / majorId
     let departmentId = existing.departmentId;
     let majorId = existing.majorId;
@@ -298,12 +309,16 @@ studentRouter.put('/:id', async (req: Request, res: Response) => {
       majorId = classRoom.majorId;
     }
 
+    // 空字符串手机号转为 null
+    const phoneNumber = data.phoneNumber === '' ? null : data.phoneNumber;
+
     const student = await prisma.user.update({
       where: { id: req.params.id },
       data: {
+        ...(data.studentId !== undefined && { studentId: data.studentId }),
         ...(data.realName !== undefined && { realName: data.realName }),
         ...(data.gender !== undefined && { gender: data.gender }),
-        ...(data.phoneNumber !== undefined && { phoneNumber: data.phoneNumber }),
+        ...(data.phoneNumber !== undefined && { phoneNumber }),
         ...(data.email !== undefined && { email: data.email }),
         ...(data.accountStatus !== undefined && { accountStatus: data.accountStatus }),
         ...(data.classRoomId !== undefined && {
@@ -334,6 +349,9 @@ studentRouter.put('/:id', async (req: Request, res: Response) => {
     }
     if (err.code === 'P2025') {
       return res.status(404).json({ message: '学生不存在' });
+    }
+    if (err.code === 'P2002') {
+      return res.status(409).json({ message: '学号已存在' });
     }
     res.status(500).json({ message: '服务器错误' });
   }
@@ -701,15 +719,24 @@ export async function processImport(
     });
   }
 
-  // 批量创建学生（事务）
+  // 批量创建学生（事务）— 先计算所有密码哈希
   if (rows.length > 0) {
     try {
+      // 预先计算所有用户的密码哈希，避免密码空窗口
+      const rowsWithHash = await Promise.all(
+        rows.map(async (row) => {
+          const password = generateDefaultPassword(row.studentId);
+          const passwordHash = await bcrypt.hash(password, 10);
+          return { ...row, passwordHash };
+        }),
+      );
+
       await prisma.$transaction(
-        rows.map(row =>
+        rowsWithHash.map(row =>
           prisma.user.create({
             data: {
               username: row.studentId,
-              passwordHash: '', // 占位，下面重新算
+              passwordHash: row.passwordHash,
               realName: row.realName,
               studentId: row.studentId,
               gender: row.gender,
@@ -723,16 +750,6 @@ export async function processImport(
           }),
         ),
       );
-
-      // 事务成功后批量设置密码哈希
-      for (const row of rows) {
-        const password = generateDefaultPassword(row.studentId);
-        const passwordHash = await bcrypt.hash(password, 10);
-        await prisma.user.updateMany({
-          where: { studentId: row.studentId },
-          data: { passwordHash },
-        });
-      }
 
       successRows = rows.length;
     } catch (err: any) {

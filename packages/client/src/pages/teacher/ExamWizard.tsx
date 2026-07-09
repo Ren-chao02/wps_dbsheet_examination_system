@@ -1,22 +1,23 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Steps, Button, Card, Form, Input, Select, InputNumber, Switch,
   message, Space, Row, Col, Tag, Table, Modal, Transfer, Typography,
   Alert, Progress, Tooltip, Divider, Spin, DatePicker, TimePicker,
-  Empty
+  Empty, FormInstance
 } from 'antd';
 import {
   SaveOutlined, ArrowLeftOutlined, ArrowRightOutlined,
   CheckCircleOutlined, FileTextOutlined, ClockCircleOutlined,
   HomeOutlined, TeamOutlined, BookOutlined, EyeOutlined,
-  PlusOutlined, DeleteOutlined, WarningOutlined
+  PlusOutlined, DeleteOutlined, WarningOutlined,
+  KeyOutlined, LinkOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { Paper } from '../../types';
 import { useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../../stores/auth';
 
-const { Step } = Steps;
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 
@@ -41,12 +42,15 @@ interface WizardData {
   // Step 1: 基本信息
   basicInfo: {
     batchId?: string; // 所属批次（可选）
+    batchMode?: 'unified' | 'flexible'; // 批次考试模式
     title: string;
     description?: string;
     mode: 'practice' | 'quiz' | 'exam';
     durationMinutes: number;
     passScore?: number;
     shuffleQuestions: boolean;
+    startTime?: dayjs.Dayjs; // 独立考试时使用
+    endTime?: dayjs.Dayjs;
   };
   // Step 2: 试卷绑定
   paperInfo: {
@@ -94,6 +98,8 @@ const INITIAL_DATA: WizardData = {
 
 export function ExamWizard() {
   const navigate = useNavigate();
+  const wpsToken = useAuthStore(state => state.wpsToken);
+  const getWpsTokenRemainingSeconds = useAuthStore(state => state.getWpsTokenRemainingSeconds);
   const [currentStep, setCurrentStep] = useState(0);
   const [wizardData, setWizardData] = useState<WizardData>(INITIAL_DATA);
   const [loading, setLoading] = useState(false);
@@ -103,10 +109,39 @@ export function ExamWizard() {
   const [availableRooms, setAvailableRooms] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
+  const [selectedBatchMode, setSelectedBatchMode] = useState<'unified' | 'flexible' | null>(null);
 
   // 表单实例
   const [form1] = Form.useForm(); // 基本信息
   const [form3] = Form.useForm(); // 场次配置
+
+  // ✅ 实时监听表单中的 batchId，用于显示批次信息
+  const formBatchId = Form.useWatch('batchId', form1);
+
+  // ✅ 派生当前选择的批次对象（基于表单实时值）
+  const selectedBatch = useMemo(() => {
+    if (!formBatchId) return null;
+    return batches.find(b => b.id === formBatchId) || null;
+  }, [formBatchId, batches]);
+
+  // ✅ WPS Token 状态
+  const wpsTokenStatus = useMemo(() => {
+    if (!wpsToken) return 'missing';
+    const remaining = getWpsTokenRemainingSeconds();
+    if (remaining <= 0) return 'expired';
+    if (remaining < 600) return 'expiring';
+    return 'valid';
+  }, [wpsToken, getWpsTokenRemainingSeconds]);
+
+  const wpsTokenRemainingText = useMemo(() => {
+    if (!wpsToken) return '';
+    const seconds = getWpsTokenRemainingSeconds();
+    if (seconds <= 0) return '已过期';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return `${h}时${m}分${s}秒`;
+  }, [wpsToken, getWpsTokenRemainingSeconds]);
 
   // ✅ 加载初始数据（批次列表、试卷列表等）
   useEffect(() => {
@@ -167,7 +202,12 @@ export function ExamWizard() {
               cancelText: '重新开始',
               onOk: () => {
                 setWizardData(parsed);
-                if (parsed.basicInfo) form1.setFieldsValue(parsed.basicInfo);
+                if (parsed.basicInfo) {
+                  form1.setFieldsValue(parsed.basicInfo);
+                  if (parsed.basicInfo.batchMode) {
+                    setSelectedBatchMode(parsed.basicInfo.batchMode);
+                  }
+                }
                 message.success('已恢复草稿');
               },
             });
@@ -203,14 +243,20 @@ export function ExamWizard() {
           break;
 
         case 2:
-          if (wizardData.sessions.length === 0) {
-            message.warning('请至少添加一个考试场次');
+          // 随到随考模式或独立考试不需要场次配置（时间由批次统一管理或在 Step 1 设置）
+          const effectiveBatchMode = wizardData.basicInfo.batchMode || selectedBatchMode;
+          if (effectiveBatchMode !== 'flexible' && !formBatchId && wizardData.sessions.length === 0) {
+            message.warning('请至少添加一个考试场次，或在第一步中设置考试时间');
+            // 不阻断，允许继续（因为时间已在 Step 1 设置）
+          } else if (effectiveBatchMode === 'unified' && formBatchId && wizardData.sessions.length === 0) {
+            message.warning('请至少添加一个考试场次（集中统一模式需要设置具体考试时间）');
             return;
           }
           break;
 
         case 3:
-          if (wizardData.rooms.length === 0) {
+          // 独立考试可以不设置考场
+          if (formBatchId && wizardData.rooms.length === 0) {
             message.warning('请至少选择一个考场');
             return;
           }
@@ -218,7 +264,8 @@ export function ExamWizard() {
 
         case 4:
           const totalAssigned = Object.values(wizardData.studentAssignments).flat().length;
-          if (totalAssigned === 0) {
+          // 独立考试可以不分配学生
+          if (formBatchId && totalAssigned === 0) {
             message.warning('请至少分配一名学生');
             return;
           }
@@ -244,12 +291,48 @@ export function ExamWizard() {
       setSaving(true);
       message.loading({ content: '正在创建考试...', duration: 0 });
 
+      // 先同步最新的表单值到 wizardData（只合并非 undefined 的字段，避免未渲染字段覆盖已存数据）
+      const formValues = form1.getFieldsValue();
+      const latestBasicInfo: any = { ...wizardData.basicInfo };
+      if (formValues) {
+        for (const [k, v] of Object.entries(formValues)) {
+          if (v !== undefined) {
+            latestBasicInfo[k] = v;
+          }
+        }
+      }
+
       // Step 1: 创建考试主体
-      const examPayload = {
-        ...wizardData.basicInfo,
-        batchId: wizardData.basicInfo.batchId || null,
+      const examPayload: Record<string, any> = {
+        ...latestBasicInfo,
+        batchId: latestBasicInfo.batchId || null,
         paperId: wizardData.paperInfo.paperId || null,
+        settings: {
+          shuffleQuestions: wizardData.basicInfo.shuffleQuestions,
+        },
       };
+
+      // 随到随考模式：时间由批次统一管理
+      if (latestBasicInfo.batchMode === 'flexible') {
+        examPayload.startTime = null;
+        examPayload.endTime = null;
+      }
+
+      // 选择批次但设置了独立时间
+      if (latestBasicInfo.batchId && latestBasicInfo.startTime) {
+        examPayload.startTime = latestBasicInfo.startTime.toISOString();
+        examPayload.endTime = latestBasicInfo.endTime?.toISOString() || null;
+      }
+
+      // 独立考试（无批次），必须使用 Step 1 表单中的时间
+      if (!latestBasicInfo.batchId) {
+        if (latestBasicInfo.startTime) {
+          examPayload.startTime = latestBasicInfo.startTime.toISOString();
+        }
+        if (latestBasicInfo.endTime) {
+          examPayload.endTime = latestBasicInfo.endTime.toISOString();
+        }
+      }
 
       const examRes = await api.post('/exams', examPayload);
       const examId = examRes.data.id;
@@ -306,14 +389,26 @@ export function ExamWizard() {
                             form1.setFieldsValue({
                               durationMinutes: batch.examDuration,
                             });
+                            const mode = batch.examMode || 'unified';
+                            setSelectedBatchMode(mode);
+                            setWizardData(prev => ({
+                              ...prev,
+                              basicInfo: { ...prev.basicInfo, batchId: value, batchMode: mode },
+                            }));
                             message.info(`已应用批次"${batch.name}"的统一参数`);
                           }
+                        } else {
+                          setSelectedBatchMode(null);
+                          setWizardData(prev => ({
+                            ...prev,
+                            basicInfo: { ...prev.basicInfo, batchId: undefined, batchMode: undefined },
+                          }));
                         }
                       }}
                     >
                       {batches.map(b => (
                         <Select.Option key={b.id} value={b.id}>
-                          {b.name} ({b.examDuration}分钟)
+                          {b.name} ({b.examDuration}分钟) {b.examMode === 'flexible' ? '🔄 随到随考' : '📋 集中统一'}
                         </Select.Option>
                       ))}
                     </Select>
@@ -351,6 +446,91 @@ export function ExamWizard() {
                   </Form.Item>
                 </Col>
               </Row>
+
+              {/* 选择批次后，显示批次信息 + 本场考试独立时间设置 */}
+              {selectedBatch && (
+                <>
+                  <Alert
+                    type="info"
+                    showIcon
+                    message={`批次: ${selectedBatch.name}`}
+                    description={
+                      <Space direction="vertical" style={{ width: '100%' }}>
+                        <Space>
+                          <Tag>模式: {selectedBatch.examMode === 'flexible' ? '随到随考' : '集中统一'}</Tag>
+                          <Tag>时长: {selectedBatch.examDuration} 分钟</Tag>
+                          {selectedBatch.waitingTime && <Tag>入场: {selectedBatch.waitingTime} 分钟</Tag>}
+                          {selectedBatch.lateTolerance && <Tag>迟到: {selectedBatch.lateTolerance} 分钟</Tag>}
+                          {selectedBatch.ipLimitEnabled && <Tag color="red">IP 限制</Tag>}
+                        </Space>
+                        <Space>
+                          <Tag color="blue">批次开始: {dayjs(selectedBatch.startTime).format('YYYY-MM-DD HH:mm')}</Tag>
+                          <Tag color="red">批次结束: {dayjs(selectedBatch.endTime).format('YYYY-MM-DD HH:mm')}</Tag>
+                        </Space>
+                      </Space>
+                    }
+                    style={{ marginBottom: 16 }}
+                  />
+
+                  {/* 本场考试可以在批次范围内设置自己的时间 */}
+                  <Row gutter={24}>
+                    <Col span={12}>
+                      <Form.Item
+                        name="startTime"
+                        label="本场考试开始时间"
+                        rules={selectedBatch?.examMode === 'unified' ? [{ required: true, message: '统一模式下必须设置考试开始时间' }] : undefined}
+                      >
+                        <DatePicker
+                          showTime
+                          style={{ width: '100%' }}
+                          disabledDate={(current) => {
+                            if (!current) return false;
+                            if (selectedBatch.startTime) return current.isBefore(dayjs(selectedBatch.startTime), 'day');
+                            return false;
+                          }}
+                        />
+                      </Form.Item>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        可选范围: 批次开始时间 ~ 批次结束时间
+                      </Text>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item
+                        name="endTime"
+                        label="本场考试结束时间"
+                        rules={selectedBatch?.examMode === 'unified' ? [{ required: true, message: '统一模式下结束时间由系统自动计算' }] : undefined}
+                        extra="结束时间由系统根据开始时间和考试时长自动计算"
+                      >
+                        <DatePicker
+                          showTime
+                          style={{ width: '100%' }}
+                          disabledDate={(current) => {
+                            if (!current) return false;
+                            if (selectedBatch.endTime) return current.isAfter(dayjs(selectedBatch.endTime), 'day');
+                            return false;
+                          }}
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                </>
+              )}
+
+              {/* 未选择批次时，必须设置考试时间 */}
+              {!formBatchId && (
+                <Row gutter={24}>
+                  <Col span={12}>
+                    <Form.Item name="startTime" label="考试开始时间" rules={[{ required: true, message: '请选择考试开始时间' }]}>
+                      <DatePicker showTime style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item name="endTime" label="考试结束时间" rules={[{ required: true, message: '请选择考试结束时间' }]}>
+                      <DatePicker showTime style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              )}
 
               <Form.Item name="shuffleQuestions" label="随机出题顺序" valuePropName="checked">
                 <Switch checkedChildren="开启" unCheckedChildren="关闭" />
@@ -458,26 +638,48 @@ export function ExamWizard() {
       case 2:
         return (
           <Card title="场次配置" style={{ marginTop: 16 }} extra={
-            <Button
-              type="dashed"
-              icon={<PlusOutlined />}
-              onClick={() => {
-                const newSession = {
-                  id: `temp-${Date.now()}`,
-                  startTime: dayjs().add(1, 'day').hour(9).minute(0),
-                  endTime: dayjs().add(1, 'day').hour(11).minute(0),
-                  roomIds: [],
-                };
-                setWizardData(prev => ({
-                  ...prev,
-                  sessions: [...prev.sessions, newSession],
-                }));
-              }}
-            >
-              添加场次
-            </Button>
+            selectedBatchMode !== 'flexible' && (
+              <Button
+                type="dashed"
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  const newSession = {
+                    id: `temp-${Date.now()}`,
+                    startTime: dayjs().add(1, 'day').hour(9).minute(0),
+                    endTime: dayjs().add(1, 'day').hour(11).minute(0),
+                    roomIds: [],
+                  };
+                  setWizardData(prev => ({
+                    ...prev,
+                    sessions: [...prev.sessions, newSession],
+                  }));
+                }}
+              >
+                添加场次
+              </Button>
+            )
           }>
-            {wizardData.sessions.length > 0 ? (
+            {selectedBatchMode === 'flexible' ? (
+              // 随到随考模式：无需设置固定时间
+              <Alert
+                type="info"
+                showIcon
+                message="随到随考模式"
+                description={
+                  <div>
+                    <p style={{ marginBottom: 8 }}>
+                      本场考试采用<strong>随到随考</strong>模式，考生可在批次时间段内任意时刻进入考试。
+                    </p>
+                    <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
+                      <li>考生的<strong>实际开考时间</strong> = 考生点击"进入考试"的时刻</li>
+                      <li>考生的<strong>实际交卷时间</strong> = 开考时刻 + 考试时长（由批次统一配置）</li>
+                      <li>考生必须在批次结束前入场，否则系统将拒绝进入</li>
+                    </ul>
+                  </div>
+                }
+                style={{ marginBottom: 16 }}
+              />
+            ) : wizardData.sessions.length > 0 ? (
               wizardData.sessions.map((session, index) => (
                 <Card
                   key={session.id || index}
@@ -556,7 +758,7 @@ export function ExamWizard() {
                 </Card>
               ))
             ) : (
-              <Empty description="暂无场次，点击右上角按钮添加" />
+              <Empty description="暂无场次，点击右上角按钮添加（集中统一模式需设置具体考试时间）" />
             )}
 
             {wizardData.sessions.length > 1 && (
@@ -624,6 +826,83 @@ export function ExamWizard() {
       case 4:
         return (
           <Card title="学生管理" style={{ marginTop: 16 }}>
+            {/* WPS Token 状态提示 - 改卷时需要 Token 来获取多维表格数据 */}
+            {wpsTokenStatus === 'missing' && (
+              <Alert
+                type="warning"
+                showIcon
+                icon={<KeyOutlined />}
+                message="请先管理 WPS Token"
+                description={
+                  <div>
+                    <p style={{ marginBottom: 8 }}>
+                      WPS Token 用于改卷时获取考生的多维表格数据以进行自动评分。当前尚未配置 Token，请先前往管理。
+                    </p>
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<LinkOutlined />}
+                      onClick={() => navigate('/teacher/wps-token')}
+                    >
+                      前往 WPS Token 管理
+                    </Button>
+                  </div>
+                }
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            {wpsTokenStatus === 'expired' && (
+              <Alert
+                type="error"
+                showIcon
+                icon={<KeyOutlined />}
+                message="WPS Token 已过期"
+                description={
+                  <div>
+                    <p style={{ marginBottom: 8 }}>
+                      WPS Token 已过期，改卷时将无法获取考生多维表格数据。请刷新 Token。
+                    </p>
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<LinkOutlined />}
+                      onClick={() => navigate('/teacher/wps-token')}
+                    >
+                      前往刷新 Token
+                    </Button>
+                  </div>
+                }
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            {wpsTokenStatus === 'expiring' && (
+              <Alert
+                type="warning"
+                showIcon
+                icon={<ClockCircleOutlined />}
+                message={`WPS Token 即将过期（剩余 ${wpsTokenRemainingText}）`}
+                description="Token 即将过期，建议提前刷新以确保改卷时能正常获取数据。"
+                style={{ marginBottom: 16 }}
+                action={
+                  <Button
+                    size="small"
+                    onClick={() => navigate('/teacher/wps-token')}
+                  >
+                    前往管理
+                  </Button>
+                }
+              />
+            )}
+            {wpsTokenStatus === 'valid' && (
+              <Alert
+                type="success"
+                showIcon
+                icon={<CheckCircleOutlined />}
+                message={`WPS Token 状态正常（剩余 ${wpsTokenRemainingText}）`}
+                description="Token 有效，改卷时可正常获取考生多维表格数据。"
+                style={{ marginBottom: 16 }}
+              />
+            )}
             {wizardData.rooms.length > 0 ? (
               <Tabs
                 items={wizardData.rooms.map(room => ({
@@ -705,21 +984,20 @@ export function ExamWizard() {
 
       {/* 向导进度条 */}
       <Card>
-        <Steps current={currentStep} onChange={(step) => {
-          // 允许跳回之前的步骤，但不允许直接跳到后面的步骤
-          if (step <= currentStep) {
-            setCurrentStep(step);
-          }
-        }}>
-          {WIZARD_STEPS.map(step => (
-            <Step
-              key={step.key}
-              title={step.title}
-              icon={step.icon}
-              description={step.description}
-            />
-          ))}
-        </Steps>
+        <Steps
+          current={currentStep}
+          onChange={(step) => {
+            // 允许跳回之前的步骤，但不允许直接跳到后面的步骤
+            if (step <= currentStep) {
+              setCurrentStep(step);
+            }
+          }}
+          items={WIZARD_STEPS.map(step => ({
+            title: step.title,
+            icon: step.icon,
+            content: step.description,
+          }))}
+        />
       </Card>
 
       {/* 当前步骤内容 */}
@@ -740,7 +1018,10 @@ export function ExamWizard() {
             步骤 {currentStep + 1} / {WIZARD_STEPS.length}
           </Text>
           {currentStep === WIZARD_STEPS.length - 1 && (
-            <WarningOutlined style={{ color: '#faad14', marginLeft: 8 }} />
+            <Space style={{ marginLeft: 12 }}>
+              <WarningOutlined style={{ color: '#faad14' }} />
+              <Text type="secondary">最后一步，请确认信息后提交</Text>
+            </Space>
           )}
         </div>
 

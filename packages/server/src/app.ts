@@ -1,12 +1,15 @@
 import express from 'express';
 import cors from 'cors';
 import { authRouter } from './routes/auth';
+import { authenticate } from './middleware/auth';
 import { userRouter } from './routes/users';
 import { departmentRouter } from './routes/departments';
 import { questionRouter } from './routes/questions';
 import { categoryRouter } from './routes/categories';
+import { capabilityRouter } from './routes/capabilities';
 import { examRouter } from './routes/exams';
 import { myExamRouter } from './routes/my-exams';
+import { examTableAssignmentRouter } from './routes/exam-table-assignments';
 import { paperRouter } from './routes/papers';
 import { practiceRouter } from './routes/practice';
 import { gradingRouter } from './routes/grading';
@@ -19,9 +22,12 @@ import { invitationRouter, applicationRouter } from './routes/invitations';
 import { roleRouter } from './routes/roles';
 import { accountRouter } from './routes/accounts';
 import { cacheRouter } from './routes/cache';
+import { wpsTokenRouter } from './routes/wps-token';
+import { wpsConfigRouter } from './routes/wps-config';
 // ✅ 新增：批次管理和考场管理路由
 import { batchRouter } from './routes/batches';
 import { roomRouter } from './routes/rooms';
+import { examRoomAssignmentRouter } from './routes/exam-room-assignments';
 // ✅ Phase 3 新增：考生行为日志路由
 import { behaviorRouter } from './routes/behaviors';
 // ✅ Phase 3.2 新增：操作审计日志路由
@@ -31,6 +37,10 @@ import { auditMiddleware } from './middleware/audit-middleware';
 import { exportRouter } from './routes/export';
 // ✅ Phase 3.4 新增：实时通知推送路由
 import { notificationRouter } from './routes/notifications';
+import { studentProfileRouter } from './routes/student-profile';
+// ✅ Phase 2 新增：AI 对话式教练路由
+import { coachingRouter } from './routes/coaching';
+import { llmConfigRouter } from './routes/llm-config';
 import { errorHandler } from './middleware/error-handler';
 
 export function createApp() {
@@ -53,7 +63,9 @@ export function createApp() {
   app.use('/api/departments', departmentRouter);
   app.use('/api/questions', questionRouter);
   app.use('/api/categories', categoryRouter);
+  app.use('/api/capabilities', capabilityRouter);
   app.use('/api/exams', examRouter);
+  app.use('/api/exam-table-assignments', examTableAssignmentRouter);
   app.use('/api/my-exams', myExamRouter);
   app.use('/api/papers', paperRouter);
   app.use('/api/practice', practiceRouter);
@@ -68,9 +80,12 @@ export function createApp() {
   app.use('/api/roles', roleRouter);
   app.use('/api/accounts', accountRouter);
   app.use('/api/cache', cacheRouter);
+  app.use('/api/wps-token', wpsTokenRouter);
+  app.use('/api/wps-config', wpsConfigRouter);
   // ✅ 新增：批次管理和考场管理API
   app.use('/api/batches', batchRouter);
   app.use('/api/rooms', roomRouter);
+  app.use('/api/exam-room-assignments', examRoomAssignmentRouter);
   // ✅ Phase 3 新增：考生行为日志API
   app.use('/api/behaviors', behaviorRouter);
   // ✅ Phase 3.2 新增：操作审计日志API
@@ -78,7 +93,12 @@ export function createApp() {
   // ✅ Phase 3.3 新增：统一数据导出API
   app.use('/api/export', exportRouter);
   // ✅ Phase 3.4 新增：实时通知推送API
-  app.use('/api/notifications', notificationRouter);
+  app.use('/api/notifications', authenticate, notificationRouter);
+  // 学生个人资料API
+  app.use('/api/student-profile', studentProfileRouter);
+  // ✅ Phase 2 新增：AI 对话式教练 API
+  app.use('/api/coaching', coachingRouter);
+  app.use('/api/llm-config', llmConfigRouter);
 
   // Error handling
   app.use(errorHandler);

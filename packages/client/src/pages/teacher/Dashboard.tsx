@@ -37,7 +37,7 @@ export function TeacherDashboard() {
             { title: '考试名称', dataIndex: 'title', key: 'title' },
             { title: '模式', dataIndex: 'mode', key: 'mode', render: (v: string) => ({ practice: '练习', quiz: '测验', exam: '正式考试' }[v]) },
             { title: '提交数', key: 'submissions', render: (_: any, r: any) => r._count?.submissions ?? 0 },
-            { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => ({ draft: '草稿', published: '已发布', in_progress: '进行中', ended: '已结束', archived: '已归档' }[v]) },
+            { title: '状态', dataIndex: 'status', key: 'status', render: (v: string) => ({ draft: '草稿', published: '已发布', scheduled: '已排期', in_progress: '进行中', ended: '已结束', cancelled: '已取消', archived: '已归档' }[v]) },
             {
               title: '操作', key: 'actions', render: (_: any, r: any) => (
                 <a onClick={() => navigate(`/teacher/exams/${r.id}/statistics`)}>查看统计</a>

@@ -1,60 +1,188 @@
 /**
- * ✅ 模块化教师端布局 (Module-based Teacher Layout)
+ * ✅ 模块化教师端布局 — Apple HIG Design
  *
  * 架构设计:
  * ┌──────────────────────────────────────────────────────┐
- * │  Header (顶栏) - 一级大模块Tab导航                     │
- * │  [工作台] [题库与试卷] [监考管理★] [查询统计★] [...]    │
+ * │  Header (毛玻璃顶栏) — 胶囊Tab导航 + 通知/设置/用户   │ 48px
  * ├────────┬─────────────────────────────────────────────┤
- * │        │  Content (内容区)                            │
- * │ Sider  │                                             │
- * │ (侧边) │  <Outlet />                                 │
- * │ - 二级 │                                             │
- * │  菜单  │                                             │
- * │ - 动态 │                                             │
- * │  加载  │                                             │
+ * │ Sider  │  Content (内容区)                           │
+ * │ 浅灰   │  <Outlet />                                 │
+ * │ 侧栏   │                                             │
+ * │ 动态   │                                             │
+ * │ 菜单   │                                             │
  * └────────┴─────────────────────────────────────────────┘
  */
 
 import { useState, useMemo, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Typography, Avatar, Dropdown, Tabs, Tooltip, Badge } from 'antd';
+import { Layout, Menu, Typography, Avatar, Dropdown, Tooltip } from 'antd';
 import {
   LogoutOutlined,
   UserOutlined,
+  DownOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
+import { WpsTokenAutoRefresher } from '../common/WpsTokenAutoRefresher';
+import { NotificationCenter } from '../NotificationCenter';
+import { NotificationManagerModal } from '../NotificationManagerModal';
 import {
   MODULE_NAVIGATION_CONFIG,
   filterAccessibleModules,
   findModuleByPath,
   TopModuleItem,
-} from '../../config/moduleNavigation'; // ✅ 自动解析为.tsx
+} from '../../config/moduleNavigation';
 
-const { Header, Sider, Content } = Layout;
+const { Sider, Content } = Layout;
 const { Text } = Typography;
+
+const APPLE_STYLE = {
+  header: {
+    position: 'fixed' as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 48,
+    background: 'rgba(255,255,255,0.82)',
+    backdropFilter: 'saturate(180%) blur(24px)',
+    WebkitBackdropFilter: 'saturate(180%) blur(24px)',
+    borderBottom: '0.5px solid #e5e5ea',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0 20px',
+    zIndex: 200,
+  },
+  brand: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    fontWeight: 600,
+    fontSize: 15,
+    color: '#1d1d1f',
+    letterSpacing: '-0.01em',
+  },
+  brandBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    background: 'linear-gradient(135deg, #007aff, #5ac8fa)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    fontWeight: 700,
+    fontSize: 13,
+  },
+  tabsWrap: {
+    display: 'flex',
+    gap: 2,
+    background: 'rgba(0,0,0,0.04)',
+    borderRadius: 32,
+    padding: 3,
+  },
+  tab: (active: boolean) => ({
+    padding: '5px 16px',
+    borderRadius: 32,
+    fontSize: 12.5,
+    fontWeight: 500 as const,
+    color: active ? '#1d1d1f' : '#86868b',
+    cursor: 'pointer',
+    transition: 'all 0.2s cubic-bezier(0,0,0.2,1)',
+    border: 'none',
+    background: active ? '#fff' : 'none',
+    boxShadow: active ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+    fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+    whiteSpace: 'nowrap' as const,
+    letterSpacing: '-0.01em',
+  }),
+  actions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    color: '#86868b',
+  },
+  iconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    transition: 'all 0.15s cubic-bezier(0,0,0.2,1)',
+    color: '#86868b',
+  },
+  avatar: {
+    width: 28,
+    height: 28,
+    borderRadius: '50%',
+    background: 'linear-gradient(135deg, #5e5ce6, #007aff)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+    marginLeft: 6,
+    transition: 'transform 0.15s cubic-bezier(0,0,0.2,1)',
+  },
+  divider: {
+    width: 0.5,
+    height: 20,
+    background: '#e5e5ea',
+    margin: '0 4px',
+    display: 'inline-block' as const,
+  },
+  sider: (collapsed: boolean) => ({
+    position: 'fixed' as const,
+    left: 0,
+    top: 48,
+    bottom: 0,
+    width: collapsed ? 64 : 220,
+    background: '#f9f9fb',
+    borderRight: '0.5px solid #ececf0',
+    zIndex: 100,
+    transition: 'width 0.22s cubic-bezier(0.25,0.1,0.25,1)',
+    overflow: 'hidden',
+  }),
+  mainLayout: (collapsed: boolean) => ({
+    marginLeft: collapsed ? 64 : 220,
+    marginTop: 48,
+    height: 'calc(100vh - 48px)',
+    transition: 'margin-left 0.22s cubic-bezier(0.25,0.1,0.25,1)',
+    background: '#f2f2f7',
+  }),
+  userBtn: {
+    cursor: 'pointer',
+    display: 'flex' as const,
+    alignItems: 'center' as const,
+    gap: 8,
+    padding: '6px 10px',
+    borderRadius: 10,
+    transition: 'all 0.15s cubic-bezier(0,0,0.2,1)',
+  },
+};
 
 export function TeacherLayout() {
   const [collapsed, setCollapsed] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout, hasPermission } = useAuthStore();
 
-  // ✅ 状态：当前选中的一级模块
   const [activeTopModuleKey, setActiveTopModuleKey] = useState<string>('dashboard');
 
-  // ✅ 过滤用户有权限访问的模块
   const accessibleModules = useMemo(() => {
     return filterAccessibleModules(hasPermission);
   }, [hasPermission]);
 
-  // ✅ 获取当前选中模块的子菜单项
   const currentModuleSubItems = useMemo((): TopModuleItem['subItems'] => {
     const module = accessibleModules.find(m => m.key === activeTopModuleKey);
     return module?.subItems || [];
   }, [accessibleModules, activeTopModuleKey]);
 
-  // ✅ 根据当前URL自动定位到对应的一级模块
   useEffect(() => {
     const matchedModule = findModuleByPath(location.pathname);
     if (matchedModule && accessibleModules.some(m => m.key === matchedModule.key)) {
@@ -67,73 +195,13 @@ export function TeacherLayout() {
     navigate('/login');
   };
 
-  // ✅ 处理一级模块切换
   const handleTopModuleChange = (moduleKey: string) => {
     setActiveTopModuleKey(moduleKey);
-
-    // 自动导航到该模块的默认子页面
     const targetModule = accessibleModules.find(m => m.key === moduleKey);
     if (targetModule?.defaultSubKey) {
       navigate(targetModule.defaultSubKey);
     }
   };
-
-  // ✅ 渲染顶部Tab导航栏
-  const renderTopNavigation = () => (
-    <Tabs
-      activeKey={activeTopModuleKey}
-      onChange={handleTopModuleChange}
-      type="card"
-      size="middle"
-      style={{
-        marginBottom: 0,
-        background: '#fff',
-        padding: '0 16px',
-      }}
-      items={accessibleModules.map(module => ({
-        key: module.key,
-        label: (
-          <Tooltip title={module.description} placement="bottom">
-            <span>
-              {module.icon} {module.label}
-            </span>
-          </Tooltip>
-        ),
-      }))}
-    />
-  );
-
-  // ✅ 渲染左侧二级菜单
-  const renderSideMenu = () => (
-    <Menu
-      theme="dark"
-      mode="inline"
-      selectedKeys={[location.pathname]}
-      items={currentModuleSubItems.map(item => ({
-        key: item.key,
-        icon: item.icon,
-        label: (
-          <span>
-            {item.label}
-            {item.badge && (
-              <Badge
-                count={
-                  typeof item.badge === 'number' ? item.badge :
-                  item.badge === 'dot' ? 'dot' :
-                  <Text style={{ fontSize: 10, color: '#1890ff', marginLeft: 4 }}>
-                    {item.badge}
-                  </Text>
-                }
-                size="small"
-                style={{ marginLeft: 8 }}
-              />
-            )}
-          </span>
-        ),
-      }))}
-      onClick={({ key }) => navigate(key)}
-    />
-  );
 
   const userMenu = {
     items: [
@@ -142,82 +210,177 @@ export function TeacherLayout() {
   };
 
   return (
-    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
-      {/* ✅ 左侧固定侧边栏 */}
+    <Layout style={{ height: '100vh', overflow: 'hidden', background: '#f2f2f7' }}>
+      <WpsTokenAutoRefresher />
+
+      {/* === 毛玻璃顶栏 === */}
+      <div style={APPLE_STYLE.header}>
+        <div style={APPLE_STYLE.brand}>
+          <div style={APPLE_STYLE.brandBox}>W</div>
+          <span>WPS 多维表格考试系统</span>
+        </div>
+
+        {/* 胶囊 Tab 导航 */}
+        <div style={APPLE_STYLE.tabsWrap}>
+          {accessibleModules.map(module => (
+            <button
+              key={module.key}
+              style={APPLE_STYLE.tab(activeTopModuleKey === module.key)}
+              onClick={() => handleTopModuleChange(module.key)}
+              onMouseEnter={e => {
+                if (activeTopModuleKey !== module.key) (e.target as HTMLElement).style.color = '#1d1d1f';
+              }}
+              onMouseLeave={e => {
+                if (activeTopModuleKey !== module.key) (e.target as HTMLElement).style.color = '#86868b';
+              }}
+            >
+              {module.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={APPLE_STYLE.actions}>
+          <Tooltip title="通知" placement="bottom">
+            <div style={APPLE_STYLE.iconBtn}>
+              <NotificationCenter />
+            </div>
+          </Tooltip>
+
+          <Tooltip title="通知管理" placement="bottom">
+            <div
+              style={APPLE_STYLE.iconBtn}
+              onClick={() => setNotificationOpen(true)}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.05)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+            >
+              <SettingOutlined style={{ fontSize: 18 }} />
+            </div>
+          </Tooltip>
+
+          <span style={APPLE_STYLE.divider} />
+
+          <Dropdown menu={userMenu} placement="bottomRight">
+            <div
+              style={APPLE_STYLE.userBtn}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,0,0,0.04)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+            >
+              <Avatar size={28} icon={<UserOutlined />} style={APPLE_STYLE.avatar} />
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                <Text style={{ fontSize: 13, fontWeight: 500, color: '#1d1d1f', lineHeight: 1.2 }}>
+                  {user?.realName || user?.username}
+                </Text>
+                <Text style={{ fontSize: 11, color: '#aeaeb2', lineHeight: 1.2 }}>教师</Text>
+              </div>
+              <DownOutlined style={{ fontSize: 12, color: '#aeaeb2' }} />
+            </div>
+          </Dropdown>
+        </div>
+      </div>
+
+      {/* === 浅灰侧栏 === */}
       <Sider
         collapsible
         collapsed={collapsed}
         onCollapse={setCollapsed}
-        theme="dark"
         width={220}
-        collapsedWidth={80}
-        style={{ height: '100vh', position: 'fixed', left: 0, top: 0, zIndex: 100 }}
+        collapsedWidth={64}
+        trigger={null}
+        style={APPLE_STYLE.sider(collapsed)}
       >
-        {/* Logo区域 */}
         <div style={{
-          height: 64,
+          height: 56,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          borderBottom: '1px solid rgba(255,255,255,0.1)',
+          borderBottom: '0.5px solid #ececf0',
         }}>
-          <Text style={{ color: '#fff', fontSize: collapsed ? 14 : 18, fontWeight: 'bold' }}>
-            {collapsed ? '考试' : '考试系统'}
-          </Text>
+          {collapsed ? (
+            <div style={{
+              width: 28, height: 28, borderRadius: 7,
+              background: 'linear-gradient(135deg, #007aff, #5ac8fa)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', fontWeight: 700, fontSize: 13,
+            }}>W</div>
+          ) : (
+            <Text style={{ fontSize: 14, fontWeight: 600, color: '#1d1d1f', letterSpacing: '-0.01em' }}>
+              导航菜单
+            </Text>
+          )}
         </div>
 
-        {/* ✅ 动态加载的二级菜单 */}
-        {renderSideMenu()}
+        <Menu
+          mode="inline"
+          selectedKeys={[location.pathname]}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            marginTop: 8,
+          }}
+          items={currentModuleSubItems.map(item => ({
+            key: item.key,
+            icon: item.icon,
+            label: <span>{item.label}</span>,
+          }))}
+          onClick={({ key }) => navigate(key)}
+        />
+
+        {/* 收起按钮 */}
+        <div style={{ position: 'absolute', bottom: 20, left: 0, right: 0, padding: '0 12px' }}>
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              justifyContent: collapsed ? 'center' : 'flex-start',
+              width: '100%',
+              padding: '7px 10px',
+              borderRadius: 10,
+              border: 'none',
+              background: 'none',
+              cursor: 'pointer',
+              fontSize: 12,
+              color: '#aeaeb2',
+              fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+              transition: 'all 0.15s cubic-bezier(0,0,0.2,1)',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = 'rgba(0,0,0,0.04)';
+              e.currentTarget.style.color = '#86868b';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = 'none';
+              e.currentTarget.style.color = '#aeaeb2';
+            }}
+          >
+            <span style={{ fontSize: 16 }}>{collapsed ? '→' : '←'}</span>
+            {!collapsed && '收起'}
+          </button>
+        </div>
       </Sider>
 
-      {/* ✅ 右侧主内容区 */}
-      <Layout style={{ marginLeft: collapsed ? 80 : 220, height: '100vh', transition: 'margin-left 0.2s' }}>
-        {/* 顶部Header：用户信息 + 一级模块Tab */}
-        <Header style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 99,
-          background: '#f0f2f5',
-          padding: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-        }}>
-          {/* 第一行：用户信息栏 */}
-          <div style={{
-            height: 48,
-            padding: '0 24px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            borderBottom: '1px solid #e8e8e8',
-          }}>
-            <Text strong style={{ fontSize: 15, color: '#333' }}>教师工作台</Text>
-
-            <Dropdown menu={userMenu} placement="bottomRight">
-              <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Avatar size="small" icon={<UserOutlined />} />
-                <Text style={{ fontSize: 13 }}>{user?.realName || user?.username}</Text>
-              </div>
-            </Dropdown>
-          </div>
-
-          {/* 第二行：一级模块Tab导航 */}
-          {renderTopNavigation()}
-        </Header>
-
-        {/* 内容区 */}
+      {/* === 主内容区 === */}
+      <Layout style={APPLE_STYLE.mainLayout(collapsed)}>
         <Content style={{
           margin: 24,
           overflow: 'auto',
-          background: '#fff',
-          borderRadius: 8,
-          padding: 24,
+          background: '#ffffff',
+          borderRadius: 14,
+          border: '0.5px solid #ececf0',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+          padding: 28,
           minHeight: 400,
         }}>
           <Outlet />
         </Content>
       </Layout>
+
+      <NotificationManagerModal
+        open={notificationOpen}
+        onClose={() => setNotificationOpen(false)}
+        role="teacher"
+      />
     </Layout>
   );
 }

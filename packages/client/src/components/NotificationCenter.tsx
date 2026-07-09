@@ -12,19 +12,20 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Badge, Dropdown, List, Avatar, Button, Space, Tag, Typography,
-  Empty, Spin, Modal, Form, Switch, Select, Divider, message,
-  Tooltip, Card
+  Empty, Spin, Modal, Switch, message,
+  Tooltip
 } from 'antd';
 import {
   BellOutlined, CheckOutlined, CheckSquareOutlined,
-  SettingOutlined, DeleteOutlined, EyeOutlined,
-  ExclamationCircleOutlined, InfoCircleOutlined,
+  SettingOutlined, ExclamationCircleOutlined, InfoCircleOutlined,
   WarningOutlined, FileTextOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import api from '../services/api';
+import { useAuthStore } from '../stores/auth';
 import { io, Socket } from 'socket.io-client';
+import { getSocketURL } from '../config/socket-url';
 
 // 扩展dayjs相对时间插件
 dayjs.extend(relativeTime);
@@ -34,7 +35,7 @@ const { Text, Paragraph } = Typography;
 // ✅ 通知类型配置
 const TYPE_CONFIG: Record<string, { color: string; icon: React.ReactNode; label: string }> = {
   SYSTEM: { color: '#1890ff', icon: <InfoCircleOutlined />, label: '系统公告' },
-  EXAM: { color: '#722ed1', icon: <FileTextOutlined />, label: '考试通知' },
+  EXAM: { color: '#1677ff', icon: <FileTextOutlined />, label: '考试通知' },
   GRADE: { color: '#52c41a', icon: <FileTextOutlined />, label: '成绩发布' },
   ALERT: { color: '#ff4d4f', icon: <WarningOutlined />, label: '告警提醒' },
   AUDIT: { color: '#faad14', icon: <ExclamationCircleOutlined />, label: '审计通知' },
@@ -77,8 +78,9 @@ export function NotificationCenter() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [visible, setVisible] = useState(false);
+  const [open, setOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const { user } = useAuthStore();
 
   // Socket连接
   const socketRef = useRef<Socket | null>(null);
@@ -100,8 +102,10 @@ export function NotificationCenter() {
 
   // ✅ 初始化WebSocket连接
   useEffect(() => {
+    if (!user?.id) return;
+
     // 连接Socket.IO服务器
-    const socket = io((import.meta as any).env?.VITE_API_URL || window.location.origin, {
+    const socket = io(getSocketURL(), {
       transports: ['websocket'],
       reconnection: true,
     });
@@ -110,9 +114,7 @@ export function NotificationCenter() {
       console.log('[WebSocket] 已连接到通知服务');
 
       // 发送用户认证
-      // TODO: 从auth store获取userId
-      const userId = localStorage.getItem('userId') || 'demo-user';
-      socket.emit('auth:user', userId);
+      socket.emit('auth:user', user.id);
     });
 
     // 接收新通知
@@ -135,9 +137,9 @@ export function NotificationCenter() {
   }, []);
 
   // ✅ 打开下拉框时加载数据
-  const handleVisibleChange = (visible: boolean) => {
-    setVisible(visible);
-    if (visible) {
+  const handleOpenChange = (open: boolean) => {
+    setOpen(open);
+    if (open) {
       fetchNotifications();
       fetchPreferences();
     }
@@ -199,12 +201,17 @@ export function NotificationCenter() {
       window.location.href = item.actionUrl;
     }
 
-    setVisible(false); // 关闭下拉框
+    setOpen(false); // 关闭下拉框
   };
 
   // ✅ 下拉菜单内容
   const notificationContent = (
-    <div style={{ width: 380, maxHeight: 500, background: '#fff' }}>
+    <div style={{
+      width: 380, maxHeight: 500, background: '#fff',
+      borderRadius: 14,
+      border: '0.5px solid #e5e5ea',
+      boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06)',
+    }}>
       {/* 头部工具栏 */}
       <div style={{
         padding: '12px 16px',
@@ -337,84 +344,54 @@ export function NotificationCenter() {
       open={settingsOpen}
       onCancel={() => setSettingsOpen(false)}
       footer={null}
-      width={450}
+      width={420}
     >
       {preferences && (
-        <div style={{ marginTop: 16 }}>
-          <Divider>全局开关</Divider>
+        <div>
+          <div style={{ marginBottom: 16 }}>
+            <Text strong style={{ fontSize: 13, color: '#888' }}>推送渠道</Text>
+            <div style={{ display: 'flex', gap: 32, marginTop: 8 }}>
+              <Space>
+                <Switch
+                  size="small"
+                  checked={preferences.enableWebPush}
+                  onChange={(val) => handleUpdatePreference('enableWebPush', val)}
+                />
+                <Text>站内通知</Text>
+              </Space>
+              <Space>
+                <Switch
+                  size="small"
+                  checked={preferences.enableEmail}
+                  onChange={(val) => handleUpdatePreference('enableEmail', val)}
+                />
+                <Text>邮件通知</Text>
+              </Space>
+            </div>
+          </div>
 
-          <Form layout="vertical">
-            <Form.Item label="站内推送">
-              <Switch
-                checked={preferences.enableWebPush}
-                onChange={(val) => handleUpdatePreference('enableWebPush', val)}
-              />
-              <Text type="secondary" style={{ marginLeft: 8 }}>
-                接收浏览器实时通知
-              </Text>
-            </Form.Item>
+          <div style={{ marginBottom: 8 }}>
+            <Text strong style={{ fontSize: 13, color: '#888' }}>通知类型</Text>
+          </div>
 
-            <Form.Item label="邮件通知">
-              <Switch
-                checked={preferences.enableEmail}
-                onChange={(val) => handleUpdatePreference('enableEmail', val)}
-              />
-              <Text type="secondary" style={{ marginLeft: 8 }}>
-                通过邮件接收重要通知
-              </Text>
-            </Form.Item>
-
-            {preferences.enableEmail && (
-              <Form.Item label="邮件频率">
-                <Select
-                  value={preferences.emailFrequency}
-                  onChange={(val) => handleUpdatePreference('emailFrequency', val)}
-                  style={{ width: '100%' }}
-                >
-                  <Select.Option value="realtime">即时发送</Select.Option>
-                  <Select.Option value="hourly">每小时汇总</Select.Option>
-                  <Select.Option value="daily">每日汇总</Select.Option>
-                </Select>
-              </Form.Item>
-            )}
-
-            <Divider>分类通知</Divider>
-
-            <Form.Item label="系统公告">
-              <Switch
-                checked={preferences.enableSystem}
-                onChange={(val) => handleUpdatePreference('enableSystem', val)}
-              />
-            </Form.Item>
-
-            <Form.Item label="考试通知">
-              <Switch
-                checked={preferences.enableExam}
-                onChange={(val) => handleUpdatePreference('enableExam', val)}
-              />
-            </Form.Item>
-
-            <Form.Item label="成绩发布">
-              <Switch
-                checked={preferences.enableGrade}
-                onChange={(val) => handleUpdatePreference('enableGrade', val)}
-              />
-            </Form.Item>
-
-            <Form.Item label="告警提醒">
-              <Switch
-                checked={preferences.enableAlert}
-                onChange={(val) => handleUpdatePreference('enableAlert', val)}
-              />
-            </Form.Item>
-
-            <Form.Item label="审计通知">
-              <Switch
-                checked={preferences.enableAudit}
-                onChange={(val) => handleUpdatePreference('enableAudit', val)}
-              />
-            </Form.Item>
-          </Form>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px' }}>
+            {[
+              { key: 'enableSystem', label: '系统公告' },
+              { key: 'enableExam', label: '考试通知' },
+              { key: 'enableGrade', label: '成绩发布' },
+              { key: 'enableAlert', label: '告警提醒' },
+              { key: 'enableAudit', label: '审计通知' },
+            ].map(({ key, label }) => (
+              <Space key={key} style={{ padding: '4px 0' }}>
+                <Switch
+                  size="small"
+                  checked={(preferences as any)[key]}
+                  onChange={(val) => handleUpdatePreference(key, val)}
+                />
+                <Text>{label}</Text>
+              </Space>
+            ))}
+          </div>
         </div>
       )}
     </Modal>
@@ -423,18 +400,16 @@ export function NotificationCenter() {
   return (
     <>
       <Dropdown
-        overlay={notificationContent}
+        dropdownRender={() => notificationContent}
         trigger={['click']}
-        visible={visible}
-        onVisibleChange={handleVisibleChange}
+        open={open}
+        onOpenChange={handleOpenChange}
         placement="bottomRight"
-        destroyPopupOnHide
+        destroyOnHidden
       >
-        <Badge count={unreadCount} size="small" offset={[-2, 2]}>
-          <BellOutlined
+        <BellOutlined
             style={{ fontSize: 18, cursor: 'pointer', padding: '0 8px' }}
           />
-        </Badge>
       </Dropdown>
 
       {settingsContent}

@@ -12,3 +12,20 @@ __pycache__/
 uploads/
 .qoder/
 .docs/
+.trae/
+./mockups/
+./test_screenshots/
+
+# SSL/TLS 证书 — 私钥禁止提交，CA公钥证书允许提交供团队使用
+packages/client/cert/*.key
+packages/client/cert/*.pem
+!packages/client/cert/ca.crt
+
+# 调试文件 - 本地开发产物
+debug-*
+
+# 本地截图
+*.png
+*.jpg
+*.jpeg
+*.gif

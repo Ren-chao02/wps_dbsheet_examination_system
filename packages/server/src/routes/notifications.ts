@@ -25,13 +25,17 @@ const prisma = new PrismaClient();
 const queryNotificationsSchema = z.object({
   isRead: z.coerce.boolean().optional(),
   type: z.nativeEnum(NotificationType).optional(),
+  senderId: z.string().uuid().optional(),
+  createdAfter: z.coerce.date().optional(),
+  createdBefore: z.coerce.date().optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(50).default(20),
 });
 
 // 手动发送通知请求
 const sendNotificationSchema = z.object({
-  userIds: z.array(z.string().uuid()).min(1), // 接收者ID列表
+  userIds: z.array(z.string().uuid()).min(1).optional(),        // 接收者ID列表
+  classRoomIds: z.array(z.string().uuid()).min(1).optional(),   // 班级ID列表（会自动展开为学生）
   type: z.nativeEnum(NotificationType),
   priority: z.nativeEnum(NotificationPriority).optional(),
   title: z.string().min(1).max(256),
@@ -39,6 +43,8 @@ const sendNotificationSchema = z.object({
   entityType: z.string().optional(),
   entityId: z.string().uuid().optional(),
   actionUrl: z.string().url().optional(),
+}).refine(data => data.userIds || data.classRoomIds, {
+  message: '请选择接收用户或班级',
 });
 
 // 更新偏好设置
@@ -52,6 +58,16 @@ const updatePreferenceSchema = z.object({
   enableAudit: z.boolean().optional(),
   emailFrequency: z.enum(['realtime', 'hourly', 'daily']).optional(),
 });
+
+// 通知模板
+const createTemplateSchema = z.object({
+  name: z.string().min(1).max(128),
+  type: z.nativeEnum(NotificationType),
+  title: z.string().min(1).max(256),
+  content: z.string().max(2000).optional(),
+});
+
+const updateTemplateSchema = createTemplateSchema.partial();
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 2️⃣ API 端点实现
@@ -71,9 +87,17 @@ router.get('/', async (req: Request, res: Response) => {
 
     const query = queryNotificationsSchema.parse(req.query);
 
-    const where: any = { userId };
+    // 如果传了 senderId，查询"我发送的"通知（发送历史）；否则查询"我收到的"通知
+    const where: any = query.senderId
+      ? { senderId: query.senderId }
+      : { userId };
     if (query.isRead !== undefined) where.isRead = query.isRead;
     if (query.type) where.type = query.type;
+    if (query.createdAfter || query.createdBefore) {
+      where.createdAt = {};
+      if (query.createdAfter) where.createdAt.gte = query.createdAfter;
+      if (query.createdBefore) where.createdAt.lte = query.createdBefore;
+    }
 
     const [notifications, total, unreadCount] = await Promise.all([
       prisma.notification.findMany({
@@ -122,6 +146,88 @@ router.get('/unread-count', async (req: Request, res: Response) => {
     res.json({ success: true, count });
   } catch (err: any) {
     console.error('获取未读数失败:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 模板 CRUD（必须在 :id 路由之前）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+router.get('/templates', async (_req: Request, res: Response) => {
+  try {
+    // 如果没有模板，自动预置考试通知模板
+    const count = await prisma.notificationTemplate.count();
+    console.log('[Templates] current count:', count);
+    if (count === 0) {
+      // 查找第一个管理员用户作为模板创建者
+      const adminUser = await prisma.user.findFirst({
+        where: { role: 'admin', accountStatus: 'ENABLED' },
+        select: { id: true },
+      });
+      console.log('[Templates] admin user found:', adminUser?.id || 'none');
+      const defaultCreatorId = adminUser?.id || '00000000-0000-0000-0000-000000000000';
+      const defaults = [
+        { name: '考试即将开始', type: 'EXAM' as const, title: '考试即将开始', content: '请做好考试准备，按时进入考场。', createdBy: defaultCreatorId },
+        { name: '考试时间变更', type: 'EXAM' as const, title: '考试时间调整通知', content: '考试时间已调整，请留意新的考试安排。', createdBy: defaultCreatorId },
+        { name: '成绩已发布', type: 'GRADE' as const, title: '考试成绩已公布', content: '您的考试成绩已发布，请登录系统查看。', createdBy: defaultCreatorId },
+        { name: '试卷批阅完成', type: 'GRADE' as const, title: '试卷已批阅', content: '试卷批阅已完成，请查看成绩详情。', createdBy: defaultCreatorId },
+      ];
+      for (const tpl of defaults) {
+        console.log('[Templates] creating template:', tpl.name);
+        await prisma.notificationTemplate.create({ data: tpl });
+      }
+      console.log('[Templates] seed completed');
+    }
+
+    const templates = await prisma.notificationTemplate.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { creator: { select: { id: true, username: true, realName: true } } },
+    });
+    res.json({ success: true, data: templates });
+  } catch (err: any) {
+    console.error('[Templates] error:', err.message, err.stack);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/templates', async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.id;
+    const data = createTemplateSchema.parse(req.body);
+    const template = await prisma.notificationTemplate.create({
+      data: { ...data, createdBy: userId },
+    });
+    res.status(201).json({ success: true, data: template });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ success: false, error: err.errors });
+    }
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.put('/templates/:id', async (req: Request, res: Response) => {
+  try {
+    const data = updateTemplateSchema.parse(req.body);
+    const template = await prisma.notificationTemplate.update({
+      where: { id: req.params.id },
+      data,
+    });
+    res.json({ success: true, data: template });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ success: false, error: err.errors });
+    }
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/templates/:id', async (req: Request, res: Response) => {
+  try {
+    await prisma.notificationTemplate.delete({ where: { id: req.params.id } });
+    res.json({ success: true, message: '模板已删除' });
+  } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -206,23 +312,55 @@ router.delete('/:id', async (req: Request, res: Response) => {
  */
 router.post('/send', async (req: Request, res: Response) => {
   try {
-    // TODO: 权限检查（需admin角色）
+    const userId = (req as any).user?.id;
     const body = sendNotificationSchema.parse(req.body);
 
-    const results = [];
-    for (const userId of body.userIds) {
-      const result = await notificationService.sendToUser({
-        ...body,
-        userId,
+    // 解析接收者：如果提供了班级ID，展开为班级内所有学生
+    let targetUserIds: string[] = body.userIds || [];
+    if (body.classRoomIds && body.classRoomIds.length > 0) {
+      const classStudents = await prisma.user.findMany({
+        where: {
+          classRoomId: { in: body.classRoomIds },
+          role: 'student',
+          accountStatus: 'ENABLED',
+        },
+        select: { id: true },
       });
-      results.push(result);
+      targetUserIds = [...new Set([...targetUserIds, ...classStudents.map(u => u.id)])];
+    }
+    if (targetUserIds.length === 0) {
+      return res.status(400).json({ success: false, error: '没有找到有效的接收者' });
     }
 
-    const successCount = results.filter(r => r.success).length;
+    const results = [];
+    for (const targetUserId of targetUserIds) {
+      await notificationService.sendToUser({
+        ...body,
+        userId: targetUserId,
+        senderId: userId,  // 记录发送者
+      } as any);
+      // 也直接通过 DB 写入 senderId（notificationService 可能不包含该字段）
+      const notification = await prisma.notification.create({
+        data: {
+          type: body.type,
+          priority: body.priority || 'MEDIUM',
+          title: body.title,
+          content: body.content,
+          userId: targetUserId,
+          entityType: body.entityType,
+          entityId: body.entityId,
+          actionUrl: body.actionUrl,
+          senderId: userId,
+        },
+      });
+      results.push({ success: true, notificationId: notification.id });
+    }
+
+    const successCount = results.length;
 
     res.json({
       success: true,
-      message: `成功发送 ${successCount}/${body.userIds.length} 条通知`,
+      message: `成功发送 ${successCount}/${targetUserIds.length} 条通知`,
       results,
     });
   } catch (err: any) {

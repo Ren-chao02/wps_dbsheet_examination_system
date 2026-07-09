@@ -92,9 +92,10 @@ statisticsRouter.get('/exam/:examId', async (req: Request, res: Response) => {
 
     const maxScore = scores.length > 0 ? scores[scores.length - 1] : 0;
     const minScore = scores.length > 0 ? scores[0] : 0;
-    // ✅ 修复Bug#3：移除非空断言操作符，使用安全的可选链和空值合并
-    const passRate = (exam.passScore != null && graded.length > 0)
-      ? Math.round((graded.filter(s => (s.totalScore ?? 0) >= exam.passScore!).length / graded.length) * 100)
+    // ✅ 修复Bug#3：移除非空断言操作符，使用局部变量确保类型收窄
+    const { passScore } = exam;
+    const passRate = (passScore != null && graded.length > 0)
+      ? Math.round((graded.filter(s => (s.totalScore ?? 0) >= passScore).length / graded.length) * 100)
       : null;
 
     // Per-question stats
@@ -199,7 +200,7 @@ statisticsRouter.get('/exam/:examId/export', async (req: Request, res: Response)
         sub.student.username,
         String(exam.totalScore),
         String(sub.totalScore ?? ''),
-        sub.totalScore !== null ? `${Math.round((sub.totalScore / exam.totalScore) * 100)}%` : '',
+        exam.passScore != null ? ((sub.totalScore ?? 0) >= exam.passScore ? '通过' : '未通过') : '-',
         sub.startedAt ? new Date(sub.startedAt).toLocaleString('zh-CN') : '',
         sub.submittedAt ? new Date(sub.submittedAt).toLocaleString('zh-CN') : '',
       ];

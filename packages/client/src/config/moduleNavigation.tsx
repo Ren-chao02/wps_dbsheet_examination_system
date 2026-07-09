@@ -24,10 +24,12 @@ import {
   MonitorOutlined,         // 实时监控
   TeamOutlined,            // 监考老师
 
-  // 查询统计相关图标
+  // 阅卷管理相关图标
   BarChartOutlined,        // 统计分析
   LineChartOutlined,       // 趋势报表
   FileSearchOutlined,      // 日志查询
+  ThunderboltOutlined,     // 自动阅卷
+  EditOutlined,            // 手动批改
 
   // 学生管理相关图标
   UserOutlined,
@@ -38,6 +40,10 @@ import {
 
   // 系统管理
   SafetyCertificateOutlined,
+  KeyOutlined,
+  DatabaseOutlined,
+  UserSwitchOutlined,
+  RobotOutlined, // AI 模型配置
 } from '@ant-design/icons';
 
 // ✅ 子功能项接口定义
@@ -46,7 +52,6 @@ export interface SubMenuItem {
   label: string;         // 显示名称
   icon: React.ReactNode; // 图标
   permission?: string;   // 所需权限 (可选，用于细粒度控制)
-  badge?: number | 'dot' | string; // 徽标数字、红点或文字标记 (可选)
   hidden?: boolean;      // 是否隐藏 (可选)
   description?: string;  // 功能描述 (用于Tooltip)
 }
@@ -109,11 +114,11 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 🔔 模块3: 监考管理 (Invigilation Management) ★核心★
+  // 🔔 模块3: 考务管理 (Exam Management) ★核心★
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   {
     key: 'invigilation',
-    label: '监考管理',
+    label: '考务管理',
     icon: <MonitorOutlined />,
     permission: 'EXAM_MANAGEMENT', // 需要考试管理权限
     subItems: [
@@ -131,7 +136,6 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
         icon: <FileTextOutlined />,
         permission: 'EXAM_MANAGEMENT',
         description: '考试CRUD + 向导式创建',
-        badge: 'wizard', // 标记有向导功能
       },
       {
         key: '/teacher/sessions',
@@ -156,7 +160,6 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
         icon: <EyeOutlined />,
         permission: 'EXAM_MANAGEMENT',
         description: '考场维度实时监控 + 异常预警',
-        badge: 'enhanced', // 标记为增强版
       },
       {
         key: '/teacher/invigilators',
@@ -190,15 +193,23 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // 📈 模块4: 查询统计 (Query & Statistics) ★核心★
+  // 📝 模块4: 阅卷管理 (Grading Management) ★核心★
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   {
     key: 'statistics',
-    label: '查询统计',
-    icon: <BarChartOutlined />,
+    label: '阅卷管理',
+    icon: <EditOutlined />,
     permission: 'EXAM_MANAGEMENT', // 需要考试管理权限
     subItems: [
-      // ── 子模块A: 考情综合报表 ──
+      // ── 子模块A: 自动阅卷 ──
+      {
+        key: '/teacher/auto-grading',
+        label: '自动阅卷',
+        icon: <ThunderboltOutlined />,
+        permission: 'EXAM_MANAGEMENT',
+        description: '待批改试卷列表，支持自动阅卷与手动批改',
+      },
+      // ── 子模块B: 考情综合报表 ──
       {
         key: '/teacher/statistics',
         label: '成绩统计分析',
@@ -223,7 +234,7 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
         description: 'Excel/PDF/CSV批量导出工具',
       },
 
-      // ── 子模块B: 日志管理 ──
+      // ── 子模块C: 日志管理 ──
       {
         key: '/teacher/student-logs',
         label: '考生端日志',
@@ -241,8 +252,8 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
         description: '管理员操作记录与变更追踪',
       },
     ],
-    defaultSubKey: '/teacher/statistics',
-    description: '考情报表 · 数据分析 · 日志追踪',
+    defaultSubKey: '/teacher/auto-grading',
+    description: '自动阅卷 · 考情报表 · 数据分析',
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -286,6 +297,82 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
     ],
     defaultSubKey: '/teacher/departments',
     description: '学生信息维护与批量管理',
+  },
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ⚙️ 模块6: 缓存管理 (Cache & Token)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  {
+    key: 'cache',
+    label: '缓存管理',
+    icon: <DatabaseOutlined />,
+    subItems: [
+      {
+        key: '/teacher/wps-token',
+        label: 'WPS Token 管理',
+        icon: <KeyOutlined />,
+        permission: 'EXAM_MANAGEMENT',
+        description: '查看 WPS access_token 剩余有效期并手动刷新',
+      },
+      {
+        key: '/teacher/llm-config',
+        label: 'AI 模型配置',
+        icon: <RobotOutlined />,
+        permission: 'EXAM_MANAGEMENT',
+        description: '配置 AI 教练所用大模型的 API Key 与参数',
+      },
+    ],
+    defaultSubKey: '/teacher/wps-token',
+    description: '系统缓存与外部 Token 管理',
+  },
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 🔐 模块7: 系统管理 (System Management — 仅 admin)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  {
+    key: 'system',
+    label: '系统管理',
+    icon: <SettingOutlined />,
+    permission: 'SYSTEM_MANAGEMENT',
+    subItems: [
+      {
+        key: '/admin/accounts',
+        label: '账户管理',
+        icon: <UserSwitchOutlined />,
+        permission: 'SYSTEM_MANAGEMENT',
+        description: '用户账户的创建、编辑、禁用、批量导入',
+      },
+      {
+        key: '/admin/roles',
+        label: '角色权限管理',
+        icon: <SafetyCertificateOutlined />,
+        permission: 'SYSTEM_MANAGEMENT',
+        description: '系统角色定义与模块权限分配',
+      },
+      {
+        key: '/admin/import-tasks',
+        label: '导入导出任务',
+        icon: <CloudUploadOutlined />,
+        permission: 'SYSTEM_MANAGEMENT',
+        description: '批量导入导出任务状态与历史记录',
+      },
+      {
+        key: '/admin/cache',
+        label: '缓存管理',
+        icon: <DatabaseOutlined />,
+        permission: 'SYSTEM_MANAGEMENT',
+        description: '系统级缓存查看与刷新',
+      },
+      {
+        key: '/admin/llm-config',
+        label: 'AI 模型配置',
+        icon: <RobotOutlined />,
+        permission: 'SYSTEM_MANAGEMENT',
+        description: '配置 AI 教练所用大模型的 API Key 与参数',
+      },
+    ],
+    defaultSubKey: '/admin/accounts',
+    description: '账户管理 · 角色权限 · 系统配置',
   },
 ];
 

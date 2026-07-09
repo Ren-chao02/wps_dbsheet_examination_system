@@ -371,7 +371,7 @@ export function ExportCenter() {
                   style={{
                     cursor: 'pointer',
                     borderLeft: `4px solid ${template.entityType === 'exam' ? '#1890ff' :
-                      template.entityType === 'submission' ? '#52c41a' : '#722ed1'}`
+                      template.entityType === 'submission' ? '#52c41a' : '#1677ff'}`
                   }}
                 >
                   <Card.Meta
@@ -380,7 +380,7 @@ export function ExportCenter() {
                         style={{
                           backgroundColor:
                             template.entityType === 'exam' ? '#1890ff' :
-                            template.entityType === 'submission' ? '#52c41a' : '#722ed1'
+                            template.entityType === 'submission' ? '#52c41a' : '#1677ff'
                         }}
                         icon={ENTITY_CONFIG[template.entityType]?.icon || <FileTextOutlined />}
                       />
@@ -478,7 +478,7 @@ export function ExportCenter() {
         }}
         footer={null}
         width={600}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form
           form={form}
