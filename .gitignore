@@ -11,10 +11,13 @@ __pycache__/
 *.pyc
 uploads/
 .qoder/
-.docs/
+docs/
 .trae/
-./mockups/
-./test_screenshots/
+mockups/
+test_screenshots/
+scripts/
+demo-wps-embed.html
+
 
 # SSL/TLS 证书 — 私钥禁止提交，CA公钥证书允许提交供团队使用
 packages/client/cert/*.key
