@@ -9,6 +9,25 @@ statisticsRouter.use(authorize('teacher', 'admin'));
 // GET /api/statistics/overview — 总览
 statisticsRouter.get('/overview', async (req: Request, res: Response) => {
   try {
+    // ✅ 教师只能看到自己负责的班级学生和自己创建的考试；admin 看全部
+    const isTeacher = req.user!.role === 'teacher';
+    let teacherClassIds: string[] = [];
+    if (isTeacher) {
+      const teacherClasses = await prisma.teacherClass.findMany({
+        where: { teacherId: req.user!.userId },
+        select: { classId: true },
+      });
+      teacherClassIds = teacherClasses.map(tc => tc.classId);
+    }
+
+    const studentWhere = isTeacher
+      ? { role: 'student' as const, classRoomId: { in: teacherClassIds } }
+      : { role: 'student' as const };
+
+    const examWhere = isTeacher
+      ? { createdBy: req.user!.userId }
+      : {};
+
     const [
       totalStudents,
       totalTeachers,
@@ -18,13 +37,20 @@ statisticsRouter.get('/overview', async (req: Request, res: Response) => {
       gradedSubmissions,
       recentExams,
     ] = await Promise.all([
-      prisma.user.count({ where: { role: 'student' } }),
+      prisma.user.count({ where: studentWhere }),
       prisma.user.count({ where: { role: 'teacher' } }),
       prisma.question.count({ where: { status: 'published' } }),
-      prisma.exam.count(),
-      prisma.studentSubmission.count(),
-      prisma.studentSubmission.count({ where: { status: 'graded' } }),
+      prisma.exam.count({ where: examWhere }),
+      prisma.studentSubmission.count({
+        where: isTeacher ? { exam: { createdBy: req.user!.userId } } : {},
+      }),
+      prisma.studentSubmission.count({
+        where: isTeacher
+          ? { exam: { createdBy: req.user!.userId }, status: 'graded' }
+          : { status: 'graded' },
+      }),
       prisma.exam.findMany({
+        where: examWhere,
         take: 5,
         orderBy: { createdAt: 'desc' },
         include: {

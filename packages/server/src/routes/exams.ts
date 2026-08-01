@@ -240,6 +240,10 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
     if (!exam) {
       return res.status(404).json({ message: '考试不存在' });
     }
+    // ✅ 所有权检查：非 admin 只能编辑自己创建的考试
+    if (req.user!.role !== 'admin' && exam.createdBy !== req.user!.userId) {
+      return res.status(403).json({ message: '只能编辑自己创建的考试' });
+    }
     if (exam.status === 'in_progress') {
       return res.status(400).json({ message: '考试进行中，无法编辑' });
     }
@@ -371,6 +375,10 @@ examRouter.delete('/:id', async (req: Request, res: Response) => {
     if (!exam) {
       return res.status(404).json({ message: '考试不存在' });
     }
+    // ✅ 所有权检查：非 admin 只能删除自己创建的考试
+    if (req.user!.role !== 'admin' && exam.createdBy !== req.user!.userId) {
+      return res.status(403).json({ message: '只能删除自己创建的考试' });
+    }
     if (exam.status === 'in_progress') {
       return res.status(400).json({ message: '考试进行中，无法删除' });
     }
@@ -404,6 +412,10 @@ examRouter.put('/:id/questions', async (req: Request, res: Response) => {
     const exam = await prisma.exam.findUnique({ where: { id: req.params.id } });
     if (!exam) {
       return res.status(404).json({ message: '考试不存在' });
+    }
+    // ✅ 所有权检查
+    if (req.user!.role !== 'admin' && exam.createdBy !== req.user!.userId) {
+      return res.status(403).json({ message: '只能修改自己创建的考试题目' });
     }
     if (exam.status === 'in_progress' || exam.status === 'ended') {
       return res.status(400).json({ message: '考试已开始或已结束，无法修改题目' });

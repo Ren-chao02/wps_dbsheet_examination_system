@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Table, Button, Tag, Space, message, Card, Popconfirm } from 'antd';
+import { Table, Button, Tag, Space, message, Card, Popconfirm, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, EditOutlined, DeleteOutlined, BarChartOutlined, SendOutlined, RollbackOutlined, StopOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { Exam, PaginatedResponse } from '../../types';
 import { ExamConfigWizard } from './ExamConfigWizard';
+import { useAuthStore } from '../../stores/auth';
 
 const modeLabels: Record<string, string> = { practice: '练习', quiz: '测验', exam: '正式考试' };
 const statusLabels: Record<string, { color: string; text: string }> = {
@@ -54,9 +55,14 @@ function countAssignedStudents(exam: Exam): number {
 
 export function ExamManager() {
   const navigate = useNavigate();
+  const currentUser = useAuthStore((s) => s.user);
   const [data, setData] = useState<PaginatedResponse<Exam>>({ data: [], total: 0, page: 1, pageSize: 20 });
   const [loading, setLoading] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
+
+  // 判断当前用户是否为考试创建者（admin 视为所有者）
+  const isOwner = (r: Exam) =>
+    currentUser?.role === 'admin' || r.creator?.id === currentUser?.id;
 
   const fetchExams = async (page = 1) => {
     setLoading(true);
@@ -199,54 +205,71 @@ export function ExamManager() {
       },
     },
     {
-      title: '操作', key: 'actions', width: 360, fixed: 'right', render: (_: any, r: Exam) => (
-        <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => navigate(`/teacher/exams/${r.id}/edit`)} disabled={r.status === 'in_progress'}>编辑</Button>
-          <Button size="small" icon={<BarChartOutlined />} onClick={() => navigate(`/teacher/exams/${r.id}/statistics`)}>统计</Button>
-          <Button size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(r.id)} disabled={r.status === 'in_progress'}>删除</Button>
+      title: '操作', key: 'actions', width: 360, fixed: 'right', render: (_: any, r: Exam) => {
+        const owner = isOwner(r);
+        const notOwnerTip = '仅支持本人创建的考试';
+        return (
+          <Space>
+            <Tooltip title={owner ? undefined : notOwnerTip}>
+              <Button size="small" icon={<EditOutlined />} onClick={() => navigate(`/teacher/exams/${r.id}/edit`)} disabled={r.status === 'in_progress' || !owner}>编辑</Button>
+            </Tooltip>
+            <Button size="small" icon={<BarChartOutlined />} onClick={() => navigate(`/teacher/exams/${r.id}/statistics`)}>统计</Button>
+            <Tooltip title={owner ? undefined : notOwnerTip}>
+              <Button size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(r.id)} disabled={r.status === 'in_progress' || !owner}>删除</Button>
+            </Tooltip>
 
-          {/* 状态驱动主按钮 */}
-          {r.status === 'draft' && (
-            <Popconfirm
-              title="确认发布考试？"
-              description={r.batch?.status !== 'active' ? '注意：所属批次尚未激活，建议先激活批次' : '发布后学生即可在考试列表中查看'}
-              onConfirm={() => handlePublish(r.id)}
-              okText="确定发布"
-              cancelText="取消"
-            >
-              <Button size="small" type="primary" icon={<SendOutlined />}>
-                发布考试
-              </Button>
-            </Popconfirm>
-          )}
-          {r.status === 'published' && (
-            <Popconfirm
-              title="确认撤销发布？"
-              description="撤销后考试退回草稿状态，学生将无法查看"
-              onConfirm={() => handleUnpublish(r.id)}
-              okText="确定撤销"
-              cancelText="取消"
-            >
-              <Button size="small" icon={<RollbackOutlined />}>
-                撤销发布
-              </Button>
-            </Popconfirm>
-          )}
-          {r.status === 'in_progress' && (
-            <Popconfirm
-              title="确认强制结束？"
-              description="强制收卷后所有考生将被终止答题，考试状态变为已结束"
-              onConfirm={() => handleForceEnd(r.id)}
-              okText="确定结束"
-              cancelText="取消"
-            >
-              <Button size="small" danger icon={<StopOutlined />}>
-                强制结束/收卷
-              </Button>
-            </Popconfirm>
-          )}
-        </Space>
-      ),
+            {/* 状态驱动主按钮 */}
+            {r.status === 'draft' && (
+              <Popconfirm
+                title="确认发布考试？"
+                description={r.batch?.status !== 'active' ? '注意：所属批次尚未激活，建议先激活批次' : '发布后学生即可在考试列表中查看'}
+                onConfirm={() => handlePublish(r.id)}
+                okText="确定发布"
+                cancelText="取消"
+                disabled={!owner}
+              >
+                <Tooltip title={owner ? undefined : notOwnerTip}>
+                  <Button size="small" type="primary" icon={<SendOutlined />} disabled={!owner}>
+                    发布考试
+                  </Button>
+                </Tooltip>
+              </Popconfirm>
+            )}
+            {r.status === 'published' && (
+              <Popconfirm
+                title="确认撤销发布？"
+                description="撤销后考试退回草稿状态，学生将无法查看"
+                onConfirm={() => handleUnpublish(r.id)}
+                okText="确定撤销"
+                cancelText="取消"
+                disabled={!owner}
+              >
+                <Tooltip title={owner ? undefined : notOwnerTip}>
+                  <Button size="small" icon={<RollbackOutlined />} disabled={!owner}>
+                    撤销发布
+                  </Button>
+                </Tooltip>
+              </Popconfirm>
+            )}
+            {r.status === 'in_progress' && (
+              <Popconfirm
+                title="确认强制结束？"
+                description="强制收卷后所有考生将被终止答题，考试状态变为已结束"
+                onConfirm={() => handleForceEnd(r.id)}
+                okText="确定结束"
+                cancelText="取消"
+                disabled={!owner}
+              >
+                <Tooltip title={owner ? undefined : notOwnerTip}>
+                  <Button size="small" danger icon={<StopOutlined />} disabled={!owner}>
+                    强制结束/收卷
+                  </Button>
+                </Tooltip>
+              </Popconfirm>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 

@@ -14,6 +14,7 @@ import {
   Row,
   Col,
   Switch,
+  Tooltip,
 } from 'antd';
 import {
   PlusOutlined,
@@ -29,6 +30,7 @@ import api from '../../services/api';
 import type { Question, PaginatedResponse, QuestionCategory } from '../../types';
 import { QuestionDetailDrawer } from './QuestionDetailDrawer';
 import { CategoryManagerModal } from '../../components/CategoryManagerModal';
+import { useAuthStore } from '../../stores/auth';
 
 const { RangePicker } = DatePicker;
 
@@ -48,6 +50,12 @@ const statusOptions = [
 export function QuestionBank() {
   const navigate = useNavigate();
   const location = useLocation();
+  const currentUser = useAuthStore((s) => s.user);
+
+  // 判断当前用户是否为题目创建者（admin 视为所有者）
+  const isOwner = (r: Question) =>
+    currentUser?.role === 'admin' || r.creator?.id === currentUser?.id;
+
   const [data, setData] = useState<PaginatedResponse<Question>>({
     data: [],
     total: 0,
@@ -285,29 +293,33 @@ export function QuestionBank() {
       dataIndex: 'status',
       key: 'status',
       width: 100,
-      render: (v: string, record: Question) => (
-        <Popconfirm
-          title="确认禁用"
-          description="试题禁用后不能被引用到试卷中，确认禁用吗？"
-          onConfirm={() => handleToggleStatus(record.id, v)}
-          okText="确认禁用"
-          cancelText="取消"
-          disabled={v !== 'published'}  // 只有启用状态下点击才需要确认
-        >
-          <Switch
-            checked={v === 'published'}
-            checkedChildren="启用"
-            unCheckedChildren="禁用"
-            onChange={(checked) => {
-              // 如果是启用操作（从禁用切换到启用），直接执行不需要确认
-              if (checked) {
-                handleToggleStatus(record.id, v);
-              }
-              // 如果是禁用操作（从启用切换到禁用），由 Popconfirm 处理
-            }}
-          />
-        </Popconfirm>
-      ),
+      render: (v: string, record: Question) => {
+        const owner = isOwner(record);
+        return (
+          <Popconfirm
+            title="确认禁用"
+            description="试题禁用后不能被引用到试卷中，确认禁用吗？"
+            onConfirm={() => handleToggleStatus(record.id, v)}
+            okText="确认禁用"
+            cancelText="取消"
+            disabled={v !== 'published' || !owner}  // 只有启用状态下点击才需要确认
+          >
+            <Switch
+              checked={v === 'published'}
+              checkedChildren="启用"
+              unCheckedChildren="禁用"
+              disabled={!owner}
+              onChange={(checked) => {
+                // 如果是启用操作（从禁用切换到启用），直接执行不需要确认
+                if (checked) {
+                  handleToggleStatus(record.id, v);
+                }
+                // 如果是禁用操作（从启用切换到禁用），由 Popconfirm 处理
+              }}
+            />
+          </Popconfirm>
+        );
+      },
     },
     {
       title: '更新时间',
@@ -321,41 +333,51 @@ export function QuestionBank() {
       key: 'actions',
       width: 160,
       fixed: 'right' as const,
-      render: (_: any, record: Question) => (
-        <Space size="small">
-          <Button
-            type="link"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => handleViewDetail(record)}
-            title="查看详情"
-          />
-          <Button
-            type="link"
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() =>
-              navigate(`/teacher/questions/${record.id}/edit`)
-            }
-            title="编辑"
-          />
-          <Popconfirm
-            title="确定删除该题目？"
-            description="删除后无法恢复"
-            onConfirm={() => handleDelete(record.id)}
-            okText="确定"
-            cancelText="取消"
-          >
+      render: (_: any, record: Question) => {
+        const owner = isOwner(record);
+        return (
+          <Space size="small">
             <Button
               type="link"
               size="small"
-              danger
-              icon={<DeleteOutlined />}
-              title="删除"
+              icon={<EyeOutlined />}
+              onClick={() => handleViewDetail(record)}
+              title="查看详情"
             />
-          </Popconfirm>
-        </Space>
-      ),
+            <Tooltip title={owner ? undefined : '仅支持本人创建的题目'}>
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                disabled={!owner}
+                onClick={() =>
+                  navigate(`/teacher/questions/${record.id}/edit`)
+                }
+                title="编辑"
+              />
+            </Tooltip>
+            <Popconfirm
+              title="确定删除该题目？"
+              description="删除后无法恢复"
+              onConfirm={() => handleDelete(record.id)}
+              okText="确定"
+              cancelText="取消"
+              disabled={!owner}
+            >
+              <Tooltip title={owner ? undefined : '仅支持本人创建的题目'}>
+                <Button
+                  type="link"
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                  disabled={!owner}
+                  title="删除"
+                />
+              </Tooltip>
+            </Popconfirm>
+          </Space>
+        );
+      },
     },
   ];
 

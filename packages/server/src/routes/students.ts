@@ -127,7 +127,28 @@ studentRouter.get('/', async (req: Request, res: Response) => {
     }
     if (departmentId) where.departmentId = String(departmentId);
     if (majorId) where.majorId = String(majorId);
-    if (classRoomId) where.classRoomId = String(classRoomId);
+
+    // ✅ 教师只能管理自己负责的班级的学生；admin 可查看全部
+    if (req.user!.role === 'teacher') {
+      const teacherClasses = await prisma.teacherClass.findMany({
+        where: { teacherId: req.user!.userId },
+        select: { classId: true },
+      });
+      const myClassIds = teacherClasses.map(tc => tc.classId);
+
+      if (classRoomId) {
+        // 前端指定了班级，验证是否属于当前教师
+        if (!myClassIds.includes(String(classRoomId))) {
+          return res.json({ data: [], total: 0, page: Number(page), pageSize: Number(pageSize) });
+        }
+        where.classRoomId = String(classRoomId);
+      } else {
+        where.classRoomId = { in: myClassIds };
+      }
+    } else if (classRoomId) {
+      // admin 按班级筛选
+      where.classRoomId = String(classRoomId);
+    }
 
     const [data, total] = await Promise.all([
       prisma.user.findMany({
@@ -487,7 +508,27 @@ studentRouter.get('/export', async (req: Request, res: Response) => {
     const where: any = { role: 'student' };
     if (departmentId) where.departmentId = String(departmentId);
     if (majorId) where.majorId = String(majorId);
-    if (classRoomId) where.classRoomId = String(classRoomId);
+
+    // ✅ 教师导出时也只能导出自己负责班级的学生
+    if (req.user!.role === 'teacher') {
+      const teacherClasses = await prisma.teacherClass.findMany({
+        where: { teacherId: req.user!.userId },
+        select: { classId: true },
+      });
+      const myClassIds = teacherClasses.map(tc => tc.classId);
+      if (classRoomId) {
+        if (!myClassIds.includes(String(classRoomId))) {
+          where.classRoomId = '__none__'; // 返回空结果
+        } else {
+          where.classRoomId = String(classRoomId);
+        }
+      } else {
+        where.classRoomId = { in: myClassIds };
+      }
+    } else if (classRoomId) {
+      where.classRoomId = String(classRoomId);
+    }
+
     if (search) {
       where.OR = [
         { username: { contains: String(search), mode: 'insensitive' } },

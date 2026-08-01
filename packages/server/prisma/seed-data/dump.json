@@ -1,0 +1,2989 @@
+{
+  "department": [
+    {
+      "id": "e6203d01-21a5-4e54-9e6b-fe55ea9e2fe0",
+      "name": "计算机学院",
+      "code": "NEW_DEPTCS",
+      "description": "计算机科学与技术学院",
+      "sortOrder": 0,
+      "createdAt": "2026-06-16T13:28:29.015Z",
+      "updatedAt": "2026-06-16T13:44:06.133Z"
+    },
+    {
+      "id": "9a09d997-7a28-42af-8158-9d06890e9623",
+      "name": "文学院",
+      "code": "NEW_DEPT",
+      "description": null,
+      "sortOrder": 0,
+      "createdAt": "2026-06-16T13:45:18.897Z",
+      "updatedAt": "2026-06-16T13:45:31.261Z"
+    }
+  ],
+  "major": [
+    {
+      "id": "833ec13b-215c-4e6a-9435-d829346567ec",
+      "name": "汉语言文学",
+      "code": "NEW_MAJOR",
+      "departmentId": "9a09d997-7a28-42af-8158-9d06890e9623",
+      "description": null,
+      "sortOrder": 0,
+      "createdAt": "2026-06-16T13:45:32.058Z",
+      "updatedAt": "2026-06-16T13:45:41.767Z"
+    },
+    {
+      "id": "1fb0e9c8-72a1-467a-a8fa-1aa0a58d71e9",
+      "name": "软件工程",
+      "code": "ruangong",
+      "departmentId": "e6203d01-21a5-4e54-9e6b-fe55ea9e2fe0",
+      "description": null,
+      "sortOrder": 0,
+      "createdAt": "2026-06-16T13:29:12.401Z",
+      "updatedAt": "2026-06-16T13:47:17.467Z"
+    },
+    {
+      "id": "d3fd7f2e-9190-4e00-9a25-5e4576eedcd5",
+      "name": "人工智能",
+      "code": "ai",
+      "departmentId": "e6203d01-21a5-4e54-9e6b-fe55ea9e2fe0",
+      "description": null,
+      "sortOrder": 0,
+      "createdAt": "2026-06-16T13:46:28.252Z",
+      "updatedAt": "2026-06-16T13:48:12.185Z"
+    }
+  ],
+  "classRoom": [
+    {
+      "id": "5e34dba7-713a-4c91-bd37-0457a71224ad",
+      "name": "软工1班",
+      "code": "ruangong1",
+      "academicYear": "2026",
+      "gradeLevel": 1,
+      "departmentId": "e6203d01-21a5-4e54-9e6b-fe55ea9e2fe0",
+      "majorId": "1fb0e9c8-72a1-467a-a8fa-1aa0a58d71e9",
+      "createdAt": "2026-06-16T13:43:34.999Z",
+      "updatedAt": "2026-06-16T13:47:28.863Z"
+    },
+    {
+      "id": "976316d3-8a74-4c41-9350-5bef0fba44d3",
+      "name": "软工2班",
+      "code": "ruangong2",
+      "academicYear": "2026",
+      "gradeLevel": 1,
+      "departmentId": "e6203d01-21a5-4e54-9e6b-fe55ea9e2fe0",
+      "majorId": "1fb0e9c8-72a1-467a-a8fa-1aa0a58d71e9",
+      "createdAt": "2026-06-16T13:46:48.735Z",
+      "updatedAt": "2026-06-16T13:47:52.396Z"
+    },
+    {
+      "id": "ade8f641-1771-4991-bf2b-7a3ed1d82d63",
+      "name": "人工智能",
+      "code": "ai1",
+      "academicYear": "2026",
+      "gradeLevel": 1,
+      "departmentId": "e6203d01-21a5-4e54-9e6b-fe55ea9e2fe0",
+      "majorId": "d3fd7f2e-9190-4e00-9a25-5e4576eedcd5",
+      "createdAt": "2026-06-16T13:48:13.295Z",
+      "updatedAt": "2026-06-16T13:49:32.808Z"
+    }
+  ],
+  "systemRole": [
+    {
+      "id": "086bde62-4e58-4898-9f12-c7cf63e59689",
+      "roleCode": "ADMIN",
+      "roleName": "学校管理员",
+      "roleType": "preset",
+      "description": "拥有所有模块的操作权限",
+      "status": "ACTIVE",
+      "createdBy": null,
+      "updatedBy": null,
+      "createdAt": "2026-06-16T09:41:12.986Z",
+      "updatedAt": "2026-06-16T09:41:12.986Z"
+    },
+    {
+      "id": "b24f666b-406b-44d0-bc60-6b85126d28db",
+      "roleCode": "TEACHER",
+      "roleName": "老师",
+      "roleType": "preset",
+      "description": "拥有除系统管理外的所有操作权限",
+      "status": "ACTIVE",
+      "createdBy": null,
+      "updatedBy": null,
+      "createdAt": "2026-06-16T09:41:12.997Z",
+      "updatedAt": "2026-06-16T09:41:12.997Z"
+    },
+    {
+      "id": "fd71a04a-4cce-4c15-8d12-f4095c6387d6",
+      "roleCode": "INVIGILATOR",
+      "roleName": "监考员",
+      "roleType": "preset",
+      "description": "仅拥有监考管理权限",
+      "status": "ACTIVE",
+      "createdBy": null,
+      "updatedBy": null,
+      "createdAt": "2026-06-16T09:41:13.003Z",
+      "updatedAt": "2026-06-16T09:41:13.003Z"
+    },
+    {
+      "id": "03ee15fe-ab33-4087-affc-18d53e64e7e5",
+      "roleCode": "MASTER",
+      "roleName": "班主任",
+      "roleType": "custom",
+      "description": "班主任",
+      "status": "ACTIVE",
+      "createdBy": "efddad75-ffde-42fa-96e0-8c798faa588b",
+      "updatedBy": "efddad75-ffde-42fa-96e0-8c798faa588b",
+      "createdAt": "2026-06-16T13:14:52.858Z",
+      "updatedAt": "2026-06-16T13:14:52.858Z"
+    }
+  ],
+  "systemRolePermission": [
+    {
+      "id": "d572052d-3ec2-4c73-8363-18d7748831bb",
+      "roleId": "086bde62-4e58-4898-9f12-c7cf63e59689",
+      "moduleCode": "QUESTION_BANK"
+    },
+    {
+      "id": "7dbd4baa-69fe-482f-b661-c6fc584b59d0",
+      "roleId": "086bde62-4e58-4898-9f12-c7cf63e59689",
+      "moduleCode": "EXAM_MANAGEMENT"
+    },
+    {
+      "id": "afd3eabc-2486-4820-a6db-c0074d652906",
+      "roleId": "086bde62-4e58-4898-9f12-c7cf63e59689",
+      "moduleCode": "STUDENT_MANAGEMENT"
+    },
+    {
+      "id": "8d042e6e-0dfd-43d8-b88e-c9f3d0c7f895",
+      "roleId": "086bde62-4e58-4898-9f12-c7cf63e59689",
+      "moduleCode": "INVIGILATION"
+    },
+    {
+      "id": "43c707f2-9c72-4305-987a-537471aff3c8",
+      "roleId": "086bde62-4e58-4898-9f12-c7cf63e59689",
+      "moduleCode": "GRADE_MANAGEMENT"
+    },
+    {
+      "id": "1d11cd94-e7ef-438d-93f3-2c1adfb26d62",
+      "roleId": "086bde62-4e58-4898-9f12-c7cf63e59689",
+      "moduleCode": "SYSTEM_MANAGEMENT"
+    },
+    {
+      "id": "8b03186e-b450-4eb5-a97b-5438089ddd54",
+      "roleId": "086bde62-4e58-4898-9f12-c7cf63e59689",
+      "moduleCode": "IMPORT_EXPORT"
+    },
+    {
+      "id": "62b3489e-d3af-4698-a3a9-01c567ea451f",
+      "roleId": "b24f666b-406b-44d0-bc60-6b85126d28db",
+      "moduleCode": "QUESTION_BANK"
+    },
+    {
+      "id": "ca8d3d54-2366-469d-ae41-6ff02e337e42",
+      "roleId": "b24f666b-406b-44d0-bc60-6b85126d28db",
+      "moduleCode": "EXAM_MANAGEMENT"
+    },
+    {
+      "id": "5170b9da-11e5-4956-a176-7db13974c29f",
+      "roleId": "b24f666b-406b-44d0-bc60-6b85126d28db",
+      "moduleCode": "STUDENT_MANAGEMENT"
+    },
+    {
+      "id": "91c6bc12-0216-4c15-90a0-aa8f968e3a4d",
+      "roleId": "b24f666b-406b-44d0-bc60-6b85126d28db",
+      "moduleCode": "INVIGILATION"
+    },
+    {
+      "id": "e1cda9fe-170f-4dbb-accc-1bbee89c3695",
+      "roleId": "b24f666b-406b-44d0-bc60-6b85126d28db",
+      "moduleCode": "GRADE_MANAGEMENT"
+    },
+    {
+      "id": "e728626a-43b9-4e45-a5ab-35b28dad8ba3",
+      "roleId": "b24f666b-406b-44d0-bc60-6b85126d28db",
+      "moduleCode": "IMPORT_EXPORT"
+    },
+    {
+      "id": "aeafea33-b326-4d4c-b876-823f299b9417",
+      "roleId": "fd71a04a-4cce-4c15-8d12-f4095c6387d6",
+      "moduleCode": "INVIGILATION"
+    },
+    {
+      "id": "1a4300cd-33e3-4f49-91b0-92913a4fd3f3",
+      "roleId": "03ee15fe-ab33-4087-affc-18d53e64e7e5",
+      "moduleCode": "QUESTION_BANK"
+    },
+    {
+      "id": "af987532-6620-418b-8786-614d5d423ed0",
+      "roleId": "03ee15fe-ab33-4087-affc-18d53e64e7e5",
+      "moduleCode": "EXAM_MANAGEMENT"
+    },
+    {
+      "id": "18b20492-b4b1-4bba-b9f6-8e78759899cd",
+      "roleId": "03ee15fe-ab33-4087-affc-18d53e64e7e5",
+      "moduleCode": "STUDENT_MANAGEMENT"
+    },
+    {
+      "id": "e7924956-60d0-4ea4-8647-2bdfac4f1324",
+      "roleId": "03ee15fe-ab33-4087-affc-18d53e64e7e5",
+      "moduleCode": "INVIGILATION"
+    },
+    {
+      "id": "486b32d8-cffc-4ce0-999e-251cd86a7191",
+      "roleId": "03ee15fe-ab33-4087-affc-18d53e64e7e5",
+      "moduleCode": "GRADE_MANAGEMENT"
+    },
+    {
+      "id": "af894eb9-1d39-4ea9-aeca-1c6a3772cfa4",
+      "roleId": "03ee15fe-ab33-4087-affc-18d53e64e7e5",
+      "moduleCode": "IMPORT_EXPORT"
+    }
+  ],
+  "questionCategory": [
+    {
+      "id": "918f5054-be1b-43d8-8124-864e6dc769e2",
+      "name": "基础概念与界面操作",
+      "parentId": null,
+      "sortOrder": 1,
+      "description": "多维表格基础认知、界面导航、新建表格等入门操作",
+      "icon": "📱",
+      "status": "ACTIVE",
+      "level": 1,
+      "path": "918f5054-be1b-43d8-8124-864e6dc769e2",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:00:59.945Z",
+      "updatedAt": "2026-06-17T13:00:59.949Z"
+    },
+    {
+      "id": "f3f1730c-9dfd-49e0-a5cb-15f02ef8e0a8",
+      "name": "新建表格",
+      "parentId": "918f5054-be1b-43d8-8124-864e6dc769e2",
+      "sortOrder": 1,
+      "description": "创建空白多维表格和数据表",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "918f5054-be1b-43d8-8124-864e6dc769e2/f3f1730c-9dfd-49e0-a5cb-15f02ef8e0a8",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:00:59.953Z",
+      "updatedAt": "2026-06-17T13:00:59.959Z"
+    },
+    {
+      "id": "11f3d44d-87fa-40d7-8c63-b0a654f2cfff",
+      "name": "界面导航",
+      "parentId": "918f5054-be1b-43d8-8124-864e6dc769e2",
+      "sortOrder": 2,
+      "description": "认识和使用左侧导航面板、菜单栏等",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "918f5054-be1b-43d8-8124-864e6dc769e2/11f3d44d-87fa-40d7-8c63-b0a654f2cfff",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:00:59.962Z",
+      "updatedAt": "2026-06-17T13:00:59.967Z"
+    },
+    {
+      "id": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "name": "字段类型与配置",
+      "parentId": null,
+      "sortOrder": 2,
+      "description": "30种字段的创建、属性设置与应用场景",
+      "icon": "🔧",
+      "status": "ACTIVE",
+      "level": 1,
+      "path": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:00:59.970Z",
+      "updatedAt": "2026-06-17T13:00:59.973Z"
+    },
+    {
+      "id": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "name": "基础字段",
+      "parentId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "sortOrder": 1,
+      "description": "文本、数字、日期、选项等基础类型",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "0789ac9a-f339-4a28-ac34-c697253f29df/36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:00:59.976Z",
+      "updatedAt": "2026-06-17T13:00:59.980Z"
+    },
+    {
+      "id": "22d204d7-1cde-41ce-8a6b-a17798e9952b",
+      "name": "业务字段",
+      "parentId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "sortOrder": 2,
+      "description": "联系人、富文本、图片附件等业务类型",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "0789ac9a-f339-4a28-ac34-c697253f29df/22d204d7-1cde-41ce-8a6b-a17798e9952b",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:00:59.983Z",
+      "updatedAt": "2026-06-17T13:00:59.987Z"
+    },
+    {
+      "id": "577f0c4e-4d80-47d8-a9fa-7249ec63def9",
+      "name": "AI字段",
+      "parentId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "sortOrder": 3,
+      "description": "AI智能识别、智能分类等AI增强字段",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "0789ac9a-f339-4a28-ac34-c697253f29df/577f0c4e-4d80-47d8-a9fa-7249ec63def9",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:00:59.990Z",
+      "updatedAt": "2026-06-17T13:00:59.995Z"
+    },
+    {
+      "id": "37465997-f270-42c7-8264-5d342eee8346",
+      "name": "高级字段",
+      "parentId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "sortOrder": 4,
+      "description": "编号、创建人/时间等系统自动字段",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "0789ac9a-f339-4a28-ac34-c697253f29df/37465997-f270-42c7-8264-5d342eee8346",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:00:59.998Z",
+      "updatedAt": "2026-06-17T13:01:00.002Z"
+    },
+    {
+      "id": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "name": "视图操作与管理",
+      "parentId": null,
+      "sortOrder": 3,
+      "description": "表格视图、看板视图、仪表盘等多种视图的使用与配置",
+      "icon": "👁️",
+      "status": "ACTIVE",
+      "level": 1,
+      "path": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.005Z",
+      "updatedAt": "2026-06-17T13:01:00.008Z"
+    },
+    {
+      "id": "b7463ab1-5991-48df-bfe8-7c932972ec6a",
+      "name": "表格视图",
+      "parentId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "sortOrder": 1,
+      "description": "基础表格展示、字段显隐、筛选排序分组",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "de72da4d-5982-4511-9cbb-fc1bf5cb7158/b7463ab1-5991-48df-bfe8-7c932972ec6a",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.011Z",
+      "updatedAt": "2026-06-17T13:01:00.014Z"
+    },
+    {
+      "id": "28013685-16ce-4298-a128-c0ce0d3d3efa",
+      "name": "看板视图",
+      "parentId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "sortOrder": 2,
+      "description": "任务状态管理、卡片拖拽、看板配置",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "de72da4d-5982-4511-9cbb-fc1bf5cb7158/28013685-16ce-4298-a128-c0ce0d3d3efa",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.017Z",
+      "updatedAt": "2026-06-17T13:01:00.021Z"
+    },
+    {
+      "id": "a3aadb34-9904-4965-99dd-f1d4c47c6e78",
+      "name": "筛选排序分组",
+      "parentId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "sortOrder": 3,
+      "description": "多条件组合筛选、多级排序、分组归类",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "de72da4d-5982-4511-9cbb-fc1bf5cb7158/a3aadb34-9904-4965-99dd-f1d4c47c6e78",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.024Z",
+      "updatedAt": "2026-06-17T13:01:00.030Z"
+    },
+    {
+      "id": "fadb55e8-c516-4446-b8e6-798a8399bece",
+      "name": "仪表盘",
+      "parentId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "sortOrder": 4,
+      "description": "柱状图、折线图、饼状图等数据可视化",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "de72da4d-5982-4511-9cbb-fc1bf5cb7158/fadb55e8-c516-4446-b8e6-798a8399bece",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.033Z",
+      "updatedAt": "2026-06-17T13:01:00.038Z"
+    },
+    {
+      "id": "26295ccc-f633-4818-9677-3da693ec37db",
+      "name": "高级字段与关联",
+      "parentId": null,
+      "sortOrder": 4,
+      "description": "单向关联、双向关联、查找引用、统计字段等跨表操作",
+      "icon": "🔗",
+      "status": "ACTIVE",
+      "level": 1,
+      "path": "26295ccc-f633-4818-9677-3da693ec37db",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.041Z",
+      "updatedAt": "2026-06-17T13:01:00.044Z"
+    },
+    {
+      "id": "c3d77234-2a1d-4065-8c10-613fcb462427",
+      "name": "单向关联",
+      "parentId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "sortOrder": 1,
+      "description": "建立表间单向关联及自动匹配条件配置",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "26295ccc-f633-4818-9677-3da693ec37db/c3d77234-2a1d-4065-8c10-613fcb462427",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.047Z",
+      "updatedAt": "2026-06-17T13:01:00.051Z"
+    },
+    {
+      "id": "b9dc514d-eaaf-461c-b17f-8be6d8c408ad",
+      "name": "双向关联",
+      "parentId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "sortOrder": 2,
+      "description": "实现表间互查的双向关联关系",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "26295ccc-f633-4818-9677-3da693ec37db/b9dc514d-eaaf-461c-b17f-8be6d8c408ad",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.054Z",
+      "updatedAt": "2026-06-17T13:01:00.059Z"
+    },
+    {
+      "id": "282cd633-b870-4457-a722-6dbc503decd5",
+      "name": "查找引用统计",
+      "parentId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "sortOrder": 3,
+      "description": "跨表数据显示(VLOOKUP替代)、聚合统计",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "26295ccc-f633-4818-9677-3da693ec37db/282cd633-b870-4457-a722-6dbc503decd5",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.062Z",
+      "updatedAt": "2026-06-17T13:01:00.065Z"
+    },
+    {
+      "id": "ec02e223-3596-4095-acd0-dbb833fc1c00",
+      "name": "自动化与AI功能",
+      "parentId": null,
+      "sortOrder": 5,
+      "description": "工作流自动化、AI助手、OCR识别等智能化功能",
+      "icon": "🤖",
+      "status": "ACTIVE",
+      "level": 1,
+      "path": "ec02e223-3596-4095-acd0-dbb833fc1c00",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.068Z",
+      "updatedAt": "2026-06-17T13:01:00.071Z"
+    },
+    {
+      "id": "c32427a5-2894-4578-abc1-c855bfca0247",
+      "name": "自动化工作流",
+      "parentId": "ec02e223-3596-4095-acd0-dbb833fc1c00",
+      "sortOrder": 1,
+      "description": "触发器+动作配置、定时任务(Cron)",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "ec02e223-3596-4095-acd0-dbb833fc1c00/c32427a5-2894-4578-abc1-c855bfca0247",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.074Z",
+      "updatedAt": "2026-06-17T13:01:00.078Z"
+    },
+    {
+      "id": "ee71c28b-916e-4e6c-a6a3-1ac291d3cce7",
+      "name": "AI助手",
+      "parentId": "ec02e223-3596-4095-acd0-dbb833fc1c00",
+      "sortOrder": 2,
+      "description": "自然语言建表、AI智能分类、拍照录入",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "ec02e223-3596-4095-acd0-dbb833fc1c00/ee71c28b-916e-4e6c-a6a3-1ac291d3cce7",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.081Z",
+      "updatedAt": "2026-06-17T13:01:00.084Z"
+    },
+    {
+      "id": "b6aacd89-cf13-4c8d-ba8b-db9aaa23f7b5",
+      "name": "综合应用",
+      "parentId": null,
+      "sortOrder": 6,
+      "description": "系统集成、数据迁移、完整项目实战等综合性应用场景",
+      "icon": "🎯",
+      "status": "ACTIVE",
+      "level": 1,
+      "path": "b6aacd89-cf13-4c8d-ba8b-db9aaa23f7b5",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.087Z",
+      "updatedAt": "2026-06-17T13:01:00.090Z"
+    },
+    {
+      "id": "931c59bf-d934-462b-9a85-13f66d05ce1e",
+      "name": "数据管理",
+      "parentId": "b6aacd89-cf13-4c8d-ba8b-db9aaa23f7b5",
+      "sortOrder": 1,
+      "description": "Excel导入导出、批量操作、权限管理",
+      "icon": null,
+      "status": "ACTIVE",
+      "level": 2,
+      "path": "b6aacd89-cf13-4c8d-ba8b-db9aaa23f7b5/931c59bf-d934-462b-9a85-13f66d05ce1e",
+      "metadata": {},
+      "createdAt": "2026-06-17T13:01:00.093Z",
+      "updatedAt": "2026-06-17T13:01:00.097Z"
+    }
+  ],
+  "user": [
+    {
+      "id": "efddad75-ffde-42fa-96e0-8c798faa588b",
+      "username": "admin",
+      "passwordHash": "$2a$10$tn0HA3QNj2VfmJ9KE.rDpO3TH776ERM4MJ2LjdPLAYuYeOpKE70s.",
+      "realName": "系统管理员",
+      "role": "admin",
+      "email": "admin@example.com",
+      "avatarUrl": null,
+      "studentId": null,
+      "employeeId": null,
+      "gender": "UNSET",
+      "phoneNumber": null,
+      "accountStatus": "ENABLED",
+      "remark": "系统预置管理员账户",
+      "systemRoleId": "086bde62-4e58-4898-9f12-c7cf63e59689",
+      "lastLoginAt": null,
+      "departmentId": null,
+      "majorId": null,
+      "classRoomId": null,
+      "createdAt": "2026-06-16T09:41:13.008Z",
+      "updatedAt": "2026-06-16T09:41:13.008Z"
+    },
+    {
+      "id": "8e733940-7412-4a3b-8d33-8451aceef87a",
+      "username": "20252861",
+      "passwordHash": "$2a$10$FiQxFGN..du2su16G3LXverHcz7OY9Lz/bioqJVzB0X9A8ADd57u.",
+      "realName": "蔡徐坤",
+      "role": "student",
+      "email": "1257433171@qq.com",
+      "avatarUrl": null,
+      "studentId": "20252861",
+      "employeeId": null,
+      "gender": "MALE",
+      "phoneNumber": "11111111111",
+      "accountStatus": "ENABLED",
+      "remark": null,
+      "systemRoleId": null,
+      "lastLoginAt": null,
+      "departmentId": "e6203d01-21a5-4e54-9e6b-fe55ea9e2fe0",
+      "majorId": "1fb0e9c8-72a1-467a-a8fa-1aa0a58d71e9",
+      "classRoomId": "5e34dba7-713a-4c91-bd37-0457a71224ad",
+      "createdAt": "2026-06-16T13:53:42.432Z",
+      "updatedAt": "2026-06-16T13:53:42.432Z"
+    },
+    {
+      "id": "d6fa2015-87ed-41e8-902f-2fa83a9e4dfe",
+      "username": "teacher2",
+      "passwordHash": "$2a$10$HPh/5TRFUGWtvehO//LrROs7aY.kNddpbaxxTnRP4MGRc3ZqbDjZm",
+      "realName": "刘静",
+      "role": "teacher",
+      "email": null,
+      "avatarUrl": null,
+      "studentId": null,
+      "employeeId": null,
+      "gender": "FEMALE",
+      "phoneNumber": null,
+      "accountStatus": "ENABLED",
+      "remark": null,
+      "systemRoleId": "b24f666b-406b-44d0-bc60-6b85126d28db",
+      "lastLoginAt": null,
+      "departmentId": null,
+      "majorId": null,
+      "classRoomId": null,
+      "createdAt": "2026-06-20T10:54:49.678Z",
+      "updatedAt": "2026-06-20T10:54:49.678Z"
+    },
+    {
+      "id": "3510dcc9-f3c3-4736-b39c-523c071c0f95",
+      "username": "20252862",
+      "passwordHash": "$2a$10$byDxyeVJywS6TonCpj4qMeeokefxxtl3/c/hxGfFiL2iaUElI5T6e",
+      "realName": "丁真",
+      "role": "student",
+      "email": null,
+      "avatarUrl": null,
+      "studentId": "20252862",
+      "employeeId": null,
+      "gender": "MALE",
+      "phoneNumber": null,
+      "accountStatus": "ENABLED",
+      "remark": null,
+      "systemRoleId": null,
+      "lastLoginAt": null,
+      "departmentId": "e6203d01-21a5-4e54-9e6b-fe55ea9e2fe0",
+      "majorId": "1fb0e9c8-72a1-467a-a8fa-1aa0a58d71e9",
+      "classRoomId": "5e34dba7-713a-4c91-bd37-0457a71224ad",
+      "createdAt": "2026-06-16T14:03:38.044Z",
+      "updatedAt": "2026-06-22T02:50:09.427Z"
+    },
+    {
+      "id": "5a951b2d-01b2-430a-8225-7e72df810110",
+      "username": "teacher3",
+      "passwordHash": "$2a$10$srHAMWgGAfzhN5WvZCahneT60n8IVTYMJk03Hcoiw3fu1K1q4dvIy",
+      "realName": "测试1",
+      "role": "teacher",
+      "email": null,
+      "avatarUrl": null,
+      "studentId": null,
+      "employeeId": null,
+      "gender": null,
+      "phoneNumber": null,
+      "accountStatus": "ENABLED",
+      "remark": null,
+      "systemRoleId": "b24f666b-406b-44d0-bc60-6b85126d28db",
+      "lastLoginAt": null,
+      "departmentId": null,
+      "majorId": null,
+      "classRoomId": null,
+      "createdAt": "2026-07-12T14:12:25.793Z",
+      "updatedAt": "2026-07-12T14:12:25.793Z"
+    },
+    {
+      "id": "1a5c311d-92e7-456a-bd86-83e630c0759b",
+      "username": "teacher4",
+      "passwordHash": "$2a$10$McLcfAfdYFt36T1vNSPARecY2alrBSlWugPf1jxpa0sG9/ZZNPqS6",
+      "realName": "测试2",
+      "role": "teacher",
+      "email": null,
+      "avatarUrl": null,
+      "studentId": null,
+      "employeeId": null,
+      "gender": null,
+      "phoneNumber": null,
+      "accountStatus": "ENABLED",
+      "remark": null,
+      "systemRoleId": "b24f666b-406b-44d0-bc60-6b85126d28db",
+      "lastLoginAt": null,
+      "departmentId": null,
+      "majorId": null,
+      "classRoomId": null,
+      "createdAt": "2026-07-12T14:12:44.496Z",
+      "updatedAt": "2026-07-12T14:12:44.496Z"
+    },
+    {
+      "id": "8e831b91-d6b1-43d0-b78c-0cc347ed4fca",
+      "username": "teacher1",
+      "passwordHash": "$2a$10$tn0HA3QNj2VfmJ9KE.rDpO3TH776ERM4MJ2LjdPLAYuYeOpKE70s.",
+      "realName": "王老师",
+      "role": "teacher",
+      "email": "teacher@example.com",
+      "avatarUrl": null,
+      "studentId": null,
+      "employeeId": null,
+      "gender": "MALE",
+      "phoneNumber": null,
+      "accountStatus": "ENABLED",
+      "remark": "预置教师账户",
+      "systemRoleId": "b24f666b-406b-44d0-bc60-6b85126d28db",
+      "lastLoginAt": null,
+      "departmentId": null,
+      "majorId": null,
+      "classRoomId": null,
+      "createdAt": "2026-06-16T09:41:13.016Z",
+      "updatedAt": "2026-07-21T09:27:39.857Z"
+    }
+  ],
+  "question": [
+    {
+      "id": "d887eab5-0535-4aeb-9064-792902fe5672",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统",
+      "updatedBy": "测试2",
+      "title": "使用“日期范围”字段记录项目周期",
+      "description": "在「项目立项表」中创建一个名为“项目周期”的字段，字段类型为“日期范围”，并设置日期格式为“年月日”，默认显示为“起止日期”样式。",
+      "type": "comprehensive",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [],
+      "hints": "在表格编辑器中，点击“+”新增字段，选择“日期范围”类型，然后在字段属性中调整格式和显示样式。",
+      "analysis": null,
+      "tags": [],
+      "status": "published",
+      "createdBy": "1a5c311d-92e7-456a-bd86-83e630c0759b",
+      "createdAt": "2026-07-21T12:55:38.296Z",
+      "updatedAt": "2026-07-21T13:11:16.029Z"
+    },
+    {
+      "id": "642556b0-b72b-40b0-8625-aac90f0afded",
+      "primaryCategoryId": "b6aacd89-cf13-4c8d-ba8b-db9aaa23f7b5",
+      "secondaryCategoryId": "931c59bf-d934-462b-9a85-13f66d05ce1e",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "导入外部Excel数据到多维表格",
+      "description": "将本地的Excel文件（包含表头和数据）导入到多维表格中，并验证导入后的字段类型是否正确识别。",
+      "type": "create_table",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_data_import",
+          "score": 100,
+          "action": "verify_excel_import",
+          "params": {
+            "dataRowsImported": ">0",
+            "headerRecognized": true,
+            "importSuccessful": true,
+            "fieldTypesCorrect": true
+          }
+        }
+      ],
+      "hints": "通过左侧导航面板的'导入'功能选择Excel文件；确保源文件有清晰的表头行",
+      "analysis": null,
+      "tags": [
+        "数据导入",
+        "Excel迁移"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.352Z",
+      "updatedAt": "2026-06-21T09:34:22.407Z"
+    },
+    {
+      "id": "21162ee2-8ab4-4f89-9f10-8cb5afa63cfe",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "使用字段编组批量管理字段",
+      "description": "将'基本信息'相关字段（姓名、性别、年龄、电话）创建为一个字段编组，实现批量隐藏/显示和整体拖动。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_field_grouping",
+          "score": 100,
+          "action": "verify_field_group",
+          "params": {
+            "groupName": "基本信息",
+            "includedFields": [
+              "姓名",
+              "性别",
+              "年龄",
+              "电话"
+            ],
+            "operationsSupported": [
+              "hide",
+              "show",
+              "drag"
+            ]
+          }
+        }
+      ],
+      "hints": "选中多个字段后右键选择'创建编组'；注意首字段不能编入编组",
+      "analysis": null,
+      "tags": [
+        "字段编组",
+        "批量管理"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.346Z",
+      "updatedAt": "2026-06-21T09:34:24.521Z"
+    },
+    {
+      "id": "9b0871d1-6e0c-4875-965a-0e9db9d2e8fe",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "b7463ab1-5991-48df-bfe8-7c932972ec6a",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "配置视图分享权限",
+      "description": "将'技术部员工'视图分享给指定用户，设置权限为'仅可查看'，并隐藏薪资相关字段。",
+      "type": "config_view",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_view_sharing",
+          "score": 100,
+          "action": "verify_view_sharing",
+          "params": {
+            "viewName": "技术部员工",
+            "permission": "readOnly",
+            "sharedWith": "specificUsers",
+            "hiddenSensitiveFields": [
+              "月薪",
+              "奖金"
+            ]
+          }
+        }
+      ],
+      "hints": "使用视图右上角的'分享视图'功能，可独立设置每个视图的访问权限",
+      "analysis": null,
+      "tags": [
+        "视图分享",
+        "权限管理",
+        "数据安全"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.339Z",
+      "updatedAt": "2026-06-21T09:34:32.169Z"
+    },
+    {
+      "id": "6a0cc2be-4a64-4294-babe-c2dbb6c1a979",
+      "primaryCategoryId": "ec02e223-3596-4095-acd0-dbb833fc1c00",
+      "secondaryCategoryId": "c32427a5-2894-4578-abc1-c855bfca0247",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "配置定时触发的自动化任务",
+      "description": "创建定时自动化工作流：每周一上午9:00自动汇总上周未完成任务清单，发送给项目经理。",
+      "type": "comprehensive",
+      "difficulty": "hard",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_scheduled_automation",
+          "score": 100,
+          "action": "verify_scheduled_automation",
+          "params": {
+            "action": {
+              "type": "sendSummary",
+              "filter": "status=未完成",
+              "recipient": "projectManager"
+            },
+            "trigger": {
+              "type": "scheduled",
+              "schedule": "cron(0 9 * * 1)"
+            }
+          }
+        }
+      ],
+      "hints": "定时触发器支持cron表达式或可视化时间配置",
+      "analysis": null,
+      "tags": [
+        "定时任务",
+        "周期性报告"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.299Z",
+      "updatedAt": "2026-06-17T13:02:22.299Z"
+    },
+    {
+      "id": "f8ca89d0-e74f-46df-a867-19da7b996acd",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建公式字段计算工龄",
+      "description": "新建一个公式字段命名为'工龄（年）'，编写公式根据'入职日期'字段计算至今的年数（四舍五入取整）。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_formula_field",
+          "score": 100,
+          "action": "verify_formula_field",
+          "params": {
+            "type": "formula",
+            "fieldName": "工龄（年）",
+            "referencesField": "入职日期"
+          }
+        }
+      ],
+      "hints": "使用DATEDIF函数或YEAR/TODAY函数组合实现日期差值计算",
+      "analysis": null,
+      "tags": [
+        "公式字段",
+        "日期计算"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.118Z",
+      "updatedAt": "2026-06-17T13:02:22.118Z"
+    },
+    {
+      "id": "01bce275-7822-4af5-8422-924c5b3ea251",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "a3aadb34-9904-4965-99dd-f1d4c47c6e78",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "设置视图排序规则",
+      "description": "在表格视图中设置排序规则：按'入职日期'字段升序排列，入职日期相同的按'月薪'降序排列。",
+      "type": "config_view",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_sort_rules",
+          "score": 100,
+          "action": "verify_sort_rules",
+          "params": {
+            "sortFields": [
+              {
+                "field": "入职日期",
+                "order": "asc"
+              },
+              {
+                "field": "月薪",
+                "order": "desc"
+              }
+            ]
+          }
+        }
+      ],
+      "hints": "可设置多级排序，按优先级依次添加排序条件",
+      "analysis": null,
+      "tags": [
+        "排序功能",
+        "多级排序"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.240Z",
+      "updatedAt": "2026-06-24T11:32:02.460Z"
+    },
+    {
+      "id": "85357517-dcfd-4c9a-a51e-340e60df9b41",
+      "primaryCategoryId": "b6aacd89-cf13-4c8d-ba8b-db9aaa23f7b5",
+      "secondaryCategoryId": "931c59bf-d934-462b-9a85-13f66d05ce1e",
+      "teacherName": "系统导入",
+      "updatedBy": "王老师",
+      "title": "综合实战：构建完整的CRM客户管理系统（已修改）",
+      "description": "综合运用所学知识，构建一个完整的CRM客户管理系统，要求包含：(1)客户信息表（含基础字段和关联字段）；(2)跟进记录表（与客户表双向关联）；(3)销售机会表（含查找引用和统计字段）；(4)至少3种不同类型的视图（表格、看板、仪表盘）；(5)一个自动化工作流提醒机制。",
+      "type": "comprehensive",
+      "difficulty": "hard",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_crm_tables",
+          "score": 25,
+          "action": "verify_multiple_tables",
+          "params": {
+            "tables": [
+              "客户信息表",
+              "跟进记录表",
+              "销售机会表"
+            ],
+            "minCount": 3
+          }
+        },
+        {
+          "id": "check_relations",
+          "score": 25,
+          "action": "verify_table_relations",
+          "params": {
+            "hasLookupField": true,
+            "hasStatisticsField": true,
+            "hasBidirectionalRelation": true
+          }
+        },
+        {
+          "id": "check_views",
+          "score": 25,
+          "action": "verify_view_types",
+          "params": {
+            "minCount": 3,
+            "viewTypes": [
+              "grid",
+              "kanban",
+              "dashboard"
+            ]
+          }
+        },
+        {
+          "id": "check_automation",
+          "score": 25,
+          "action": "verify_automation_exists",
+          "params": {
+            "actionConfigured": true,
+            "triggerConfigured": true,
+            "hasAutomationWorkflow": true
+          }
+        }
+      ],
+      "hints": "建议按以下步骤实施：1)设计和创建各数据表及字段；2)建立表间关联关系；3)创建各类视图；4)配置自动化规则；5)测试完整流程",
+      "analysis": null,
+      "tags": [
+        "综合实战",
+        "CRM系统",
+        "系统集成"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.359Z",
+      "updatedAt": "2026-06-21T09:33:49.982Z"
+    },
+    {
+      "id": "c4cf741c-01de-477b-84a4-01b920582006",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "使用复制字段配置功能快速创建相似字段",
+      "description": "已有\"手机号\"文本字段，使用右键菜单的\"复制字段配置并插入\"功能，在其右侧快速创建\"紧急联系电话\"字段。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_copied_field",
+          "score": 100,
+          "action": "verify_copied_field_config",
+          "params": {
+            "sameType": true,
+            "sourceField": "手机号",
+            "newFieldName": "紧急联系电话"
+          }
+        }
+      ],
+      "hints": "右键点击字段标题，选择'复制字段配置并插入'选项",
+      "analysis": null,
+      "tags": [
+        "字段复制",
+        "快捷操作"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.125Z",
+      "updatedAt": "2026-06-17T13:02:22.125Z"
+    },
+    {
+      "id": "a45dac4a-b870-464c-a02f-7f2dfd23e628",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建联系人字段并理解其用途",
+      "description": "新建一个联系人字段命名为'直属上级'，说明联系人字段的主要用途和特点。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_contact_field",
+          "score": 80,
+          "action": "verify_contact_field",
+          "params": {
+            "type": "contact",
+            "fieldName": "直属上级"
+          }
+        },
+        {
+          "id": "check_understanding",
+          "score": 20,
+          "action": "verify_text_description"
+        }
+      ],
+      "hints": "联系人字段用于关联系统内其他用户，便于协作和权限管理",
+      "analysis": null,
+      "tags": [
+        "联系人字段",
+        "人员管理"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.089Z",
+      "updatedAt": "2026-06-17T13:02:22.089Z"
+    },
+    {
+      "id": "76a7a364-64bd-4fc8-af8b-62b81d504631",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建富文本字段记录详细说明",
+      "description": "新建一个富文本字段命名为'工作经历'，能够支持录入包含格式的长文本内容（如加粗、列表等）。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_rich_text_field",
+          "score": 100,
+          "action": "verify_rich_text_field",
+          "params": {
+            "type": "richText",
+            "fieldName": "工作经历"
+          }
+        }
+      ],
+      "hints": "富文本字段支持文字格式化，适合记录详细描述信息",
+      "analysis": null,
+      "tags": [
+        "富文本字段",
+        "长文本"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.096Z",
+      "updatedAt": "2026-06-17T13:02:22.096Z"
+    },
+    {
+      "id": "702773eb-d7a9-44fc-ac99-37abd2c31cee",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建图片和附件字段",
+      "description": "分别创建'头像'（图片字段）和'证件附件'（附件字段），理解两者的区别和应用场景。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_image_field",
+          "score": 50,
+          "action": "verify_image_field",
+          "params": {
+            "type": "image",
+            "fieldName": "头像"
+          }
+        },
+        {
+          "id": "check_attachment_field",
+          "score": 50,
+          "action": "verify_attachment_field",
+          "params": {
+            "type": "attachment",
+            "fieldName": "证件附件"
+          }
+        }
+      ],
+      "hints": "图片字段主要用于展示图片预览；附件字段可上传各类文件",
+      "analysis": null,
+      "tags": [
+        "图片字段",
+        "附件字段",
+        "文件管理"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.104Z",
+      "updatedAt": "2026-06-17T13:02:22.104Z"
+    },
+    {
+      "id": "5b189803-b0f4-4038-9aa5-4f61c4af933c",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建时间字段并区分与日期字段的差异",
+      "description": "新建一个时间字段命名为'打卡时间'，说明时间字段与日期字段的主要区别。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_time_field",
+          "score": 70,
+          "action": "verify_time_field",
+          "params": {
+            "type": "time",
+            "fieldName": "打卡时间"
+          }
+        },
+        {
+          "id": "check_difference",
+          "score": 30,
+          "action": "verify_text_description"
+        }
+      ],
+      "hints": "时间字段精确到时、分、秒；日期字段只记录年月日",
+      "analysis": null,
+      "tags": [
+        "时间字段",
+        "字段对比"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.111Z",
+      "updatedAt": "2026-06-17T13:02:22.111Z"
+    },
+    {
+      "id": "1274b918-a455-41e3-a03e-29d79ed2c963",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "c3d77234-2a1d-4065-8c10-613fcb462427",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建单向关联字段连接两个数据表",
+      "description": "创建两个数据表：'项目表'和'任务表'。在'任务表'中新建单向关联字段'所属项目'，关联到'项目表'，使用手动选择方式建立关联。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_one_way_relation",
+          "score": 100,
+          "action": "verify_relation_field",
+          "params": {
+            "linkMode": "manual",
+            "fieldName": "所属项目",
+            "sourceTable": "任务表",
+            "targetTable": "项目表",
+            "relationType": "oneWay"
+          }
+        }
+      ],
+      "hints": "单向关联允许A表提取B表数据，但B表不能反向提取A表数据",
+      "analysis": null,
+      "tags": [
+        "单向关联",
+        "跨表关联"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.131Z",
+      "updatedAt": "2026-06-17T13:02:22.131Z"
+    },
+    {
+      "id": "601d94b0-cb34-467e-afb0-ca4aaed0ec6a",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "c3d77234-2a1d-4065-8c10-613fcb462427",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "配置单向关联字段的自动匹配条件",
+      "description": "在'订单表'和'商品表'之间建立单向关联，设置自动匹配条件：当两表的'商品编号'字段值相同时自动建立关联。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_auto_match",
+          "score": 100,
+          "action": "verify_auto_match_condition",
+          "params": {
+            "condition": {
+              "operator": "=",
+              "sourceField": "商品编号",
+              "targetField": "商品编号"
+            },
+            "relationField": "商品关联"
+          }
+        }
+      ],
+      "hints": "自动匹配最多可设置3个匹配条件；若匹配结果不唯一会显示多条记录",
+      "analysis": null,
+      "tags": [
+        "自动匹配",
+        "关联条件"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.138Z",
+      "updatedAt": "2026-06-17T13:02:22.138Z"
+    },
+    {
+      "id": "c63b0e10-b8b4-4134-96f6-6104a37ff016",
+      "primaryCategoryId": "918f5054-be1b-43d8-8124-864e6dc769e2",
+      "secondaryCategoryId": "f3f1730c-9dfd-49e0-a5cb-15f02ef8e0a8",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建空白多维表格并认识基本界面结构",
+      "description": "请创建一个新的空白多维表格，并能够正确识别和描述多维表格界面的五个核心区域：左侧导航面板、顶部菜单栏、数据表字段区、数据记录区域、底部状态栏。",
+      "type": "create_table",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_table_created",
+          "score": 30,
+          "action": "verify_table_exists",
+          "params": true
+        },
+        {
+          "id": "check_interface_regions",
+          "score": 70,
+          "action": "verify_interface_elements",
+          "params": {
+            "topMenu": true,
+            "dataArea": true,
+            "fieldArea": true,
+            "leftPanel": true,
+            "statusBar": true
+          }
+        }
+      ],
+      "hints": "从WPS主界面点击'新建'→'应用服务'→'多维表格'→'空白多维表格'",
+      "analysis": null,
+      "tags": [
+        "基础操作",
+        "界面认知",
+        "入门"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.003Z",
+      "updatedAt": "2026-06-17T13:02:22.003Z"
+    },
+    {
+      "id": "ac4fdb13-ee2f-41b4-860f-392e0fb01b55",
+      "primaryCategoryId": "918f5054-be1b-43d8-8124-864e6dc769e2",
+      "secondaryCategoryId": "11f3d44d-87fa-40d7-8c63-b0a654f2cfff",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "在左侧导航面板中创建新的数据表",
+      "description": "在已创建的多维表格中，通过左侧导航面板的'+'按钮创建一个新的数据表，命名为'员工信息表'。",
+      "type": "create_table",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_table_name",
+          "score": 100,
+          "action": "verify_table_name",
+          "params": "员工信息表"
+        }
+      ],
+      "hints": "点击左侧导航面板下方的'+'号，选择'数据表'选项",
+      "analysis": null,
+      "tags": [
+        "数据表创建",
+        "左侧导航"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.017Z",
+      "updatedAt": "2026-06-17T13:02:22.017Z"
+    },
+    {
+      "id": "f6fb0e54-8533-48cc-8d93-d1d57eee817e",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "使用两种方式新建文本字段",
+      "description": "在数据表中使用两种不同的方式新建文本字段：方式一：点击表头右侧的'+'按钮；方式二：选中列后右键点击。将字段命名为'姓名'。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_field_exists",
+          "score": 100,
+          "action": "verify_field_exists",
+          "params": {
+            "fieldName": "姓名",
+            "fieldType": "text"
+          }
+        }
+      ],
+      "hints": "方式一：点击表头最右侧的'+'号；方式二：右键点击现有字段标题",
+      "analysis": null,
+      "tags": [
+        "文本字段",
+        "字段创建",
+        "多种方式"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.026Z",
+      "updatedAt": "2026-06-17T13:02:22.026Z"
+    },
+    {
+      "id": "2edce297-a2e9-4539-a03c-dd76274a0651",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建数字字段并设置小数位数格式",
+      "description": "新建一个数字字段命名为'月薪'，并设置数字格式为保留2位小数。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_field_type",
+          "score": 100,
+          "action": "verify_field_type",
+          "params": {
+            "type": "number",
+            "fieldName": "月薪",
+            "decimalPlaces": 2
+          }
+        }
+      ],
+      "hints": "新建数字字段后，在字段设置页面找到数字格式选项，设置精确到小数点后2位",
+      "analysis": null,
+      "tags": [
+        "数字字段",
+        "格式设置"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.035Z",
+      "updatedAt": "2026-06-17T13:02:22.035Z"
+    },
+    {
+      "id": "8864ea2d-8352-4858-91bd-8fa2ed27c9bd",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建单选项字段并添加选项值",
+      "description": "新建一个单选项字段命名为'部门'，并添加以下选项值：'技术部'、'市场部'、'财务部'、'人事部'。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_single_select",
+          "score": 100,
+          "action": "verify_single_select_options",
+          "params": {
+            "options": [
+              "技术部",
+              "市场部",
+              "财务部",
+              "人事部"
+            ],
+            "fieldName": "部门"
+          }
+        }
+      ],
+      "hints": "选择单选项字段类型后，在字段设置界面逐个输入选项值",
+      "analysis": null,
+      "tags": [
+        "单选项字段",
+        "选项配置"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.044Z",
+      "updatedAt": "2026-06-17T13:02:22.044Z"
+    },
+    {
+      "id": "c296fd99-22e1-49f0-a5bd-f1028cc1f172",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建日期字段并设置日期格式",
+      "description": "新建一个日期字段命名为'入职日期'，日期格式设置为'年-月-日'（如：2024-01-15）。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_date_field",
+          "score": 100,
+          "action": "verify_date_format",
+          "params": {
+            "format": "YYYY-MM-DD",
+            "fieldName": "入职日期"
+          }
+        }
+      ],
+      "hints": "选择日期字段后，可在字段设置中选择显示格式",
+      "analysis": null,
+      "tags": [
+        "日期字段",
+        "日期格式"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.053Z",
+      "updatedAt": "2026-06-17T13:02:22.053Z"
+    },
+    {
+      "id": "bad1b60c-8007-45e2-abbc-7fc555a17984",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "为文本字段设置默认值",
+      "description": "对'姓名'字段设置默认值为'待填写'，使得新增记录时该字段自动填充此值。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_default_value",
+          "score": 100,
+          "action": "verify_default_value",
+          "params": {
+            "fieldName": "姓名",
+            "defaultValue": "待填写"
+          }
+        }
+      ],
+      "hints": "打开字段设置页面，找到'默认值'设置栏进行配置",
+      "analysis": null,
+      "tags": [
+        "默认值",
+        "字段属性"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.062Z",
+      "updatedAt": "2026-06-17T13:02:22.062Z"
+    },
+    {
+      "id": "c8c42747-1ba9-4520-adbb-2a59d915ee77",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "设置字段的禁止录入重复值功能",
+      "description": "新建一个'工号'文本字段，并开启'禁止录入重复值'功能，确保每个员工的工号唯一。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_unique_constraint",
+          "score": 100,
+          "action": "verify_unique_constraint",
+          "params": {
+            "fieldName": "工号",
+            "uniqueEnabled": true
+          }
+        }
+      ],
+      "hints": "注意：同一表格只能有一个字段设置禁止重复值；且该字段下不能有已存在的重复数据",
+      "analysis": null,
+      "tags": [
+        "唯一约束",
+        "重复值限制"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.072Z",
+      "updatedAt": "2026-06-17T13:02:22.072Z"
+    },
+    {
+      "id": "90eecd31-657f-4b78-8350-83b407aa14d4",
+      "primaryCategoryId": "0789ac9a-f339-4a28-ac34-c697253f29df",
+      "secondaryCategoryId": "36783a8e-2a77-40c2-8e56-f7f36d028e77",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建多选项字段用于技能标签",
+      "description": "新建一个多选项字段命名为'技能标签'，添加选项：'Python'、'Java'、'JavaScript'、'SQL'、'Excel'，允许选择多个选项。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_multi_select",
+          "score": 100,
+          "action": "verify_multi_select_options",
+          "params": {
+            "options": [
+              "Python",
+              "Java",
+              "JavaScript",
+              "SQL",
+              "Excel"
+            ],
+            "fieldName": "技能标签",
+            "allowMultiple": true
+          }
+        }
+      ],
+      "hints": "多选项字段与单选项类似，但允许同时勾选多个值",
+      "analysis": null,
+      "tags": [
+        "多选项字段",
+        "标签管理"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.081Z",
+      "updatedAt": "2026-06-17T13:02:22.081Z"
+    },
+    {
+      "id": "12e94f1e-2767-457e-87d1-7c6c2ab1b334",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "b9dc514d-eaaf-461c-b17f-8be6d8c408ad",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建双向关联字段实现表间互查",
+      "description": "在'学生表'和'课程表'之间创建双向关联字段，使得从任一表都能查看和选择另一表的关联记录。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_two_way_relation",
+          "score": 100,
+          "action": "verify_two_way_relation",
+          "params": {
+            "tableA": "学生表",
+            "tableB": "课程表",
+            "bidirectional": true,
+            "bothTablesHaveRelationField": true
+          }
+        }
+      ],
+      "hints": "双向关联插入后，A表和B表都会生成关联字段，双方可以互相访问对方数据",
+      "analysis": null,
+      "tags": [
+        "双向关联",
+        "互相关联"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.145Z",
+      "updatedAt": "2026-06-17T13:02:22.145Z"
+    },
+    {
+      "id": "a53b1c54-c444-4ce0-9c9c-bc9f69a0f892",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "c3d77234-2a1d-4065-8c10-613fcb462427",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "设置关联字段允许多条记录关联",
+      "description": "在单向关联或双向关联字段设置中，开启'允许关联多条记录'开关，使一个任务可以关联多个负责人。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_multi_record_link",
+          "score": 100,
+          "action": "verify_multi_record_setting",
+          "params": {
+            "fieldName": "负责人",
+            "allowMultipleRecords": true
+          }
+        }
+      ],
+      "hints": "在关联字段设置界面找到'允许关联多条记录'开关并开启",
+      "analysis": null,
+      "tags": [
+        "多记录关联",
+        "一对多关系"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.153Z",
+      "updatedAt": "2026-06-17T13:02:22.153Z"
+    },
+    {
+      "id": "67abe80b-c990-4492-8034-140e94d611aa",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "282cd633-b870-4457-a722-6dbc503decd5",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建引用字段显示关联表的具体字段值",
+      "description": "在已有单向关联字段的基础上，创建引用字段来显示关联表中'单价'字段的具体数值，而非仅显示关联记录名称。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_reference_field",
+          "score": 100,
+          "action": "verify_reference_field",
+          "params": {
+            "type": "reference",
+            "fieldName": "引用单价",
+            "displayedField": "单价",
+            "sourceRelationField": "exists"
+          }
+        }
+      ],
+      "hints": "引用字段必须依赖已有的关联字段才能创建；先有关联，再有引用",
+      "analysis": null,
+      "tags": [
+        "引用字段",
+        "跨表数据显示"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.163Z",
+      "updatedAt": "2026-06-17T13:02:22.163Z"
+    },
+    {
+      "id": "dc6e272e-c34c-4b5c-854f-d83db5734932",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "282cd633-b870-4457-a722-6dbc503decd5",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "使用查找引用字段实现跨表数据同步",
+      "description": "在'销售明细表'中创建查找引用字段，根据'产品编号'从'产品主数据表'同步'产品名称'和'规格型号'两个字段的值。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_lookup_field",
+          "score": 100,
+          "action": "verify_lookup_field",
+          "params": {
+            "fieldName": "查找引用",
+            "returnedFields": [
+              "产品名称",
+              "规格型号"
+            ],
+            "lookupConditions": [
+              {
+                "matchField": "产品编号",
+                "sourceTable": "产品主数据表"
+              }
+            ]
+          }
+        }
+      ],
+      "hints": "查找引用类似于Excel的VLOOKUP/XLOOKUP函数，可实现跨表数据自动同步",
+      "analysis": null,
+      "tags": [
+        "查找引用",
+        "VLOOKUP替代"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.173Z",
+      "updatedAt": "2026-06-17T13:02:22.173Z"
+    },
+    {
+      "id": "f5128eb5-83b9-4ad6-b08d-8162ee85789b",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "282cd633-b870-4457-a722-6dbc503decd5",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建统计字段实现求和汇总",
+      "description": "在'销售报表'中创建统计字段'总销售额'，通过关联字段统计各销售员的销售额总和。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_statistics_sum",
+          "score": 100,
+          "action": "verify_statistics_field",
+          "params": {
+            "groupBy": "销售员",
+            "fieldName": "总销售额",
+            "statisticsType": "sum",
+            "aggregatedField": "销售额"
+          }
+        }
+      ],
+      "hints": "统计字段可替代SUMIFS函数，支持按条件进行聚合计算",
+      "analysis": null,
+      "tags": [
+        "统计字段",
+        "求和汇总"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.178Z",
+      "updatedAt": "2026-06-17T13:02:22.178Z"
+    },
+    {
+      "id": "b2f89724-5261-4f23-a5d3-4793b355aaec",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "282cd633-b870-4457-a722-6dbc503decd5",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建统计字段实现计数功能",
+      "description": "创建统计字段'任务数量'，统计每个项目负责人名下的任务总数（使用计数统计方式）。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_statistics_count",
+          "score": 100,
+          "action": "verify_statistics_field",
+          "params": {
+            "groupBy": "项目负责人",
+            "fieldName": "任务数量",
+            "statisticsType": "count"
+          }
+        }
+      ],
+      "hints": "计数统计可用于统计关联记录的数量，类似COUNTIFS函数",
+      "analysis": null,
+      "tags": [
+        "统计字段",
+        "计数"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.184Z",
+      "updatedAt": "2026-06-17T13:02:22.184Z"
+    },
+    {
+      "id": "e86d7342-e33f-4f96-bc99-6f3233c7b584",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "282cd633-b870-4457-a722-6dbc503decd5",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "配置多条件统计字段",
+      "description": "创建统计字段'高优先级任务数'，设置多条件统计：统计状态为'进行中'且优先级为'高'的任务数量。",
+      "type": "add_field",
+      "difficulty": "hard",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_multi_condition_stats",
+          "score": 100,
+          "action": "verify_multi_condition_statistics",
+          "params": {
+            "fieldName": "高优先级任务数",
+            "conditions": [
+              {
+                "field": "状态",
+                "value": "进行中"
+              },
+              {
+                "field": "优先级",
+                "value": "高"
+              }
+            ],
+            "statisticsType": "count"
+          }
+        }
+      ],
+      "hints": "在统计条件中添加多个条件，可选择'满足所有条件'或'满足任一条件'",
+      "analysis": null,
+      "tags": [
+        "多条件统计",
+        "复杂聚合"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.192Z",
+      "updatedAt": "2026-06-17T13:02:22.192Z"
+    },
+    {
+      "id": "f2178910-1853-41eb-8cd7-65ad7544110d",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "37465997-f270-42c7-8264-5d342eee8346",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建编号字段实现自动编号",
+      "description": "新建编号字段'订单编号'，设置为自动递增格式，前缀为'ORD-'，起始值为001。",
+      "type": "add_field",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_auto_number",
+          "score": 100,
+          "action": "verify_auto_number_field",
+          "params": {
+            "prefix": "ORD-",
+            "fieldName": "订单编号",
+            "startValue": 1,
+            "autoIncrement": true
+          }
+        }
+      ],
+      "hints": "编号字段常用于生成唯一标识符，如订单号、工单号等",
+      "analysis": null,
+      "tags": [
+        "编号字段",
+        "自动编号"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.198Z",
+      "updatedAt": "2026-06-17T13:02:22.198Z"
+    },
+    {
+      "id": "d2b9e41c-4e71-4285-a3f1-4c3e95de3f81",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "37465997-f270-42c7-8264-5d342eee8346",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建创建人和最后修改人字段",
+      "description": "在数据表中分别添加'创建人'和'最后修改人'字段，说明这两个系统字段的自动填充机制。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_creator_field",
+          "score": 50,
+          "action": "verify_system_field",
+          "params": {
+            "type": "createdBy",
+            "autoFill": true,
+            "fieldName": "创建人"
+          }
+        },
+        {
+          "id": "check_modifier_field",
+          "score": 50,
+          "action": "verify_system_field",
+          "params": {
+            "type": "lastModifiedBy",
+            "autoFill": true,
+            "fieldName": "最后修改人"
+          }
+        }
+      ],
+      "hints": "创建人和最后修改人是系统自动维护的字段，无需手动填写",
+      "analysis": null,
+      "tags": [
+        "系统字段",
+        "操作留痕"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.204Z",
+      "updatedAt": "2026-06-17T13:02:22.204Z"
+    },
+    {
+      "id": "2cee0264-2a99-49e0-9f31-721e919f830e",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "37465997-f270-42c7-8264-5d342eee8346",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建创建时间和最后修改时间字段",
+      "description": "添加'创建时间'和'最后修改时间'字段，验证这两类时间戳字段的自动更新特性。",
+      "type": "add_field",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_created_time",
+          "score": 50,
+          "action": "verify_system_field",
+          "params": {
+            "type": "createdAt",
+            "fieldName": "创建时间",
+            "autoUpdate": false
+          }
+        },
+        {
+          "id": "check_modified_time",
+          "score": 50,
+          "action": "verify_system_field",
+          "params": {
+            "type": "lastModifiedAt",
+            "fieldName": "最后修改时间",
+            "autoUpdate": true
+          }
+        }
+      ],
+      "hints": "创建时间在记录首次创建时固定不变；最后修改时间随每次编辑自动更新",
+      "analysis": null,
+      "tags": [
+        "时间戳字段",
+        "操作留痕"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.210Z",
+      "updatedAt": "2026-06-17T13:02:22.210Z"
+    },
+    {
+      "id": "a4be073b-bd05-4dbb-9b96-7097874aa5d7",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "b7463ab1-5991-48df-bfe8-7c932972ec6a",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建表格视图并配置基本显示",
+      "description": "为数据表创建一个新的表格视图，命名为'员工总览'，配置显示字段包括：姓名、部门、职位、入职日期。",
+      "type": "config_view",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_grid_view",
+          "score": 100,
+          "action": "verify_view_configuration",
+          "params": {
+            "viewName": "员工总览",
+            "viewType": "grid",
+            "visibleFields": [
+              "姓名",
+              "部门",
+              "职位",
+              "入职日期"
+            ]
+          }
+        }
+      ],
+      "hints": "点击左侧数据表旁的'+'号新建视图，选择'表格'类型",
+      "analysis": null,
+      "tags": [
+        "表格视图",
+        "字段显示"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.217Z",
+      "updatedAt": "2026-06-17T13:02:22.217Z"
+    },
+    {
+      "id": "024dcff6-de65-4774-a29b-ecad6192667b",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "a3aadb34-9904-4965-99dd-f1d4c47c6e78",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "在表格视图中设置筛选条件",
+      "description": "在'员工总览'视图中添加筛选条件：只显示'部门'等于'技术部'的记录。",
+      "type": "config_view",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_filter_condition",
+          "score": 100,
+          "action": "verify_filter",
+          "params": {
+            "value": "技术部",
+            "operator": "equals",
+            "viewName": "员工总览",
+            "filterField": "部门"
+          }
+        }
+      ],
+      "hints": "点击工具栏中的筛选图标，添加筛选条件",
+      "analysis": null,
+      "tags": [
+        "筛选功能",
+        "数据过滤"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.224Z",
+      "updatedAt": "2026-06-17T13:02:22.224Z"
+    },
+    {
+      "id": "6340c36e-c567-4790-9eea-b6daded308e2",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "a3aadb34-9904-4965-99dd-f1d4c47c6e78",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "配置多条件组合筛选",
+      "description": "创建筛选视图'高薪技术员工'，设置组合筛选条件：部门='技术部' 且 月薪>=15000。",
+      "type": "config_view",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_combined_filter",
+          "score": 100,
+          "action": "verify_combined_filter",
+          "params": {
+            "logic": "AND",
+            "viewName": "高薪技术员工",
+            "conditions": [
+              {
+                "field": "部门",
+                "value": "技术部",
+                "operator": "="
+              },
+              {
+                "field": "月薪",
+                "value": 15000,
+                "operator": ">="
+              }
+            ]
+          }
+        }
+      ],
+      "hints": "可添加多个筛选条件，选择'满足所有条件'(AND)或'满足任一条件'(OR)",
+      "analysis": null,
+      "tags": [
+        "多条件筛选",
+        "组合过滤"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.233Z",
+      "updatedAt": "2026-06-17T13:02:22.233Z"
+    },
+    {
+      "id": "f9e4c873-28db-4b68-918a-2791caca8e6c",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "a3aadb34-9904-4965-99dd-f1d4c47c6e78",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建分组视图按部门归类显示",
+      "description": "新建分组视图，按'部门'字段进行分组，使同一部门的员工记录归组显示。",
+      "type": "config_view",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_group_view",
+          "score": 100,
+          "action": "verify_group_view",
+          "params": {
+            "viewType": "grouped",
+            "groupByField": "部门"
+          }
+        }
+      ],
+      "hints": "分组视图可将相同字段值的记录归类在一起，便于分类查看",
+      "analysis": null,
+      "tags": [
+        "分组视图",
+        "数据归类"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.246Z",
+      "updatedAt": "2026-06-17T13:02:22.246Z"
+    },
+    {
+      "id": "ec998b31-d5ca-4a4b-82cc-da4a59ffdf4f",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "b7463ab1-5991-48df-bfe8-7c932972ec6a",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "隐藏和显示视图中的特定字段",
+      "description": "在当前视图中隐藏'工号'和'身份证号'等敏感字段，只保留必要的业务字段显示。",
+      "type": "config_view",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_hidden_fields",
+          "score": 100,
+          "action": "verify_field_visibility",
+          "params": {
+            "hiddenFields": [
+              "工号",
+              "身份证号"
+            ],
+            "visibleFields": "others"
+          }
+        }
+      ],
+      "hints": "点击字段标题右侧的眼睛图标可切换字段的显示/隐藏状态",
+      "analysis": null,
+      "tags": [
+        "字段隐藏",
+        "视图定制"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.252Z",
+      "updatedAt": "2026-06-17T13:02:22.252Z"
+    },
+    {
+      "id": "16a65da9-927c-422a-b0db-a9285ec0681b",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "28013685-16ce-4298-a128-c0ce0d3d3efa",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建看板视图管理任务状态",
+      "description": "为任务管理表创建看板视图，按'任务状态'字段（待办/进行中/已完成）分列显示，实现任务的可视化管理。",
+      "type": "config_view",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_kanban_view",
+          "score": 100,
+          "action": "verify_kanban_view",
+          "params": {
+            "columns": [
+              "待办",
+              "进行中",
+              "已完成"
+            ],
+            "viewType": "kanban",
+            "groupByField": "任务状态"
+          }
+        }
+      ],
+      "hints": "看板视图适合管理具有状态流转的数据，如任务、订单等",
+      "analysis": null,
+      "tags": [
+        "看板视图",
+        "任务管理"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.257Z",
+      "updatedAt": "2026-06-17T13:02:22.257Z"
+    },
+    {
+      "id": "7f6911cb-27da-4ff4-8c74-bcfe6baa860c",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "28013685-16ce-4298-a128-c0ce0d3d3efa",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "在看板视图中拖拽卡片改变状态",
+      "description": "在看板视图中，将一张任务卡片从'待办'列拖拽到'进行中'列，验证状态字段的自动更新。",
+      "type": "config_view",
+      "difficulty": "easy",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_drag_update",
+          "score": 100,
+          "action": "verify_kanban_drag_operation",
+          "params": {
+            "newValue": "进行中",
+            "toColumn": "进行中",
+            "fromColumn": "待办",
+            "fieldUpdated": "任务状态"
+          }
+        }
+      ],
+      "hints": "看板视图支持拖拽操作，可直接改变记录的状态字段值",
+      "analysis": null,
+      "tags": [
+        "看板拖拽",
+        "状态更新"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.263Z",
+      "updatedAt": "2026-06-17T13:02:22.263Z"
+    },
+    {
+      "id": "a33c0f11-9b32-47b9-b1f8-6cad3c36dd9b",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "28013685-16ce-4298-a128-c0ce0d3d3efa",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "配置看板视图的字段卡片显示内容",
+      "description": "在看板视图中配置每张卡片显示的内容：标题显示'任务名称'，副标题显示'负责人'，底部显示'截止日期'。",
+      "type": "config_view",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_card_display",
+          "score": 100,
+          "action": "verify_kanban_card_config",
+          "params": {
+            "titleField": "任务名称",
+            "bottomField": "截止日期",
+            "subtitleField": "负责人"
+          }
+        }
+      ],
+      "hints": "进入看板视图设置，可自定义卡片各区域显示的字段内容",
+      "analysis": null,
+      "tags": [
+        "看板配置",
+        "卡片自定义"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.269Z",
+      "updatedAt": "2026-06-17T13:02:22.269Z"
+    },
+    {
+      "id": "a291bae7-60f0-4120-af80-bb72531d8c8d",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "fadb55e8-c516-4446-b8e6-798a8399bece",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建仪表盘并添加柱状图",
+      "description": "新建仪表盘，添加柱状图展示各部门人数统计，横轴为'部门'，纵轴为'记录数'。",
+      "type": "comprehensive",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_dashboard_chart",
+          "score": 100,
+          "action": "verify_dashboard_chart",
+          "params": {
+            "xAxis": "部门",
+            "yAxis": "count",
+            "chartType": "bar",
+            "dataSource": "employeeTable"
+          }
+        }
+      ],
+      "hints": "仪表盘是数据可视化工具，支持柱状图、折线图、饼状图等多种图表类型",
+      "analysis": null,
+      "tags": [
+        "仪表盘",
+        "柱状图",
+        "数据可视化"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.275Z",
+      "updatedAt": "2026-06-17T13:02:22.275Z"
+    },
+    {
+      "id": "fbc4e2d2-847f-4d5b-8ea2-56e5ad918e3b",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "fadb55e8-c516-4446-b8e6-798a8399bece",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "在仪表盘中配置折线图展示趋势",
+      "description": "在仪表盘中添加折线图，展示近12个月的销售额变化趋势，横轴为月份，纵轴为销售额总和。",
+      "type": "comprehensive",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_line_chart",
+          "score": 100,
+          "action": "verify_line_chart",
+          "params": {
+            "xAxis": "month",
+            "yAxis": "sum(销售额)",
+            "chartType": "line",
+            "timeRange": "12months"
+          }
+        }
+      ],
+      "hints": "折线图适合展示数据随时间的变化趋势",
+      "analysis": null,
+      "tags": [
+        "折线图",
+        "趋势分析"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.281Z",
+      "updatedAt": "2026-06-17T13:02:22.281Z"
+    },
+    {
+      "id": "60263fae-8551-4184-985c-3a02abbde0f8",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "fadb55e8-c516-4446-b8e6-798a8399bece",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "配置饼状图显示占比分布",
+      "description": "在仪表盘中创建饼状图，展示不同产品类别占总销售额的比例分布。",
+      "type": "comprehensive",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_pie_chart",
+          "score": 100,
+          "action": "verify_pie_chart",
+          "params": {
+            "chartType": "pie",
+            "valueField": "销售额",
+            "categoryField": "产品类别",
+            "showPercentage": true
+          }
+        }
+      ],
+      "hints": "饼状图直观展示各部分占整体的比例关系",
+      "analysis": null,
+      "tags": [
+        "饼状图",
+        "占比分析"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.287Z",
+      "updatedAt": "2026-06-17T13:02:22.287Z"
+    },
+    {
+      "id": "9ca83f52-e457-4c4e-bc36-cc715fa42ab2",
+      "primaryCategoryId": "ec02e223-3596-4095-acd0-dbb833fc1c00",
+      "secondaryCategoryId": "c32427a5-2894-4578-abc1-c855bfca0247",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建自动化工作流实现消息通知",
+      "description": "创建自动化工作流：当'任务状态'字段变为'已完成'时，自动发送通知给任务创建人。",
+      "type": "comprehensive",
+      "difficulty": "hard",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_automation_workflow",
+          "score": 100,
+          "action": "verify_automation_workflow",
+          "params": {
+            "action": {
+              "type": "sendNotification",
+              "recipient": "taskCreator"
+            },
+            "trigger": {
+              "type": "fieldChanged",
+              "field": "任务状态",
+              "toValue": "已完成"
+            }
+          }
+        }
+      ],
+      "hints": "工作流入口在右上角闪电图标(⚡)处，支持触发器+动作的配置模式",
+      "analysis": null,
+      "tags": [
+        "自动化工作流",
+        "消息通知"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.293Z",
+      "updatedAt": "2026-06-17T13:02:22.293Z"
+    },
+    {
+      "id": "44fa6835-15ba-4324-958f-37992f6fc5ec",
+      "primaryCategoryId": "ec02e223-3596-4095-acd0-dbb833fc1c00",
+      "secondaryCategoryId": "ee71c28b-916e-4e6c-a6a3-1ac291d3cce7",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "使用AI助手自然语言创建表格",
+      "description": "使用WPS多维表格AI助手，通过自然语言描述创建一个'客户跟进管理表'，包含客户名称、联系方式、跟进阶段、下次跟进日期、备注等字段。",
+      "type": "create_table",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_ai_generated_table",
+          "score": 100,
+          "action": "verify_ai_table_creation",
+          "params": {
+            "tableName": "客户跟进管理表",
+            "requiredFields": [
+              "客户名称",
+              "联系方式",
+              "跟进阶段",
+              "下次跟进日期",
+              "备注"
+            ],
+            "usedNaturalLanguage": true
+          }
+        }
+      ],
+      "hints": "打开多维表格后找到AI助手入口，用自然语言描述需求即可自动生成表结构",
+      "analysis": null,
+      "tags": [
+        "AI建表",
+        "自然语言"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.306Z",
+      "updatedAt": "2026-06-17T13:02:22.306Z"
+    },
+    {
+      "id": "3d0f12ba-5e20-4097-8ae6-ba3e1895d483",
+      "primaryCategoryId": "ec02e223-3596-4095-acd0-dbb833fc1c00",
+      "secondaryCategoryId": "ee71c28b-916e-4e6c-a6a3-1ac291d3cce7",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "配置AI智能分类字段",
+      "description": "为'客户反馈'字段启用AI智能分类能力，自动将反馈内容分类为'好评'、'差评'、'建议'三类。",
+      "type": "add_field",
+      "difficulty": "hard",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_ai_classification",
+          "score": 100,
+          "action": "verify_ai_field_config",
+          "params": {
+            "fieldName": "客户反馈",
+            "categories": [
+              "好评",
+              "差评",
+              "建议"
+            ],
+            "aiCapability": "classification",
+            "autoClassify": true
+          }
+        }
+      ],
+      "hints": "选中目标字段→点击'AI增强'→选择'智能分类'→配置分类规则",
+      "analysis": null,
+      "tags": [
+        "AI分类",
+        "智能字段"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.312Z",
+      "updatedAt": "2026-06-17T13:02:22.312Z"
+    },
+    {
+      "id": "38391e1e-85a7-4101-a8bd-a64466e085f9",
+      "primaryCategoryId": "ec02e223-3596-4095-acd0-dbb833fc1c00",
+      "secondaryCategoryId": "ee71c28b-916e-4e6c-a6a3-1ac291d3cce7",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "使用AI拍照识别功能录入数据",
+      "description": "使用多维表格的AI拍照识别功能，拍摄一张纸质表单图片，将识别结果映射到对应字段并保存。",
+      "type": "comprehensive",
+      "difficulty": "hard",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_ocr_data_entry",
+          "score": 100,
+          "action": "verify_ocr_functionality",
+          "params": {
+            "dataSaved": true,
+            "usedCameraOrImage": true,
+            "dataMappedToFields": true
+          }
+        }
+      ],
+      "hints": "点击'拍照录入'或上传图片按钮，AI会识别图片中的表格/表单内容",
+      "analysis": null,
+      "tags": [
+        "OCR识别",
+        "拍照录入"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.318Z",
+      "updatedAt": "2026-06-17T13:02:22.318Z"
+    },
+    {
+      "id": "76822fcf-3f92-4ccc-b885-8e9dc6206e1e",
+      "primaryCategoryId": "26295ccc-f633-4818-9677-3da693ec37db",
+      "secondaryCategoryId": "b9dc514d-eaaf-461c-b17f-8be6d8c408ad",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "设置父子任务记录关系",
+      "description": "在项目管理表中，通过关联字段和公式字段实现父子任务的层级关系：父任务可展开查看所有子任务，子任务自动关联到对应的父任务。",
+      "type": "comprehensive",
+      "difficulty": "hard",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_parent_child_relation",
+          "score": 100,
+          "action": "verify_hierarchy_structure",
+          "params": {
+            "childField": "子任务列表",
+            "parentField": "父任务",
+            "selfReference": true,
+            "hierarchyLevel": 2
+          }
+        }
+      ],
+      "hints": "使用自引用关联（表关联自身）结合统计字段实现层级结构",
+      "analysis": null,
+      "tags": [
+        "父子任务",
+        "层级结构",
+        "自引用"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.324Z",
+      "updatedAt": "2026-06-17T13:02:22.324Z"
+    },
+    {
+      "id": "d14c6cd7-53ca-400b-b7df-5cfab449238b",
+      "primaryCategoryId": "de72da4d-5982-4511-9cbb-fc1bf5cb7158",
+      "secondaryCategoryId": "b7463ab1-5991-48df-bfe8-7c932972ec6a",
+      "teacherName": "系统导入",
+      "updatedBy": null,
+      "title": "创建表单视图用于移动端数据采集",
+      "description": "为'设备巡检表'创建表单视图，配置必填字段和字段顺序，使其适合在手机端进行日常巡检数据录入。",
+      "type": "create_form",
+      "difficulty": "medium",
+      "score": 10,
+      "answerRules": [
+        {
+          "id": "check_form_view",
+          "score": 100,
+          "action": "verify_form_view",
+          "params": {
+            "viewType": "form",
+            "mobileFriendly": true,
+            "requiredFields": [
+              "设备编号",
+              "巡检人",
+              "巡检日期",
+              "检查结果"
+            ]
+          }
+        }
+      ],
+      "hints": "表单视图专为移动端设计，可设置字段是否必填和显示顺序",
+      "analysis": null,
+      "tags": [
+        "表单视图",
+        "移动端",
+        "数据采集"
+      ],
+      "status": "published",
+      "createdBy": null,
+      "createdAt": "2026-06-17T13:02:22.330Z",
+      "updatedAt": "2026-06-17T13:02:22.330Z"
+    }
+  ],
+  "paper": [
+    {
+      "id": "dac647c6-7611-479a-bcc1-5a46f6ea7b0c",
+      "name": "测试",
+      "description": "一个测试",
+      "source": "local",
+      "difficulty": "easy",
+      "passScore": null,
+      "totalScore": 50,
+      "createdBy": "d6fa2015-87ed-41e8-902f-2fa83a9e4dfe",
+      "createdAt": "2026-06-22T14:08:18.033Z",
+      "updatedAt": "2026-06-22T14:08:18.089Z"
+    }
+  ],
+  "paperQuestion": [
+    {
+      "id": "2ace0bc3-941b-41fc-a0f8-2cae48114c61",
+      "paperId": "dac647c6-7611-479a-bcc1-5a46f6ea7b0c",
+      "questionId": "21162ee2-8ab4-4f89-9f10-8cb5afa63cfe",
+      "sortOrder": 0,
+      "score": 10
+    },
+    {
+      "id": "d8f830a0-4a19-4303-917b-60c4cf6935f4",
+      "paperId": "dac647c6-7611-479a-bcc1-5a46f6ea7b0c",
+      "questionId": "c4cf741c-01de-477b-84a4-01b920582006",
+      "sortOrder": 1,
+      "score": 10
+    },
+    {
+      "id": "e3ffbfa5-82da-4418-b58e-c505bf7acf13",
+      "paperId": "dac647c6-7611-479a-bcc1-5a46f6ea7b0c",
+      "questionId": "f8ca89d0-e74f-46df-a867-19da7b996acd",
+      "sortOrder": 2,
+      "score": 10
+    },
+    {
+      "id": "375edc0b-3b52-4eb9-87e2-0d241db44c2c",
+      "paperId": "dac647c6-7611-479a-bcc1-5a46f6ea7b0c",
+      "questionId": "5b189803-b0f4-4038-9aa5-4f61c4af933c",
+      "sortOrder": 3,
+      "score": 10
+    },
+    {
+      "id": "e160c0bb-b5b9-4ba0-8af6-cf58ee787c70",
+      "paperId": "dac647c6-7611-479a-bcc1-5a46f6ea7b0c",
+      "questionId": "702773eb-d7a9-44fc-ac99-37abd2c31cee",
+      "sortOrder": 4,
+      "score": 10
+    }
+  ],
+  "examBatch": [
+    {
+      "id": "aab30aa3-7498-4b01-abea-96d5a98510c5",
+      "name": "批次测试",
+      "description": "啦啦啦啦啦",
+      "examMode": "unified",
+      "startTime": "2026-06-21T16:00:00.000Z",
+      "endTime": "2026-06-23T16:00:00.000Z",
+      "examDuration": 60,
+      "waitingTime": 15,
+      "lateTolerance": 20,
+      "ipLimitEnabled": false,
+      "allowedIps": [],
+      "freezeMinutes": 10,
+      "exitPolicy": "finite",
+      "exitMaxCount": 10,
+      "exitMaxMinutes": 20,
+      "rulesContent": null,
+      "rulesReadSeconds": 5,
+      "status": "completed",
+      "settings": {},
+      "createdBy": "d6fa2015-87ed-41e8-902f-2fa83a9e4dfe",
+      "createdAt": "2026-06-22T14:11:22.924Z",
+      "updatedAt": "2026-06-25T09:43:23.443Z"
+    },
+    {
+      "id": "9c1573f3-e5eb-4716-a11f-80526ece8de1",
+      "name": "111",
+      "description": null,
+      "examMode": "unified",
+      "startTime": "2026-07-07T16:00:00.000Z",
+      "endTime": "2026-07-11T16:00:00.000Z",
+      "examDuration": 60,
+      "waitingTime": 15,
+      "lateTolerance": 30,
+      "ipLimitEnabled": false,
+      "allowedIps": [],
+      "freezeMinutes": 30,
+      "exitPolicy": "finite",
+      "exitMaxCount": 10,
+      "exitMaxMinutes": 20,
+      "rulesContent": null,
+      "rulesReadSeconds": 5,
+      "status": "completed",
+      "settings": {},
+      "createdBy": "8e831b91-d6b1-43d0-b78c-0cc347ed4fca",
+      "createdAt": "2026-07-08T11:47:25.777Z",
+      "updatedAt": "2026-07-11T16:00:50.710Z"
+    },
+    {
+      "id": "230529a3-c93b-4b2d-8596-b82d7eb3fb45",
+      "name": "2025.7.21",
+      "description": null,
+      "examMode": "flexible",
+      "startTime": "2026-07-19T19:00:00.000Z",
+      "endTime": "2026-07-30T22:07:00.000Z",
+      "examDuration": 60,
+      "waitingTime": 10,
+      "lateTolerance": 15,
+      "ipLimitEnabled": false,
+      "allowedIps": [],
+      "freezeMinutes": 30,
+      "exitPolicy": "finite",
+      "exitMaxCount": 10,
+      "exitMaxMinutes": 20,
+      "rulesContent": null,
+      "rulesReadSeconds": 15,
+      "status": "completed",
+      "settings": {},
+      "createdBy": "8e831b91-d6b1-43d0-b78c-0cc347ed4fca",
+      "createdAt": "2026-07-21T08:48:37.514Z",
+      "updatedAt": "2026-08-01T10:44:06.596Z"
+    }
+  ],
+  "examRoom": [
+    {
+      "id": "79f36c8f-cc29-42ed-8d9a-5228f638a62e",
+      "code": "W101",
+      "name": "文渊楼101",
+      "capacity": 50,
+      "location": "文渊楼101",
+      "equipment": [],
+      "status": "available",
+      "createdAt": "2026-06-22T14:20:23.846Z",
+      "updatedAt": "2026-06-22T14:20:23.846Z"
+    }
+  ],
+  "exam": [
+    {
+      "id": "e3c906fd-195f-4387-bc49-542c05723c72",
+      "title": "afafafa",
+      "description": null,
+      "mode": "exam",
+      "durationMinutes": 60,
+      "startTime": "2026-06-23T04:00:00.000Z",
+      "endTime": "2026-07-07T11:30:05.129Z",
+      "totalScore": 50,
+      "passScore": null,
+      "status": "ended",
+      "settings": {},
+      "createdBy": "8e831b91-d6b1-43d0-b78c-0cc347ed4fca",
+      "createdAt": "2026-06-23T03:04:13.152Z",
+      "updatedAt": "2026-07-07T11:30:05.328Z",
+      "paperId": "dac647c6-7611-479a-bcc1-5a46f6ea7b0c",
+      "batchId": "aab30aa3-7498-4b01-abea-96d5a98510c5"
+    },
+    {
+      "id": "da8db35d-7a52-4d89-ae98-baaf8b2172a1",
+      "title": "基础考试",
+      "description": null,
+      "mode": "exam",
+      "durationMinutes": 60,
+      "startTime": "2026-07-08T11:51:06.100Z",
+      "endTime": "2026-07-08T12:51:15.260Z",
+      "totalScore": 50,
+      "passScore": null,
+      "status": "ended",
+      "settings": {},
+      "createdBy": "8e831b91-d6b1-43d0-b78c-0cc347ed4fca",
+      "createdAt": "2026-07-08T11:48:15.332Z",
+      "updatedAt": "2026-07-08T12:51:15.262Z",
+      "paperId": "dac647c6-7611-479a-bcc1-5a46f6ea7b0c",
+      "batchId": "9c1573f3-e5eb-4716-a11f-80526ece8de1"
+    }
+  ],
+  "examQuestion": [
+    {
+      "id": "b1120744-0235-493e-aa1f-850591bad189",
+      "examId": "e3c906fd-195f-4387-bc49-542c05723c72",
+      "questionId": "21162ee2-8ab4-4f89-9f10-8cb5afa63cfe",
+      "sortOrder": 0,
+      "scoreOverride": 10
+    },
+    {
+      "id": "17e3369a-e864-4aaf-9b74-0413f1a3433d",
+      "examId": "e3c906fd-195f-4387-bc49-542c05723c72",
+      "questionId": "c4cf741c-01de-477b-84a4-01b920582006",
+      "sortOrder": 1,
+      "scoreOverride": 10
+    },
+    {
+      "id": "d018ceaf-c164-4c3d-81a4-b38317f22a59",
+      "examId": "e3c906fd-195f-4387-bc49-542c05723c72",
+      "questionId": "f8ca89d0-e74f-46df-a867-19da7b996acd",
+      "sortOrder": 2,
+      "scoreOverride": 10
+    },
+    {
+      "id": "ee96a100-7e1a-46af-a973-ceecbfc38585",
+      "examId": "e3c906fd-195f-4387-bc49-542c05723c72",
+      "questionId": "5b189803-b0f4-4038-9aa5-4f61c4af933c",
+      "sortOrder": 3,
+      "scoreOverride": 10
+    },
+    {
+      "id": "1fadfe7b-025d-48f5-8eba-9710cbc00c83",
+      "examId": "e3c906fd-195f-4387-bc49-542c05723c72",
+      "questionId": "702773eb-d7a9-44fc-ac99-37abd2c31cee",
+      "sortOrder": 4,
+      "scoreOverride": 10
+    },
+    {
+      "id": "5e97d95f-9885-42c4-83e4-089b3a38a36d",
+      "examId": "da8db35d-7a52-4d89-ae98-baaf8b2172a1",
+      "questionId": "21162ee2-8ab4-4f89-9f10-8cb5afa63cfe",
+      "sortOrder": 0,
+      "scoreOverride": 10
+    },
+    {
+      "id": "78f29682-876b-42b7-96ad-5b5014344066",
+      "examId": "da8db35d-7a52-4d89-ae98-baaf8b2172a1",
+      "questionId": "c4cf741c-01de-477b-84a4-01b920582006",
+      "sortOrder": 1,
+      "scoreOverride": 10
+    },
+    {
+      "id": "d8ffc66f-a979-4de7-b439-39680fc76131",
+      "examId": "da8db35d-7a52-4d89-ae98-baaf8b2172a1",
+      "questionId": "f8ca89d0-e74f-46df-a867-19da7b996acd",
+      "sortOrder": 2,
+      "scoreOverride": 10
+    },
+    {
+      "id": "bd4ceb10-0256-4826-9c90-8bdd2efbca0c",
+      "examId": "da8db35d-7a52-4d89-ae98-baaf8b2172a1",
+      "questionId": "5b189803-b0f4-4038-9aa5-4f61c4af933c",
+      "sortOrder": 3,
+      "scoreOverride": 10
+    },
+    {
+      "id": "2755a179-2697-476e-810c-6ba485fec207",
+      "examId": "da8db35d-7a52-4d89-ae98-baaf8b2172a1",
+      "questionId": "702773eb-d7a9-44fc-ac99-37abd2c31cee",
+      "sortOrder": 4,
+      "scoreOverride": 10
+    }
+  ],
+  "studentSubmission": [
+    {
+      "id": "60fd8ecd-e975-4a75-9af8-9560a09ce91e",
+      "examId": "e3c906fd-195f-4387-bc49-542c05723c72",
+      "studentId": "3510dcc9-f3c3-4736-b39c-523c071c0f95",
+      "tableSpaceId": null,
+      "status": "graded",
+      "startedAt": "2026-06-23T03:57:05.383Z",
+      "submittedAt": "2026-06-23T04:48:04.393Z",
+      "gradedAt": "2026-07-06T12:24:57.735Z",
+      "totalScore": 45,
+      "graderComment": "",
+      "gradedBy": "8e831b91-d6b1-43d0-b78c-0cc347ed4fca",
+      "createdAt": "2026-06-23T03:57:05.385Z"
+    },
+    {
+      "id": "ce32da28-2625-4f6f-b766-cb4e1df261fe",
+      "examId": "da8db35d-7a52-4d89-ae98-baaf8b2172a1",
+      "studentId": "8e733940-7412-4a3b-8d33-8451aceef87a",
+      "tableSpaceId": "ctgKdawPeGsk:eyJhbGciOiJFUzI1NiIsImtpZCI6IjNiNTkyYWYwLTk5ODktNDRhOC1hMzQ3LTE4Yzc1MDQ4MTlmNCIsInR5cCI6IkpXVCJ9.eyJhaWQiOjE3NDU2MDU3MzAsImF0cCI6InVzZXIiLCJhdHMiOiJiNlh3WVJiIiwiYnVpIjpmYWxzZSwiY2lkIjo2NDAyNDc2MjUsImNsaSI6IkFLMjAyNjA2MTFZU0RPQUUiLCJjb2EiOjAsImV4cCI6MTc4MzUxMjI4NiwianN0IjpmYWxzZSwic3BpIjoxODU3OTM2MjU3fQ.mAZ3VouIK5umzX_ktMa5UknVHwIHfYMzeGeX4xQyMPayChAMhjFO8ihrGM7byw4q_OzQ6RUFaRigUTI48IRw6g",
+      "status": "in_progress",
+      "startedAt": "2026-07-08T11:52:19.025Z",
+      "submittedAt": null,
+      "gradedAt": null,
+      "totalScore": null,
+      "graderComment": null,
+      "gradedBy": null,
+      "createdAt": "2026-07-08T11:52:19.027Z"
+    }
+  ],
+  "submissionDetail": [
+    {
+      "id": "a3d04cbd-cb10-4a82-89e1-3a0abdc5083b",
+      "submissionId": "60fd8ecd-e975-4a75-9af8-9560a09ce91e",
+      "questionId": "21162ee2-8ab4-4f89-9f10-8cb5afa63cfe",
+      "answerJson": {},
+      "score": 5,
+      "isCorrect": false,
+      "createdAt": "2026-06-23T03:57:05.385Z"
+    },
+    {
+      "id": "992e5e08-71cc-4311-9b71-49adba2c3560",
+      "submissionId": "60fd8ecd-e975-4a75-9af8-9560a09ce91e",
+      "questionId": "c4cf741c-01de-477b-84a4-01b920582006",
+      "answerJson": {},
+      "score": 10,
+      "isCorrect": false,
+      "createdAt": "2026-06-23T03:57:05.385Z"
+    },
+    {
+      "id": "d95622da-208b-4ea9-9027-32b7155c77c2",
+      "submissionId": "60fd8ecd-e975-4a75-9af8-9560a09ce91e",
+      "questionId": "5b189803-b0f4-4038-9aa5-4f61c4af933c",
+      "answerJson": {},
+      "score": 10,
+      "isCorrect": false,
+      "createdAt": "2026-06-23T03:57:05.385Z"
+    },
+    {
+      "id": "cbdeef67-0850-4a11-9588-f0966ba36fcb",
+      "submissionId": "60fd8ecd-e975-4a75-9af8-9560a09ce91e",
+      "questionId": "f8ca89d0-e74f-46df-a867-19da7b996acd",
+      "answerJson": {},
+      "score": 10,
+      "isCorrect": false,
+      "createdAt": "2026-06-23T03:57:05.385Z"
+    },
+    {
+      "id": "792b500b-fefe-4006-aaf8-f0cfc9e28b9f",
+      "submissionId": "60fd8ecd-e975-4a75-9af8-9560a09ce91e",
+      "questionId": "702773eb-d7a9-44fc-ac99-37abd2c31cee",
+      "answerJson": {},
+      "score": 10,
+      "isCorrect": false,
+      "createdAt": "2026-06-23T03:57:05.385Z"
+    },
+    {
+      "id": "d48f3c0d-ec81-4d0b-aa8d-72069743094a",
+      "submissionId": "ce32da28-2625-4f6f-b766-cb4e1df261fe",
+      "questionId": "21162ee2-8ab4-4f89-9f10-8cb5afa63cfe",
+      "answerJson": {},
+      "score": null,
+      "isCorrect": null,
+      "createdAt": "2026-07-08T11:52:19.027Z"
+    },
+    {
+      "id": "52799e65-83a7-4f7c-9624-46d5136b5d46",
+      "submissionId": "ce32da28-2625-4f6f-b766-cb4e1df261fe",
+      "questionId": "c4cf741c-01de-477b-84a4-01b920582006",
+      "answerJson": {},
+      "score": null,
+      "isCorrect": null,
+      "createdAt": "2026-07-08T11:52:19.027Z"
+    },
+    {
+      "id": "11d873e4-5b31-4965-b50f-b31fd8b9ed06",
+      "submissionId": "ce32da28-2625-4f6f-b766-cb4e1df261fe",
+      "questionId": "f8ca89d0-e74f-46df-a867-19da7b996acd",
+      "answerJson": {},
+      "score": null,
+      "isCorrect": null,
+      "createdAt": "2026-07-08T11:52:19.027Z"
+    },
+    {
+      "id": "caa9c798-6ab9-40fa-ba22-1f432ca7540d",
+      "submissionId": "ce32da28-2625-4f6f-b766-cb4e1df261fe",
+      "questionId": "5b189803-b0f4-4038-9aa5-4f61c4af933c",
+      "answerJson": {},
+      "score": null,
+      "isCorrect": null,
+      "createdAt": "2026-07-08T11:52:19.027Z"
+    },
+    {
+      "id": "f01fff43-4a69-4912-80fd-bde1c2e73e48",
+      "submissionId": "ce32da28-2625-4f6f-b766-cb4e1df261fe",
+      "questionId": "702773eb-d7a9-44fc-ac99-37abd2c31cee",
+      "answerJson": {},
+      "score": null,
+      "isCorrect": null,
+      "createdAt": "2026-07-08T11:52:19.027Z"
+    }
+  ]
+}

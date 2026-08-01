@@ -154,6 +154,14 @@ accountRouter.post('/', async (req: Request, res: Response) => {
       }
     }
 
+    // ✅ 未指定系统角色时，按 role 自动分配预设角色（TEACHER / ADMIN）
+    let systemRoleId = data.systemRoleId || null;
+    if (!systemRoleId) {
+      const presetRoleCode = data.role === 'admin' ? 'ADMIN' : 'TEACHER';
+      const presetRole = await prisma.systemRole.findUnique({ where: { roleCode: presetRoleCode } });
+      systemRoleId = presetRole?.id || null;
+    }
+
     const passwordHash = await bcrypt.hash(data.password, 10);
     const user = await prisma.user.create({
       data: {
@@ -164,7 +172,7 @@ accountRouter.post('/', async (req: Request, res: Response) => {
         role: data.role,
         gender: data.gender || null,
         remark: data.remark || null,
-        systemRoleId: data.systemRoleId || null,
+        systemRoleId,
       },
       select: {
         id: true,
@@ -268,6 +276,64 @@ accountRouter.delete('/:id', async (req: Request, res: Response) => {
   } catch (err: any) {
     if (err.code === 'P2025') {
       return res.status(404).json({ message: '用户不存在' });
+    }
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// ============================================================
+// GET /api/accounts/:id/classes — 获取教师负责的班级列表
+// ============================================================
+accountRouter.get('/:id/classes', async (req: Request, res: Response) => {
+  try {
+    const teacherClasses = await prisma.teacherClass.findMany({
+      where: { teacherId: req.params.id },
+      include: {
+        classRoom: {
+          select: { id: true, name: true, code: true, departmentId: true, majorId: true },
+        },
+      },
+    });
+    res.json({ data: teacherClasses.map(tc => tc.classRoom) });
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// ============================================================
+// PUT /api/accounts/:id/classes — 更新教师负责的班级（全量覆盖）
+// ============================================================
+const updateClassesSchema = z.object({
+  classIds: z.array(z.string()),
+});
+
+accountRouter.put('/:id/classes', async (req: Request, res: Response) => {
+  try {
+    const { classIds } = updateClassesSchema.parse(req.body);
+
+    // 验证用户存在且为教师
+    const user = await prisma.user.findUnique({ where: { id: req.params.id } });
+    if (!user) {
+      return res.status(404).json({ message: '用户不存在' });
+    }
+    if (user.role !== 'teacher') {
+      return res.status(400).json({ message: '只有教师角色可以分配班级' });
+    }
+
+    // 事务：先删除旧关联，再创建新关联
+    await prisma.$transaction([
+      prisma.teacherClass.deleteMany({ where: { teacherId: req.params.id } }),
+      ...classIds.map(classId =>
+        prisma.teacherClass.create({
+          data: { teacherId: req.params.id, classId },
+        }),
+      ),
+    ]);
+
+    res.json({ message: '班级分配已更新', teacherId: req.params.id, classIds });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ message: '参数错误', errors: err.errors });
     }
     res.status(500).json({ message: '服务器错误' });
   }

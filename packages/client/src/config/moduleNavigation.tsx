@@ -397,17 +397,20 @@ export function filterAccessibleModules(
   hasPermission: (perm: string) => boolean
 ): TopModuleItem[] {
   return MODULE_NAVIGATION_CONFIG.filter(module => {
-    // 如果模块没有权限要求，直接返回true
-    if (!module.permission) return true;
-
-    // 检查是否有权限访问该模块（只要有任一子项可访问即可）
-    const hasAccessibleSubItem = module.subItems.some(subItem => {
+    // 先计算可访问的子项（隐藏项不计入）
+    const accessibleSubItems = module.subItems.filter(subItem => {
       if (subItem.hidden) return false; // 隐藏的子项不计入
       if (!subItem.permission) return true; // 无权限要求的子项
       return hasPermission(subItem.permission);
     });
 
-    return hasAccessibleSubItem && hasPermission(module.permission);
+    // 模块显示条件：
+    // 1. 模块有 permission 字段 → 需 hasPermission(module.permission) 且至少一个子项可访问
+    // 2. 模块无 permission 字段 → 仅需至少一个子项可访问（如 dashboard/students/cache）
+    if (module.permission) {
+      return hasPermission(module.permission) && accessibleSubItems.length > 0;
+    }
+    return accessibleSubItems.length > 0;
   }).map(module => ({
     ...module,
     // 过滤掉隐藏和无权限的子项

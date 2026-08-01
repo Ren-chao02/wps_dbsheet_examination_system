@@ -196,6 +196,11 @@ questionRouter.put('/:id', authorize('teacher', 'admin'), async (req: Request, r
       return res.status(404).json({ message: '题目不存在' });
     }
 
+    // ✅ 所有权检查：非 admin 只能编辑自己创建的题目
+    if (req.user!.role !== 'admin' && existingQuestion.createdBy !== req.user!.userId) {
+      return res.status(403).json({ message: '只能编辑自己创建的题目' });
+    }
+
     const data = questionSchema.parse(req.body);
 
     // ✅ 自动填充更新人
@@ -225,6 +230,15 @@ questionRouter.put('/:id', authorize('teacher', 'admin'), async (req: Request, r
 // DELETE /api/questions/:id
 questionRouter.delete('/:id', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
+    // ✅ 先查询题目，检查所有权
+    const existingQuestion = await prisma.question.findUnique({ where: { id: req.params.id } });
+    if (!existingQuestion) {
+      return res.status(404).json({ message: '题目不存在' });
+    }
+    if (req.user!.role !== 'admin' && existingQuestion.createdBy !== req.user!.userId) {
+      return res.status(403).json({ message: '只能删除自己创建的题目' });
+    }
+
     // 检查题目是否被考试或试卷引用
     const [usedInExam, usedInPaper] = await Promise.all([
       prisma.examQuestion.count({ where: { questionId: req.params.id } }),
@@ -247,6 +261,15 @@ questionRouter.delete('/:id', authorize('teacher', 'admin'), async (req: Request
 // PUT /api/questions/:id/status - 切换题目启用/禁用状态
 questionRouter.put('/:id/status', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
+    // ✅ 所有权检查
+    const existingQuestion = await prisma.question.findUnique({ where: { id: req.params.id } });
+    if (!existingQuestion) {
+      return res.status(404).json({ message: '题目不存在' });
+    }
+    if (req.user!.role !== 'admin' && existingQuestion.createdBy !== req.user!.userId) {
+      return res.status(403).json({ message: '只能修改自己创建的题目状态' });
+    }
+
     const { status } = z.object({ status: z.enum(['draft', 'published']) }).parse(req.body);
     const question = await prisma.question.update({
       where: { id: req.params.id },

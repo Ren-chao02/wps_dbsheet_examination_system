@@ -171,6 +171,7 @@ model User {
   questionFeedback     QuestionFeedback[]
   tableAssignmentsAsStudent  ExamTableAssignment[] @relation("ExamTableAssignmentStudent") // ✅ 作为考生的表格分配
   tableAssignmentsAsAssigner ExamTableAssignment[] @relation("ExamTableAssignmentAssigner") // ✅ 作为分配人的表格分配
+  teachingClasses            TeacherClass[]   @relation("TeacherClasses") // ✅ 教师负责的班级（多对多）
 
   @@map("users")
 }
@@ -560,6 +561,7 @@ model ClassRoom {
   major        Major      @relation(fields: [majorId], references: [id], onDelete: Cascade)
   students     User[]
   invitations  Invitation[]
+  teacherClasses TeacherClass[] @relation("TeacherClassRooms") // ✅ 负责该班级的教师（多对多）
 }
 
 // ==================== WPS Token 配置 (单例) ====================
@@ -1010,6 +1012,21 @@ model PracticeTableAssignment {
   student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@map("practice_table_assignments")
+}
+
+// ✅ 教师负责的班级（多对多中间表）
+model TeacherClass {
+  id        String    @id @default(uuid()) @db.Uuid
+  teacherId String    @map("teacher_id") @db.Uuid
+  classId   String    @map("class_id") // ClassRoom.id 为 text 类型，不加 @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  teacher   User      @relation("TeacherClasses", fields: [teacherId], references: [id], onDelete: Cascade)
+  classRoom ClassRoom @relation("TeacherClassRooms", fields: [classId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, classId])
+  @@index([teacherId])
+  @@map("teacher_classes")
 }
 
 
