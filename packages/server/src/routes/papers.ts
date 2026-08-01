@@ -163,6 +163,10 @@ paperRouter.put('/:id/questions', async (req: Request, res: Response) => {
     if (!paper) {
       return res.status(404).json({ message: '试卷不存在' });
     }
+    // ✅ 所有权检查：非 admin 只能修改自己创建的试卷题目
+    if (req.user!.role !== 'admin' && paper.createdBy !== req.user!.userId) {
+      return res.status(403).json({ message: '只能修改自己创建的试卷' });
+    }
 
     const { questionIds } = paperQuestionSchema.parse(req.body);
     const totalScore = questionIds.reduce((sum, q) => sum + q.score, 0);

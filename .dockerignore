@@ -1,0 +1,39 @@
+# 依赖与构建产物（容器内重新构建）
+node_modules/
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+
+# 敏感配置（运行时不进镜像）
+.env
+.env.local
+.env.production
+**/.env
+**/.env.local
+**/.env.production
+
+# 版本控制
+.git/
+.gitignore
+
+# 运行时数据
+uploads/
+**/uploads/
+*.log
+
+# 开发/文档产物
+docs/
+mockups/
+test_screenshots/
+scripts/
+.pclaude/
+node_modules/
+npm-debug.log*
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+
+# 调试临时文件
+debug-*
+demo-wps-embed.html

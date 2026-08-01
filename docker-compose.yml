@@ -8,8 +8,9 @@ services:
       POSTGRES_USER: exam_user
       POSTGRES_PASSWORD: exam_password
       POSTGRES_DB: examination_system
+    # 仅绑定本地回环，避免数据库暴露到内网/公网（数据只供本机服务访问）
     ports:
-      - '5432:5432'
+      - '127.0.0.1:5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,12 +18,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     container_name: exam-redis
     ports:
-      - '6379:6379'
+      - '127.0.0.1:6379:6379'
     volumes:
       - redis_data:/data
     healthcheck:
@@ -30,7 +32,28 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: exam-app
+    ports:
+      - '3002:3002'
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # 上传文件目录持久化（试卷导入等场景）
+    volumes:
+      - app_uploads:/app/packages/server/uploads
 
 volumes:
   postgres_data:
   redis_data:
+  app_uploads:

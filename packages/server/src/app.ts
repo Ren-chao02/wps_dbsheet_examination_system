@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
 import { authRouter } from './routes/auth';
 import { authenticate } from './middleware/auth';
 import { userRouter } from './routes/users';
@@ -99,6 +100,18 @@ export function createApp() {
   // ✅ Phase 2 新增：AI 对话式教练 API
   app.use('/api/coaching', coachingRouter);
   app.use('/api/llm-config', llmConfigRouter);
+
+  // 生产环境：托管前端构建产物（vite build → packages/client/dist）
+  // 开发环境用 Vite dev server（5173），不走这里
+  if (process.env.NODE_ENV === 'production') {
+    const clientDist = path.resolve(__dirname, '../../client/dist');
+    app.use(express.static(clientDist));
+    // SPA fallback：非 /api、非 /socket.io 路由统一回退到 index.html，交给前端路由
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) return next();
+      res.sendFile(path.join(clientDist, 'index.html'));
+    });
+  }
 
   // Error handling
   app.use(errorHandler);

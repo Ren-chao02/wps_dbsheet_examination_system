@@ -30,6 +30,7 @@ export default function AccountManagement() {
     data: [], total: 0, page: 1, pageSize: 20,
   });
   const [roles, setRoles] = useState<SystemRole[]>([]);
+  const [allClasses, setAllClasses] = useState<{ id: string; name: string; code: string; departmentName?: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
@@ -51,17 +52,41 @@ export default function AccountManagement() {
     } catch { /* ignore */ }
   };
 
-  useEffect(() => { fetchAccounts(); fetchRoles(); }, []);
+  // 加载全部班级列表（从院系树展平），用于教师班级分配
+  const fetchAllClasses = async () => {
+    try {
+      const res = await api.get('/departments');
+      const deps = res.data.data || [];
+      const list: { id: string; name: string; code: string; departmentName?: string }[] = [];
+      for (const dep of deps) {
+        for (const major of dep.majors || []) {
+          for (const cls of major.classRooms || []) {
+            list.push({ id: cls.id, name: cls.name, code: cls.code, departmentName: dep.name });
+          }
+        }
+      }
+      setAllClasses(list);
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => { fetchAccounts(); fetchRoles(); fetchAllClasses(); }, []);
 
   const handleCreate = () => {
     setEditingAccount(null);
     form.resetFields();
-    form.setFieldsValue({ role: 'teacher' });
+    form.setFieldsValue({ role: 'teacher', classIds: [] });
     setModalOpen(true);
   };
 
-  const handleEdit = (account: Account) => {
+  const handleEdit = async (account: Account) => {
     setEditingAccount(account);
+    let classIds: string[] = [];
+    if (account.role === 'teacher') {
+      try {
+        const res = await api.get(`/accounts/${account.id}/classes`);
+        classIds = (res.data.data || []).map((c: any) => c.id);
+      } catch { classIds = []; }
+    }
     form.setFieldsValue({
       realName: account.realName,
       gender: account.gender,
@@ -70,6 +95,7 @@ export default function AccountManagement() {
       role: account.role,
       systemRoleId: account.systemRoleId,
       accountStatus: account.accountStatus,
+      classIds,
     });
     setModalOpen(true);
   };
@@ -87,6 +113,16 @@ export default function AccountManagement() {
           systemRoleId: values.systemRoleId || null,
           accountStatus: values.accountStatus,
         });
+        // 教师角色：同步更新负责班级
+        if (values.role === 'teacher') {
+          try {
+            await api.put(`/accounts/${editingAccount.id}/classes`, {
+              classIds: values.classIds || [],
+            });
+          } catch (err: any) {
+            message.warning('账户已更新，但班级分配失败：' + (err.response?.data?.message || ''));
+          }
+        }
         message.success('更新成功');
       } else {
         await api.post('/accounts', {
@@ -318,6 +354,25 @@ export default function AccountManagement() {
           </Form.Item>
           <Form.Item name="systemRoleId" label="系统角色">
             <Select allowClear placeholder="选择系统角色" options={roleOptions} />
+          </Form.Item>
+          {/* 教师角色：负责班级多选（仅当角色为 teacher 时显示） */}
+          <Form.Item shouldUpdate={(prev, cur) => prev.role !== cur.role} noStyle>
+            {({ getFieldValue }) =>
+              getFieldValue('role') === 'teacher' ? (
+                <Form.Item name="classIds" label="负责班级" tooltip="教师只能管理所选班级的学生">
+                  <Select
+                    mode="multiple"
+                    placeholder="选择该教师负责的班级（可多选）"
+                    allowClear
+                    optionFilterProp="label"
+                    options={allClasses.map((c) => ({
+                      value: c.id,
+                      label: `${c.departmentName ? c.departmentName + ' / ' : ''}${c.name} (${c.code})`,
+                    }))}
+                  />
+                </Form.Item>
+              ) : null
+            }
           </Form.Item>
           {editingAccount && (
             <Form.Item name="accountStatus" label="状态">
