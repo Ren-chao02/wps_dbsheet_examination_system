@@ -4,6 +4,7 @@ import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { KingsoftAdapter } from '../engine/adapters/kingsoft-adapter';
 import { gradePracticeRecord } from '../services/practice-grading-service';
+import { wpsConfigService } from '../services/wps-config-service';
 
 export const practiceRouter = Router();
 practiceRouter.use(authenticate);
@@ -33,12 +34,21 @@ export const assignmentSchema = z.object({
   accessToken: z.string().optional(),
 });
 
-export const startSchema = z.object({
-  primaryCategoryId: z.string().uuid().optional(),
-  secondaryCategoryId: z.string().uuid().optional(),
-  difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
-  count: z.number().int().min(1).max(20).default(5),
-});
+export const startSchema = z
+  .object({
+    primaryCategoryId: z.string().uuid().optional(),
+    secondaryCategoryId: z.string().uuid().optional(),
+    difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
+    count: z.number().int().min(1).max(20).default(5),
+    // ✅ 个人题集「再练一次 / 勾选组卷」：按指定题目开练（与分类/难度随机抽题互斥）
+    questionIds: z.array(z.string().uuid()).min(1).max(20).optional(),
+  })
+  .refine(
+    (data) =>
+      !data.questionIds ||
+      (!data.primaryCategoryId && !data.secondaryCategoryId && !data.difficulty),
+    { message: 'questionIds 与 分类/难度 筛选不能同时使用', path: ['questionIds'] },
+  );
 
 // POST /api/practice/assignment — 注册/更新当前学生的练习文件
 practiceRouter.post('/assignment', async (req: Request, res: Response) => {
@@ -108,7 +118,7 @@ practiceRouter.get('/questions/catalog', async (_req: Request, res: Response) =>
 // POST /api/practice/start — 抽题 + 重置文件 + 建记录
 practiceRouter.post('/start', async (req: Request, res: Response) => {
   try {
-    const { primaryCategoryId, secondaryCategoryId, difficulty, count } = startSchema.parse(req.body);
+    const { primaryCategoryId, secondaryCategoryId, difficulty, count, questionIds } = startSchema.parse(req.body);
     const studentId = req.user!.userId;
 
     // 1. 检查练习文件注册
@@ -120,39 +130,56 @@ practiceRouter.post('/start', async (req: Request, res: Response) => {
     }
 
     // 2. 抽题
+    // 个人题集再练：按指定题目抽取（去重、保持传入顺序）；否则按分类/难度随机抽题
+    const requestedIds = questionIds ? Array.from(new Set(questionIds)) : null;
     const where: any = { status: 'published' };
-    if (primaryCategoryId) where.primaryCategoryId = primaryCategoryId;
-    if (secondaryCategoryId) where.secondaryCategoryId = secondaryCategoryId;
-    if (difficulty) where.difficulty = difficulty;
+    if (requestedIds) {
+      where.id = { in: requestedIds };
+    } else {
+      if (primaryCategoryId) where.primaryCategoryId = primaryCategoryId;
+      if (secondaryCategoryId) where.secondaryCategoryId = secondaryCategoryId;
+      if (difficulty) where.difficulty = difficulty;
+    }
 
     const pool = await prisma.question.findMany({
       where,
       select: { id: true, title: true, description: true, type: true, difficulty: true, score: true, answerRules: true, analysis: true, hints: true },
     });
 
-    if (pool.length === 0) {
-      return res.status(400).json({ message: '当前筛选条件下无可用题目，请放宽条件' });
+    let selected: typeof pool;
+    if (requestedIds) {
+      if (pool.length !== requestedIds.length) {
+        return res.status(400).json({ message: '部分题目不存在或已下线，请刷新个人题集后再试' });
+      }
+      const byId = new Map(pool.map((q) => [q.id, q]));
+      selected = requestedIds.map((id) => byId.get(id)!);
+    } else {
+      if (pool.length === 0) {
+        return res.status(400).json({ message: '当前筛选条件下无可用题目，请放宽条件' });
+      }
+      // 随机排序取前 count 条
+      selected = [...pool].sort(() => Math.random() - 0.5).slice(0, Math.min(count, pool.length));
     }
 
-    // 随机排序取前 count 条
-    const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, Math.min(count, pool.length));
-    const questionsSnapshot = shuffled.map((q, i) => ({
+    const questionsSnapshot = selected.map((q, i) => ({
       questionId: q.id,
       score: q.score,
       sortOrder: i,
     }));
-    const maxScore = shuffled.reduce((sum, q) => sum + q.score, 0);
+    const maxScore = selected.reduce((sum, q) => sum + q.score, 0);
 
     // 3. 重置练习文件（失败则不建 record，直接报错）
-    // 写操作需要 v3 鉴权；accessToken 为空时无法重置
-    if (!assignment.accessToken) {
-      return res.status(400).json({ message: '练习文件未配置 access_token，无法重置，请联系教师' });
+    // 用「当前有效」的系统 token（临近过期会自动刷新），避免配置时刻的快照过期
+    // 导致 403 Token expired；v3 网关签名已失效，统一走 v7 REST（Bearer JWT）。
+    const wpsToken = (await wpsConfigService.getValidAccessToken()) || assignment.accessToken;
+    if (!wpsToken) {
+      return res.status(400).json({ message: '未获取到可用的 WPS access_token，请检查「WPS Token 管理」配置后重试' });
     }
     const adapter = new KingsoftAdapter(
       assignment.fileId,
-      assignment.accessToken,
+      wpsToken,
       undefined,
-      'v3',
+      'v7',
     );
     try {
       await adapter.resetFile();
@@ -162,7 +189,7 @@ practiceRouter.post('/start', async (req: Request, res: Response) => {
     }
 
     // 4. 重置成功后建 PracticeRecord
-    const tableSpaceId = `${assignment.fileId}:${assignment.accessToken}`;
+    const tableSpaceId = `${assignment.fileId}:${wpsToken}`;
 
     const record = await prisma.practiceRecord.create({
       data: {
@@ -176,9 +203,16 @@ practiceRouter.post('/start', async (req: Request, res: Response) => {
       },
     });
 
+    // 5. 丢弃该学生遗留的未完成旧练习（无成绩、无价值）
+    // 防止多轮/多标签同时进行：每次开练都会 resetFile 清空同一份文件，
+    // 遗留 in_progress 会让后续判分读到被清空的现场 → 「未找到表」误判。
+    await prisma.practiceRecord.deleteMany({
+      where: { studentId, status: 'in_progress', id: { not: record.id } },
+    });
+
     res.json({
       recordId: record.id,
-      questions: shuffled.map((q, i) => ({
+      questions: selected.map((q, i) => ({
         questionId: q.id,
         sortOrder: i,
         title: q.title,
@@ -343,7 +377,12 @@ practiceRouter.get('/wrong', async (req: Request, res: Response) => {
       where: { studentId: req.user!.userId },
       include: {
         question: {
-          select: { id: true, title: true, type: true, difficulty: true, score: true },
+          select: {
+            id: true, title: true, type: true, difficulty: true, score: true,
+            status: true, description: true, analysis: true, hints: true,
+            primaryCategory: { select: { id: true, name: true } },
+            secondaryCategory: { select: { id: true, name: true } },
+          },
         },
       },
       orderBy: { lastWrongAt: 'desc' },
@@ -387,7 +426,12 @@ practiceRouter.get('/favorite', async (req: Request, res: Response) => {
       where: { studentId: req.user!.userId },
       include: {
         question: {
-          select: { id: true, title: true, type: true, difficulty: true, score: true },
+          select: {
+            id: true, title: true, type: true, difficulty: true, score: true,
+            status: true, description: true, analysis: true, hints: true,
+            primaryCategory: { select: { id: true, name: true } },
+            secondaryCategory: { select: { id: true, name: true } },
+          },
         },
       },
       orderBy: { createdAt: 'desc' },

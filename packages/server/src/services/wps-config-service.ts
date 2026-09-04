@@ -76,6 +76,26 @@ export const wpsConfigService = {
     };
   },
 
+  /**
+   * 获取「当前可用」的 access_token：
+   * 临近过期（10 分钟内）或已过期时先自动刷新再返回。
+   * 用途：判分/重置文件等写时操作必须用实时 token，不能依赖配置时刻的快照，
+   * 否则 token 轮换后快照过期会导致 403 Token expired。
+   */
+  async getValidAccessToken(): Promise<string | null> {
+    const cfg = await this.get();
+    if (!cfg?.accessToken) return null;
+
+    const now = BigInt(Date.now());
+    const expiresAt = cfg.expiresAt || 0n;
+    if (expiresAt > 0n && now >= expiresAt - BigInt(REFRESH_MARGIN_MS)) {
+      await this.autoRefresh();
+      const refreshed = await this.get();
+      return refreshed?.accessToken || cfg.accessToken;
+    }
+    return cfg.accessToken;
+  },
+
   /** 检查是否需要刷新，需要则自动刷新 */
   async autoRefresh() {
     const cfg = await this.get();

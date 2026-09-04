@@ -46,12 +46,13 @@ export const practiceApi = {
   /** 获取分类/难度目录 */
   getCatalog: () => api.get('/practice/questions/catalog').then(r => r.data),
 
-  /** 开练：抽题 + 重置文件 + 建记录 */
+  /** 开练：按分类/难度随机抽题，或个人题集按指定题目（questionIds）组卷 */
   start: (data: {
     primaryCategoryId?: string;
     secondaryCategoryId?: string;
     difficulty?: 'easy' | 'medium' | 'hard';
     count?: number;
+    questionIds?: string[];
   }) => api.post('/practice/start', data).then(r => r.data),
 
   /** 提交练习并判分 */
@@ -60,4 +61,14 @@ export const practiceApi = {
 
   /** 练习历史 */
   history: () => api.get('/practice/history').then(r => r.data),
+
+  /** 切换收藏：返回 { favorited: boolean } */
+  toggleFavorite: (questionId: string) =>
+    api.post('/practice/favorite', { questionId }).then(r => r.data),
+
+  /** 我的收藏列表 */
+  favorites: () => api.get('/practice/favorite').then(r => r.data),
+
+  /** 错题本列表 */
+  wrongQuestions: () => api.get('/practice/wrong').then(r => r.data),
 };

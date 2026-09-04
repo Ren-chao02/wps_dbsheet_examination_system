@@ -111,6 +111,42 @@ describe('startSchema', () => {
       expect(result.data.count).toBe(10);
     }
   });
+
+  it('accepts questionIds for 个人题集再练', () => {
+    const result = startSchema.safeParse({
+      questionIds: [
+        '00000000-0000-0000-0000-000000000001',
+        '00000000-0000-0000-0000-000000000002',
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.questionIds).toHaveLength(2);
+    }
+  });
+
+  it('rejects questionIds beyond 1..20 range', () => {
+    expect(startSchema.safeParse({ questionIds: [] }).success).toBe(false);
+    const tooMany = Array.from({ length: 21 }, (_, i) =>
+      `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`,
+    );
+    expect(startSchema.safeParse({ questionIds: tooMany }).success).toBe(false);
+  });
+
+  it('rejects questionIds mixing with category/difficulty filters', () => {
+    expect(
+      startSchema.safeParse({
+        questionIds: ['00000000-0000-0000-0000-000000000001'],
+        difficulty: 'easy',
+      }).success
+    ).toBe(false);
+    expect(
+      startSchema.safeParse({
+        questionIds: ['00000000-0000-0000-0000-000000000001'],
+        primaryCategoryId: '00000000-0000-0000-0000-000000000002',
+      }).success
+    ).toBe(false);
+  });
 });
 
 // ============================================================

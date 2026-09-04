@@ -41,7 +41,7 @@ export function StudentLayout() {
     { key: '/student/dashboard', icon: <DashboardOutlined />, label: '我的考试' },
     { key: '/student/practice', icon: <BookOutlined />, label: '题库练习' },
     { key: '/student/history', icon: <TrophyOutlined />, label: '成绩查询' },
-    { key: '/student/favorites', icon: <StarOutlined />, label: '我的收藏' },
+    { key: '/student/favorites', icon: <StarOutlined />, label: '我的题集' },
   ];
 
   const userMenu = {

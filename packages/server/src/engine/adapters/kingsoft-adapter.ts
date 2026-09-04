@@ -436,21 +436,39 @@ export class KingsoftAdapter {
   }
 
   // ============================================================
-  // 写能力（v3 写接口，权限要求 kso.dbsheet.readwrite）
+  // 写能力（v7 REST 优先；v3 core/execute 网关为 legacy 回退）
   // ============================================================
 
   /**
-   * 删除指定工作表（v3 写接口）
-   * WPS 开放平台：POST /kopen/office/file/:file_id/core/execute/sheets/delete
-   * 复用现有 requestV3（已支持 /core/execute{action} 模式）
-   * 权限要求：kso.dbsheet.readwrite
-   * 注：写操作固定走 v3 签名，调用方需确保 adapter 持有有效的 v3 access_token
+   * 删除指定工作表
+   * - v7（推荐，Bearer JWT 可写）：POST /v7/coop/dbsheet/{file_id}/sheets/{sheet_id}/delete
+   * - v3（legacy core/execute 网关，需 WPS-3 签名可用才有效）
    */
   async deleteSheet(sheetId: number): Promise<void> {
-    if (this.apiVersion === 'v7') {
-      throw new Error('写操作（deleteSheet）仅支持 v3 鉴权，请用 v3 access_token 创建 adapter');
+    if (this.apiVersion === 'v3') {
+      await this.requestV3('/sheets/delete', { sheetId });
+      return;
     }
-    await this.requestV3('/sheets/delete', { sheetId });
+
+    const url = `${V7_API_BASE}/${this.fileId}/sheets/${sheetId}/delete`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.accessToken}`,
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`API 请求失败 [sheet/delete]: ${response.status} ${response.statusText} - ${text}`);
+    }
+
+    const data = await response.json() as any;
+    // v7 响应：{ code: 0 } 成功；code !== 0 视为业务错误（如 Sheet not found）
+    if (data.code !== undefined && data.code !== 0) {
+      throw new Error(`API 返回错误 [sheet/delete]: code=${data.code}, msg=${data.msg}`);
+    }
   }
 
   /**
