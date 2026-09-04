@@ -39,10 +39,11 @@ vi.mock('../../middleware/auth', () => authMock);
 // ============================================================
 // Mock：llmConfigService
 // ============================================================
-const { mockGetMasked, mockSave, mockClear } = vi.hoisted(() => ({
+const { mockGetMasked, mockSave, mockClear, mockTestConnection } = vi.hoisted(() => ({
   mockGetMasked: vi.fn(),
   mockSave: vi.fn(),
   mockClear: vi.fn(),
+  mockTestConnection: vi.fn(),
 }));
 
 vi.mock('../../services/llm-config-service', () => ({
@@ -50,6 +51,7 @@ vi.mock('../../services/llm-config-service', () => ({
     getMasked: mockGetMasked,
     save: mockSave,
     clear: mockClear,
+    testConnection: mockTestConnection,
   },
 }));
 
@@ -201,6 +203,80 @@ describe('LLM 配置路由', () => {
       const res = await request(makeApp())
         .post('/api/llm-config')
         .send({ provider: 'deepseek' });
+
+      expect(res.status).toBe(401);
+    });
+  });
+
+  // ── POST /api/llm-config/test ──
+  describe('POST /api/llm-config/test', () => {
+    const validBody = {
+      provider: 'deepseek',
+      apiKey: 'sk-test-key',
+      baseURL: '',
+      model: 'deepseek-chat',
+      temperature: 0.4,
+      maxTokens: 2048,
+      timeoutMs: 60000,
+      rateLimitPerMin: 20,
+    };
+
+    it('连接成功返回 ok=true 与耗时', async () => {
+      mockTestConnection.mockResolvedValue({
+        ok: true,
+        provider: 'deepseek',
+        model: 'deepseek-chat',
+        latencyMs: 1234,
+        reply: 'pong',
+        message: '连接成功',
+      });
+
+      const res = await request(makeApp())
+        .post('/api/llm-config/test')
+        .set('Authorization', VALID_TOKEN)
+        .send(validBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.latencyMs).toBe(1234);
+      expect(mockTestConnection).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'deepseek', apiKey: 'sk-test-key' }),
+      );
+    });
+
+    it('连接失败返回 ok=false 与错误信息', async () => {
+      mockTestConnection.mockResolvedValue({
+        ok: false,
+        provider: 'deepseek',
+        model: 'deepseek-chat',
+        message: 'API Key 无效（401 Unauthorized）',
+        detail: '401 ...',
+        errorType: 'invalid_api_key',
+      });
+
+      const res = await request(makeApp())
+        .post('/api/llm-config/test')
+        .set('Authorization', VALID_TOKEN)
+        .send(validBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(false);
+      expect(res.body.errorType).toBe('invalid_api_key');
+    });
+
+    it('缺少 provider 返回 400', async () => {
+      const res = await request(makeApp())
+        .post('/api/llm-config/test')
+        .set('Authorization', VALID_TOKEN)
+        .send({ apiKey: 'sk-test' });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('未认证返回 401', async () => {
+      const res = await request(makeApp())
+        .post('/api/llm-config/test')
+        .send(validBody);
 
       expect(res.status).toBe(401);
     });

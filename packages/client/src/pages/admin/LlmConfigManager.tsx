@@ -39,6 +39,7 @@ import {
   ReloadOutlined,
   KeyOutlined,
   SettingOutlined,
+  ApiOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 
@@ -76,6 +77,13 @@ const PROVIDERS: ProviderMeta[] = [
     helpUrl: 'https://open.bigmodel.cn/usercenter/apikeys',
   },
   {
+    value: 'sensenova',
+    label: '商汤日日新 SenseNova（Token Plan 公测免费）',
+    defaultModel: 'deepseek-v4-flash',
+    needsApiKey: true,
+    helpUrl: 'https://platform.sensenova.cn/console',
+  },
+  {
     value: 'ollama',
     label: 'Ollama（本地部署，无需 API Key）',
     defaultModel: 'qwen2.5:7b',
@@ -98,12 +106,26 @@ interface LlmMaskedConfig {
   source: 'db' | 'env';
 }
 
+// ── POST /api/llm-config/test 的返回结果 ──
+interface TestResult {
+  ok: boolean;
+  provider?: string;
+  model?: string;
+  latencyMs?: number;
+  reply?: string;
+  message?: string;
+  detail?: string;
+  errorType?: string;
+}
+
 export default function LlmConfigManager() {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [config, setConfig] = useState<LlmMaskedConfig | null>(null);
   const [selectedProvider, setSelectedProvider] = useState<string>('deepseek');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
 
   // 加载脱敏配置
   const fetchConfig = async () => {
@@ -166,6 +188,42 @@ export default function LlmConfigManager() {
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  // 测试连接：用表单当前值发起一次最小请求（不保存配置）
+  const handleTestConnection = async () => {
+    try {
+      const values = await form.validateFields();
+      setTesting(true);
+      setTestResult(null);
+      try {
+        const res = await api.post('/llm-config/test', values);
+        const data = res.data as TestResult;
+        if (data.ok) {
+          setTestResult(data);
+          message.success(
+            data.latencyMs != null
+              ? `连接成功（${data.latencyMs}ms）`
+              : '连接成功',
+          );
+        } else {
+          setTestResult(data);
+          message.error(data.message || '连接失败');
+        }
+      } catch (err: any) {
+        const data = {
+          ok: false,
+          message: err.response?.data?.message || '连接失败',
+          detail: err.response?.data?.detail || err.message || '未知错误',
+        } as TestResult;
+        setTestResult(data);
+        message.error('连接失败');
+      } finally {
+        setTesting(false);
+      }
+    } catch (err) {
+      // 表单校验失败，字段级错误提示已展示
     }
   };
 
@@ -336,7 +394,7 @@ export default function LlmConfigManager() {
               rules={[{ required: true, message: '请输入模型名称' }]}
               extra={selectedMeta ? `推荐：${selectedMeta.defaultModel}` : undefined}
             >
-              <Input placeholder="例如 deepseek-chat、qwen-plus、glm-4" />
+              <Input placeholder="例如 deepseek-chat、qwen-plus、glm-4、deepseek-v4-flash" />
             </Form.Item>
 
             <Form.Item
@@ -399,6 +457,15 @@ export default function LlmConfigManager() {
                 >
                   保存配置
                 </Button>
+                <Button
+                  icon={<ApiOutlined />}
+                  loading={testing}
+                  onClick={handleTestConnection}
+                  size="large"
+                  disabled={testing}
+                >
+                  测试连接
+                </Button>
                 <Popconfirm
                   title="确定清除数据库中的配置？"
                   description="清除后将回退到 .env 环境变量中的配置（若存在）。"
@@ -412,7 +479,52 @@ export default function LlmConfigManager() {
                   </Button>
                 </Popconfirm>
               </Space>
+              <div style={{ marginTop: 12 }}>
+                <Text type="secondary">
+                  先「测试连接」再保存，可验证 API Key / 模型 / Base URL 是否可用，测试不会写入配置。
+                </Text>
+              </div>
             </Form.Item>
+
+            {/* 测试连接结果 */}
+            {testResult && (
+              <Alert
+                type={testResult.ok ? 'success' : 'error'}
+                showIcon
+                closable
+                onClose={() => setTestResult(null)}
+                message={
+                  testResult.ok
+                    ? '连接成功'
+                    : testResult.message || '连接失败'
+                }
+                description={
+                  testResult.ok ? (
+                    <span>
+                      模型 <Text code>{testResult.model}</Text> 响应正常
+                      {testResult.latencyMs != null && <>，耗时 {testResult.latencyMs}ms</>}
+                      {testResult.reply && <>，回复：<Text code>{testResult.reply}</Text></>}
+                    </span>
+                  ) : (
+                    <span>
+                      {testResult.detail ? (
+                        <>
+                          <div>{testResult.message}</div>
+                          <div style={{ marginTop: 8 }}>
+                            <Text code type="danger">
+                              {testResult.detail}
+                            </Text>
+                          </div>
+                        </>
+                      ) : (
+                        testResult.message
+                      )}
+                    </span>
+                  )
+                }
+                style={{ marginBottom: 24 }}
+              />
+            )}
           </Form>
         </Card>
 
@@ -433,11 +545,15 @@ export default function LlmConfigManager() {
               <li>
                 <Text strong>模型</Text>：填写服务商支持的模型名，例如
                 <Text code> deepseek-chat</Text>、<Text code>qwen-plus</Text>、
-                <Text code>glm-4</Text>。
+                <Text code>glm-4</Text>、<Text code>deepseek-v4-flash</Text>。
               </li>
               <li>
                 <Text strong>Base URL</Text>：使用官方默认端点时留空即可；
                 若走代理或自部署，填写完整地址。
+              </li>
+              <li>
+                <Text strong>测试连接</Text>：用当前表单填写的内容（未保存）发起一次最小请求，
+                验证 Key / 模型 / Base URL 是否可用，不写入配置。API Key 留空时使用已保存的 Key 测试。
               </li>
               <li>
                 <Text strong>清除配置</Text>：仅清除数据库中由前端保存的配置，

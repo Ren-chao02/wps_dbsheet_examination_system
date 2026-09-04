@@ -51,6 +51,7 @@ import ForbiddenPage from './pages/public/ForbiddenPage';
 import RoleManagement from './pages/admin/RoleManagement';
 import AccountManagement from './pages/admin/AccountManagement';
 import AccountImport from './pages/admin/AccountImport';
+import TeacherClassAssignment from './pages/admin/TeacherClassAssignment';
 import SystemImportTaskList from './pages/admin/SystemImportTaskList';
 import CacheManagement from './pages/admin/CacheManagement';
 import LlmConfigManager from './pages/admin/LlmConfigManager';
@@ -159,6 +160,7 @@ export default function App() {
         <Route path="users" element={<Navigate to="/admin/accounts" replace />} />
         <Route path="accounts" element={<AccountManagement />} />
         <Route path="accounts/import" element={<AccountImport />} />
+        <Route path="teacher-classes" element={<TeacherClassAssignment />} />
         <Route path="roles" element={<RoleManagement />} />
         <Route path="import-tasks" element={<SystemImportTaskList />} />
         <Route path="cache" element={<CacheManagement />} />

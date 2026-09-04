@@ -76,6 +76,20 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
     throw new Error(`答卷不存在: ${submissionId}`);
   }
 
+  // 1.4 构建「题目实际满分」映射：规则分是 0~100 的权重（百分制），
+  // 而本题在本次考试中的分值 = scoreOverride ?? question.score（如 10 分），
+  // 落库前需按题目分值换算，否则会出现"每题 10 分却记 100 分"的错误总分。
+  const examMaxPoints = new Map<string, number>();
+  {
+    const eqMax = await prisma.examQuestion.findMany({
+      where: { examId: submission.examId },
+      select: { questionId: true, scoreOverride: true, question: { select: { score: true } } },
+    });
+    for (const eq of eqMax) {
+      examMaxPoints.set(eq.questionId, eq.scoreOverride ?? eq.question.score);
+    }
+  }
+
   // 1.5 WPS 实操考试可能没有提交答题详情，自动基于考试题目创建
   let details = submission.details;
   if (!details || details.length === 0) {
@@ -244,9 +258,17 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
       })),
     });
 
-    // 计算该题得分（有 needsReview 的规则不计入自动得分）
-    const autoScore = results.reduce((sum, r) => sum + (r.passed && !r.needsReview ? r.score : 0), 0);
+    // 计算该题规则总分（百分制，范围 0~qMaxScore，qMaxScore=全部规则分之和，通常为 100）
+    const rawAutoScore = results.reduce((sum, r) => sum + (r.passed && !r.needsReview ? r.score : 0), 0);
     const isCorrect = results.every(r => r.passed) && needsReviewCount === 0;
+
+    // 把规则百分制换算为该题的实际分值：
+    // 本题满分 = scoreOverride ?? question.score（如 10 分）
+    // autoScore = rawAutoScore / qMaxScore * 本题满分，例如规则满分 100、全对 → 本题 10 分
+    const qMaxPoints = examMaxPoints.get(detail.question.id) ?? detail.question.score ?? 0;
+    const autoScore = needsReviewCount === 0 && qMaxPoints > 0 && qMaxScore > 0
+      ? Math.round((rawAutoScore / qMaxScore) * qMaxPoints)
+      : rawAutoScore;
 
     // 更新 SubmissionDetail 的分数
     await prisma.submissionDetail.update({
@@ -262,14 +284,14 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
       questionId: detail.question.id,
       questionTitle: detail.question.title,
       score: autoScore,
-      maxScore: qMaxScore,
+      maxScore: qMaxPoints,
       isCorrect,
       ruleResults: results,
       needsReviewCount,
     });
 
     totalScore += autoScore;
-    maxScore += qMaxScore;
+    maxScore += qMaxPoints;
   }
 
   // 4. 如果没有 needsReview 项，自动完成评分

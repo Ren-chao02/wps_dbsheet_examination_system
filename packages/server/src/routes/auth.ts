@@ -94,6 +94,7 @@ authRouter.post('/login', async (req: Request, res: Response) => {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ message: '参数错误', errors: err.errors });
     }
+    console.error('[auth/login] 服务器错误:', err);
     res.status(500).json({ message: '服务器错误' });
   }
 });

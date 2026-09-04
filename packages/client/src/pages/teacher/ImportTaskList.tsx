@@ -40,13 +40,20 @@ export default function ImportTaskList() {
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `${task.fileName}_错误记录.xlsx`);
+      link.setAttribute('download', `${(task.fileName || 'file').replace(/\.(xlsx|xls|csv)$/i, '')}_错误记录.xlsx`);
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-    } catch {
-      message.error('下载失败记录失败');
+    } catch (err: any) {
+      let msg = '下载失败记录失败';
+      try {
+        if (err.response?.data instanceof Blob) {
+          const text = await err.response.data.text();
+          msg = JSON.parse(text).message || msg;
+        }
+      } catch {}
+      message.error(msg);
     }
   };
 

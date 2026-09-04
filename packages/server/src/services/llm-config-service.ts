@@ -13,6 +13,7 @@
  */
 import { prisma } from '../config/prisma';
 import { config } from '../config';
+import { createLLMClient } from '../llm/create-client';
 
 /** 生效的 LLM 配置（供 createLLMClient 使用） */
 export interface LlmEffectiveConfig {
@@ -53,11 +54,60 @@ export interface LlmConfigInput {
   rateLimitPerMin: number;
 }
 
+/** 测试连接结果 */
+export interface TestConnectionResult {
+  ok: boolean;
+  provider: string;
+  model: string;
+  /** 成功时：一次往返耗时 */
+  latencyMs?: number;
+  /** 成功时：模型回显的简短回复（可能为空） */
+  reply?: string;
+  /** 人类可读的结论（成功或失败原因） */
+  message: string;
+  /** 失败时：底层错误原文（服务商报错 / 网络错误） */
+  detail?: string;
+  errorType?:
+    | 'no_api_key'
+    | 'invalid_api_key'
+    | 'invalid_model'
+    | 'rate_limit'
+    | 'timeout'
+    | 'network'
+    | 'other';
+}
+
 /** 脱敏 API Key：保留前3后4，中间用星号填充；太短则全星号 */
 function maskApiKey(key: string): string {
   if (!key) return '';
   if (key.length <= 7) return '****';
   return key.slice(0, 3) + '*'.repeat(key.length - 7) + key.slice(-4);
+}
+
+/** 把底层异常归类为人类可读的失败原因 */
+function classifyTestError(
+  status: number | undefined,
+  rawMsg: string,
+): { message: string; errorType: Exclude<TestConnectionResult['errorType'], undefined> } {
+  // 超时（openai SDK：APIConnectionTimeoutError，code=ECONNABORTED，无 status）
+  if (!status && /timeout|timed out|ECONNABORTED|aborted|abort/i.test(rawMsg)) {
+    return { message: '连接超时，请检查网络或调大超时时间', errorType: 'timeout' };
+  }
+  switch (status) {
+    case 401:
+      return { message: 'API Key 无效（401 Unauthorized）', errorType: 'invalid_api_key' };
+    case 403:
+      return { message: '无权限访问（403），请检查 API Key 的权限范围', errorType: 'invalid_api_key' };
+    case 404:
+      return { message: '模型或端点不存在（404），请检查模型名称与 Base URL', errorType: 'invalid_model' };
+    case 429:
+      return { message: '请求过于频繁或账户额度不足（429）', errorType: 'rate_limit' };
+    default:
+      if (status) {
+        return { message: `服务商返回错误（HTTP ${status}）`, errorType: 'other' };
+      }
+      return { message: '网络连接失败，请检查 Base URL 与网络', errorType: 'network' };
+  }
 }
 
 export const llmConfigService = {
@@ -159,5 +209,99 @@ export const llmConfigService = {
       rateLimitPerMin: effective.rateLimitPerMin,
       source: effective.source,
     };
+  },
+
+  /**
+   * 测试连接：用「表单当前值」发起一次最小 LLM 调用，验证 Key/模型/Base URL 是否可用。
+   * 不写入 DB；apiKey 为空时回退到已生效配置（DB > env）的 Key，与 save 语义一致。
+   */
+  async testConnection(input: LlmConfigInput): Promise<TestConnectionResult> {
+    const base: TestConnectionResult = {
+      ok: false,
+      provider: input.provider,
+      model: input.model,
+      message: '',
+    };
+
+    // apiKey 为空 = 复用已生效（DB/env）的 Key
+    const effective = await this.getEffective();
+    const apiKey = input.apiKey || effective.apiKey;
+
+    if (!apiKey && input.provider !== 'ollama') {
+      return {
+        ...base,
+        message: '未配置 API Key',
+        detail: '请先填写 API Key，或确认服务器 .env 中已配置 LLM_API_KEY',
+        errorType: 'no_api_key',
+      };
+    }
+
+    let client;
+    try {
+      client = createLLMClient({
+        provider: input.provider,
+        apiKey,
+        baseURL: input.baseURL,
+        model: input.model,
+        temperature: input.temperature,
+        maxTokens: input.maxTokens,
+        timeoutMs: input.timeoutMs,
+        rateLimitPerMin: input.rateLimitPerMin,
+        source: 'env', // source 仅供展示，createLLMClient 不读取
+      });
+    } catch (err: any) {
+      return {
+        ...base,
+        message: 'AI 服务未配置',
+        detail: err?.message || String(err),
+        errorType: 'no_api_key',
+      };
+    }
+
+    const startedAt = Date.now();
+    try {
+      let reply = '';
+      let finishReason: string | undefined;
+      for await (const chunk of client.chat({
+        messages: [{ role: 'user', content: 'ping' }],
+        temperature: 0,
+        maxTokens: 16, // 测试用最小回复，快速返回
+      })) {
+        if (chunk.delta) reply += chunk.delta;
+        if (chunk.finishReason) finishReason = chunk.finishReason;
+      }
+      const latencyMs = Date.now() - startedAt;
+
+      if (finishReason === 'error') {
+        return {
+          ...base,
+          latencyMs,
+          message: '模型返回错误',
+          detail: reply || '未知错误',
+          errorType: 'other',
+        };
+      }
+
+      return {
+        ok: true,
+        provider: input.provider,
+        model: input.model,
+        latencyMs,
+        reply: reply.trim() || undefined,
+        message: '连接成功',
+      };
+    } catch (err: any) {
+      const latencyMs = Date.now() - startedAt;
+      const status = err?.status as number | undefined;
+      const rawMsg = err?.message || String(err);
+      const { message, errorType } = classifyTestError(status, rawMsg);
+      return {
+        ...base,
+        latencyMs,
+        message,
+        detail: rawMsg,
+        errorType,
+      };
+    }
   },
 };

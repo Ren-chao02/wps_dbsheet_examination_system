@@ -12,10 +12,12 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { ExportFormat, exportService, TaskStatus } from '../services/export-service';
-import { PrismaClient } from '@prisma/client';
+import { authenticate, authorize } from '../middleware/auth';
+import { prisma } from '../config/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
+router.use(authenticate);
+router.use(authorize('teacher', 'admin'));
 
 // ✅ 内存中的任务存储（生产环境应使用数据库或Redis）
 const exportTasks: Map<string, any> = new Map();
@@ -146,7 +148,7 @@ router.post('/trigger', async (req: Request, res: Response) => {
   try {
     const body = triggerExportSchema.parse(req.body);
     const taskId = randomUUID();
-    const userId = (req as any).user?.id || 'anonymous';
+    const userId = req.user!.userId;
 
     // 创建任务记录
     const task: any = {
@@ -348,6 +350,25 @@ router.get('/download', (req: Request, res: Response) => {
       return res.status(403).json({
         success: false,
         error: '非法的文件路径',
+      });
+    }
+
+    // 校验：反查导出任务，确认当前用户有权下载该文件
+    const matchedTask = Array.from(exportTasks.values()).find(
+      t => t.result?.filePath === safePath
+    );
+    if (!matchedTask) {
+      return res.status(403).json({
+        success: false,
+        error: '未找到对应的导出任务，无权下载',
+      });
+    }
+    const isOwner = matchedTask.userId === req.user!.userId;
+    const isAdmin = req.user!.role === 'admin';
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: '无权下载该文件',
       });
     }
 

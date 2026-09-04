@@ -343,6 +343,13 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
         description: '用户账户的创建、编辑、禁用、批量导入',
       },
       {
+        key: '/admin/teacher-classes',
+        label: '教师班级分配',
+        icon: <TeamOutlined />,
+        permission: 'SYSTEM_MANAGEMENT',
+        description: '集中查看并分配每位教师负责的班级',
+      },
+      {
         key: '/admin/roles',
         label: '角色权限管理',
         icon: <SafetyCertificateOutlined />,
@@ -378,6 +385,15 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
 
 // ✅ 工具函数：根据当前路径查找所属的一级模块
 export function findModuleByPath(pathname: string): TopModuleItem | undefined {
+  // 特例：以下明细页虽挂在别的模块子路径下，但页面业务归属「阅卷管理」，需避免顶部导航误跳：
+  // - 单场成绩分析详情：/teacher/exams/:id/statistics（路径前缀会命中「考务管理」）
+  // - 考生能力画像：/teacher/students/:id/profile（仅从成绩分析的学生列表进入，路径前缀会命中「学生管理」）
+  if (
+    /^\/teacher\/exams\/[^/]+\/statistics/.test(pathname) ||
+    /^\/teacher\/students\/[^/]+\/profile/.test(pathname)
+  ) {
+    return MODULE_NAVIGATION_CONFIG.find(module => module.key === 'statistics');
+  }
   return MODULE_NAVIGATION_CONFIG.find(module =>
     module.subItems.some(item => pathname.startsWith(item.key))
   );

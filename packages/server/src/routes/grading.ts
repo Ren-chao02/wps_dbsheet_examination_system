@@ -213,9 +213,37 @@ gradingRouter.post('/:submissionId/review/:detailId', authorize('teacher', 'admi
       },
     });
 
-    const questionScore = allResults.reduce((sum, r) => sum + (r.passed ? r.score : 0), 0);
+    // 规则得分是 0~100 的权重（百分制），落库前需换算回本题实际分值：
+    // 本题满分 = 考试 scoreOverride ?? question.score，换算 = 规则分占比 × 本题满分
+    const detail = await prisma.submissionDetail.findUnique({
+      where: { id: req.params.detailId },
+      include: { question: { select: { score: true, answerRules: true } } },
+    });
+    const rawRules = (detail?.question.answerRules as any[] | null) || [];
+    const ruleSum = rawRules.reduce((s, r) => s + (r.score || 0), 0);
+
+    const rawQuestionScore = allResults.reduce((sum, r) => sum + (r.passed ? r.score : 0), 0);
     const allPassed = allResults.every(r => r.passed);
     const hasReview = allResults.some(r => r.needsReview);
+
+    let qMaxPoints = detail?.question.score ?? 0;
+    if (detail) {
+      const sub = await prisma.studentSubmission.findUnique({
+        where: { id: detail.submissionId },
+        select: { examId: true },
+      });
+      if (sub) {
+        const eq = await prisma.examQuestion.findFirst({
+          where: { examId: sub.examId, questionId: detail.questionId },
+          select: { scoreOverride: true },
+        });
+        qMaxPoints = eq?.scoreOverride ?? qMaxPoints;
+      }
+    }
+
+    const questionScore = !hasReview && qMaxPoints > 0 && ruleSum > 0
+      ? Math.round((rawQuestionScore / ruleSum) * qMaxPoints)
+      : rawQuestionScore;
 
     await prisma.submissionDetail.update({
       where: { id: req.params.detailId },

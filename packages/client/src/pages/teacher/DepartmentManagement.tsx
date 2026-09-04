@@ -164,9 +164,13 @@ export default function DepartmentManagement() {
     }
   };
 
+  // 生成唯一占位后缀，避免后端唯一性校验冲突（Department.name/code、ClassRoom.code 全局唯一，Major 同院系下 code 唯一）
+  const genUniqueSuffix = () => Date.now().toString(36).toUpperCase();
+
   const handleAddDepartment = async () => {
     try {
-      await api.post('/departments', { name: '新院系', code: 'NEW_DEPT' });
+      const suffix = genUniqueSuffix();
+      await api.post('/departments', { name: `新院系${suffix}`, code: `NEW_DEPT_${suffix}` });
       message.success('院系已创建，请在右侧编辑详情');
       fetchTree();
     } catch (err: any) {
@@ -176,11 +180,12 @@ export default function DepartmentManagement() {
 
   const handleAddChild = async (parentId: string, parentType: NodeType) => {
     try {
+      const suffix = genUniqueSuffix();
       if (parentType === 'dept') {
-        await api.post(`/departments/${parentId}/majors`, { name: '新专业', code: 'NEW_MAJOR', departmentId: parentId });
+        await api.post(`/departments/${parentId}/majors`, { name: `新专业${suffix}`, code: `NEW_MAJOR_${suffix}` });
         message.success('专业已创建');
       } else if (parentType === 'major') {
-        await api.post(`/departments/majors/${parentId}/classrooms`, { name: '新班级', code: 'NEW_CLASS', majorId: parentId, academicYear: '2026', gradeLevel: 1 });
+        await api.post(`/departments/majors/${parentId}/classrooms`, { name: `新班级${suffix}`, code: `NEW_CLASS_${suffix}`, academicYear: '2026', gradeLevel: 1 });
         message.success('班级已创建');
       }
       fetchTree();

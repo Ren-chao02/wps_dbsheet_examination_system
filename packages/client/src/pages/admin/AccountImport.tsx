@@ -15,6 +15,7 @@ interface ImportResult {
   totalRows: number;
   successRows: number;
   failedRows: number;
+  errorFile?: string;
 }
 
 export default function AccountImport() {
@@ -36,13 +37,20 @@ export default function AccountImport() {
       link.remove();
       window.URL.revokeObjectURL(url);
       message.success('模板下载成功');
-    } catch {
-      message.error('模板下载失败');
+    } catch (err: any) {
+      let msg = '模板下载失败';
+      try {
+        if (err.response?.data instanceof Blob) {
+          const text = await err.response.data.text();
+          msg = JSON.parse(text).message || msg;
+        }
+      } catch {}
+      message.error(msg);
     }
   };
 
   const uploadProps: UploadProps = {
-    accept: '.xlsx,.xls',
+    accept: '.xlsx',
     maxCount: 1,
     beforeUpload: (file) => {
       setUploadedFile(file);
@@ -68,9 +76,7 @@ export default function AccountImport() {
     try {
       const formData = new FormData();
       formData.append('file', uploadedFile);
-      const res = await api.post('/accounts/import', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const res = await api.post('/accounts/import', formData);
       setResult(res.data);
       setCurrentStep(2);
       message.success('导入完成');
@@ -89,6 +95,30 @@ export default function AccountImport() {
 
   const handleBackToList = () => {
     navigate('/admin/accounts');
+  };
+
+  const handleDownloadErrors = async () => {
+    if (!result?.errorFile) return;
+    try {
+      const response = await api.get(result.errorFile, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', '导入失败明细.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      let msg = '下载失败明细失败';
+      try {
+        if (err.response?.data instanceof Blob) {
+          const text = await err.response.data.text();
+          msg = JSON.parse(text).message || msg;
+        }
+      } catch {}
+      message.error(msg);
+    }
   };
 
   return (
@@ -142,7 +172,7 @@ export default function AccountImport() {
                   <InboxOutlined />
                 </p>
                 <p className="ant-upload-text">点击或拖拽文件到此区域上传</p>
-                <p className="ant-upload-hint">支持 .xlsx 和 .xls 格式</p>
+                <p className="ant-upload-hint">支持 .xlsx 格式</p>
               </Upload.Dragger>
             </div>
             <Space>
@@ -177,6 +207,9 @@ export default function AccountImport() {
               }
               extra={
                 <Space>
+                  {result.failedRows > 0 && result.errorFile && (
+                    <Button icon={<DownloadOutlined />} onClick={handleDownloadErrors}>下载失败明细</Button>
+                  )}
                   <Button type="primary" onClick={handleBackToList}>返回账户列表</Button>
                   <Button icon={<ReloadOutlined />} onClick={handleReset}>继续导入</Button>
                 </Space>

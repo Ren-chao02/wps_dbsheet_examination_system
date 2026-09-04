@@ -2,7 +2,6 @@
  * WPS Token 配置服务 — 服务端持久化 + 自动刷新
  */
 import { prisma } from '../config/prisma';
-import { config } from '../config';
 
 const REFRESH_MARGIN_MS = 10 * 60 * 1000; // 提前10分钟刷新
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;  // 每5分钟检查一次
@@ -15,12 +14,14 @@ export const wpsConfigService = {
     return prisma.wpsConfig.findUnique({ where: { id: 'wps_config' } });
   },
 
-  /** 保存 Token 到数据库 */
+  /** 保存 Token 到数据库（clientId/clientSecret 仅在传入时更新，避免覆盖已有凭据） */
   async save(params: {
     accessToken: string;
     refreshToken: string;
     expiresIn: number;
     refreshExpiresIn: number;
+    clientId?: string | null;
+    clientSecret?: string | null;
   }) {
     const expiresAt = BigInt(Date.now() + params.expiresIn * 1000);
     const refreshExpiresAt = BigInt(Date.now() + params.refreshExpiresIn * 1000);
@@ -31,14 +32,48 @@ export const wpsConfigService = {
         refreshToken: params.refreshToken,
         expiresAt,
         refreshExpiresAt,
+        ...(params.clientId !== undefined ? { clientId: params.clientId } : {}),
+        ...(params.clientSecret !== undefined ? { clientSecret: params.clientSecret } : {}),
       },
       update: {
         accessToken: params.accessToken,
         refreshToken: params.refreshToken,
         expiresAt,
         refreshExpiresAt,
+        ...(params.clientId !== undefined ? { clientId: params.clientId } : {}),
+        ...(params.clientSecret !== undefined ? { clientSecret: params.clientSecret } : {}),
       },
     });
+  },
+
+  /** 保存 WPS 应用凭据（只更新 clientId/clientSecret，保留已有 token） */
+  async saveCredentials(clientId: string, clientSecret: string) {
+    const existing = await this.get();
+    const now = BigInt(Date.now());
+    return prisma.wpsConfig.upsert({
+      where: { id: 'wps_config' },
+      create: {
+        accessToken: existing?.accessToken || '',
+        refreshToken: existing?.refreshToken || '',
+        expiresAt: existing?.expiresAt || now,
+        refreshExpiresAt: existing?.refreshExpiresAt || now,
+        clientId,
+        clientSecret,
+      },
+      update: { clientId, clientSecret },
+    });
+  },
+
+  /** 获取生效凭据：DB 优先（前端已配置，容器重建不丢），否则回退环境变量 */
+  async getEffectiveCredentials(): Promise<{ clientId: string; clientSecret: string }> {
+    const cfg = await this.get();
+    if (cfg?.clientId && cfg?.clientSecret) {
+      return { clientId: cfg.clientId, clientSecret: cfg.clientSecret };
+    }
+    return {
+      clientId: process.env.KINGSOFT_API_KEY || '',
+      clientSecret: process.env.KINGSOFT_API_SECRET || '',
+    };
   },
 
   /** 检查是否需要刷新，需要则自动刷新 */
@@ -65,8 +100,10 @@ export const wpsConfigService = {
       const params = new URLSearchParams();
       params.append('grant_type', 'refresh_token');
       params.append('refresh_token', cfg.refreshToken);
-      params.append('client_id', config.kingsoft.apiKey);
-      params.append('client_secret', config.kingsoft.apiSecret);
+      // 凭据动态解析：DB 优先，回退环境变量（修复 config 启动快照导致 UI 保存不生效的问题）
+      const { clientId, clientSecret } = await this.getEffectiveCredentials();
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
 
       const response = await fetch('https://openapi.wps.cn/oauth2/token', {
         method: 'POST',

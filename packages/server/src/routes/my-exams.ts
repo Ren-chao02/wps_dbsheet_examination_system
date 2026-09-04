@@ -10,6 +10,16 @@ export const myExamRouter = Router();
 myExamRouter.use(authenticate);
 myExamRouter.use(authorize('student'));
 
+/**
+ * 学生侧状态映射：弱化"评分中"的全局属性。
+ * grading 是阅卷环节的内部状态，学生无需感知，统一映射为 submitted（已提交），
+ * 简化学生侧状态流转链路，减少不一致概率。
+ * 教师侧仍可看到真实 grading 状态（见 grading 路由）。
+ */
+function studentFacingStatus(status: string): string {
+  return status === 'grading' ? 'submitted' : status;
+}
+
 // GET /api/my-exams — 学生的考试列表
 myExamRouter.get('/', async (req: Request, res: Response) => {
   try {
@@ -42,7 +52,7 @@ myExamRouter.get('/', async (req: Request, res: Response) => {
         passScore: true,
         status: true,
         creator: { select: { realName: true } },
-        batch: { select: { name: true, startTime: true, endTime: true, examDuration: true, examMode: true } },
+        batch: { select: { name: true, startTime: true, endTime: true, examDuration: true, examMode: true, lateTolerance: true, waitingTime: true } },
         _count: { select: { examQuestions: true } },
       },
     });
@@ -79,7 +89,7 @@ myExamRouter.get('/', async (req: Request, res: Response) => {
       roomName: roomMap.get(exam.id) || null,
       mySubmission: subMap.get(exam.id) ? {
         id: subMap.get(exam.id)!.id,
-        status: subMap.get(exam.id)!.status,
+        status: studentFacingStatus(subMap.get(exam.id)!.status),
         totalScore: subMap.get(exam.id)!.totalScore,
         startedAt: subMap.get(exam.id)!.startedAt,
         submittedAt: subMap.get(exam.id)!.submittedAt,
@@ -272,42 +282,45 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
       }
     }
 
-    // 考试模式时间校验（与 start 一致）
+    // 提前查询已有 submission，用于判断是否为断点续考
+    const existingSubmission = await prisma.studentSubmission.findUnique({
+      where: {
+        examId_studentId: {
+          examId: req.params.id,
+          studentId: req.user!.userId,
+        },
+      },
+    });
+    const isResuming = existingSubmission?.status === 'in_progress';
+
+    // 考试时间校验：候考时间 + 考试结束仍拦截，迟到时间不拦截（仅前端显示）
     const batch = exam.batch;
     if (batch) {
       const examMode = batch.examMode || 'unified';
       const effectiveStart = exam.startTime ? new Date(exam.startTime).getTime() : null;
       const effectiveEnd = exam.endTime ? new Date(exam.endTime).getTime() : null;
-      const effectiveDuration = batch.examDuration || exam.durationMinutes || 0;
       const waitingTime = batch.waitingTime || 0;
-      const lateTolerance = batch.lateTolerance || 0;
       const now = Date.now();
 
       if (examMode === 'unified') {
-        if (effectiveStart) {
+        // 候考时间未到：拦截（断点续考除外）
+        if (effectiveStart && !isResuming) {
           const waitingStart = effectiveStart - waitingTime * 60 * 1000;
           if (now < waitingStart) {
             return res.status(400).json({ message: '候考时间未到，请在考试开始前进入' });
           }
-          const lateCutoff = effectiveStart + lateTolerance * 60 * 1000;
-          if (now > lateCutoff) {
-            return res.status(400).json({ message: '已超过迟到时间，无法进入考试' });
-          }
         }
+        // 考试已结束：拦截
         if (effectiveEnd && now > effectiveEnd) {
           return res.status(400).json({ message: '考试已结束' });
         }
       } else if (examMode === 'flexible') {
+        // 批次尚未开始：拦截
         if (effectiveStart && now < effectiveStart) {
           return res.status(400).json({ message: '批次考试尚未开始' });
         }
-        if (effectiveEnd && effectiveDuration > 0) {
-          const minEntryEnd = effectiveEnd - effectiveDuration * 60 * 1000;
-          if (now > minEntryEnd) {
-            return res.status(400).json({ message: '剩余考试时间不足，无法进入考试' });
-          }
-        }
-        if (effectiveEnd && effectiveDuration <= 0 && now > effectiveEnd) {
+        // 考试已结束：拦截
+        if (effectiveEnd && now > effectiveEnd) {
           return res.status(400).json({ message: '批次考试已结束' });
         }
       }
@@ -338,23 +351,19 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
       return res.status(400).json({ message: '尚未分配 WPS 表格，请联系教师' });
     }
 
-    let submission = await prisma.studentSubmission.findUnique({
-      where: {
-        examId_studentId: {
-          examId: req.params.id,
-          studentId: req.user!.userId,
-        },
-      },
-    });
+    let submission = existingSubmission;
 
     const tableSpaceId = `${assignment.fileId}:${assignment.accessToken || ''}`;
 
     if (submission) {
+      // 断点续考：保留原始 startedAt，确保剩余考试时间从首次开考时刻持续累计，
+      // 而非每次重新进入都重置为满时长（考试时间应在后台持续计算）。
+      // 仅在原先没有 startedAt（异常数据）或非续考场景下才设置当前时间。
       submission = await prisma.studentSubmission.update({
         where: { id: submission.id },
         data: {
           status: 'in_progress',
-          startedAt: new Date(),
+          ...(isResuming && submission.startedAt ? {} : { startedAt: new Date() }),
           tableSpaceId,
         },
       });
@@ -516,7 +525,7 @@ myExamRouter.get('/:id/result', async (req: Request, res: Response) => {
       return res.json({
         submission: {
           id: submission.id,
-          status: submission.status,
+          status: studentFacingStatus(submission.status),
           exam: submission.exam,
         },
         message: '尚未完成评分',

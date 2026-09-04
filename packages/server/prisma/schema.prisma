@@ -444,6 +444,7 @@ model StudentSubmission {
   graderComment String?          @map("grader_comment") @db.Text
   gradedBy      String?          @map("graded_by") @db.Uuid
   createdAt     DateTime         @default(now()) @map("created_at")
+  isAutoSubmitted Boolean        @default(false) @map("is_auto_submitted")
 
   // Relations
   exam             Exam                 @relation(fields: [examId], references: [id])
@@ -571,6 +572,9 @@ model WpsConfig {
   refreshToken      String   @map("refresh_token")
   expiresAt         BigInt   @map("expires_at")
   refreshExpiresAt  BigInt   @map("refresh_expires_at")
+  // 金山开放平台应用凭据（前端可配置，持久化到 DB，容器重建不丢）
+  clientId          String?  @map("client_id")
+  clientSecret      String?  @map("client_secret")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@map("wps_config")
@@ -579,7 +583,7 @@ model WpsConfig {
 // ==================== LLM 大模型配置 (单例，前端可编辑) ====================
 model LlmConfig {
   id               String   @id @default("llm_config")
-  provider         String   @default("deepseek")     // deepseek | qwen | glm | ollama
+  provider         String   @default("deepseek")     // deepseek | qwen | glm | sensenova | ollama
   apiKey           String   @map("api_key")           // 加密存储的 API Key
   baseURL          String   @default("") @map("base_url")
   model            String   @default("deepseek-chat")

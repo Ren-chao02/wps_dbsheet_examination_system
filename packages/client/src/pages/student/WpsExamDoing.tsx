@@ -8,11 +8,13 @@ import {
   LinkOutlined,
   LeftOutlined,
   RightOutlined,
+  TableOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import type { Question } from '../../types';
 import { FullscreenGuard } from '../../components/exam/FullscreenGuard';
 import { useExamSession } from '../../hooks/useExamSession';
+import { computeExamDeadline } from '../../utils/exam-time';
 
 const { Text, Paragraph, Title } = Typography;
 
@@ -49,10 +51,11 @@ export function WpsExamDoingPage() {
     api.get(`/my-exams/${id}`).then(res => {
       const d = res.data;
       setData(d);
-      if (d.submission?.startedAt && d.exam?.durationMinutes) {
-        const start = new Date(d.submission.startedAt).getTime();
-        setDeadline(start + d.exam.durationMinutes * 60 * 1000);
-      }
+      // 截止时间口径与 ExamEntrySteps 保持一致：基于考试 endTime（或 startTime + 时长），
+      // 不基于 submission.startedAt，保证中途入场/断点续考时剩余时间与入场界面一致。
+      // 服务端 autoEndExpiredExams 同样按 exam.endTime 收卷，口径统一。
+      const dl = computeExamDeadline(d.exam);
+      if (dl !== null) setDeadline(dl);
     }).catch((err) => {
       message.error(err.response?.data?.message || '加载失败');
     }).finally(() => setLoading(false));
@@ -81,9 +84,12 @@ export function WpsExamDoingPage() {
 
   const wpsTable = data?.wpsTable || null;
   const hasWpsTable = !!wpsTable?.shareUrl;
-  const iframeUrl = hasWpsTable
-    ? `${wpsTable.shareUrl}${wpsTable.shareUrl.includes('?') ? '&' : '?'}embed=1`
-    : '';
+  // 使用完整分享链接直链（不带 embed=1 参数），呈现与 WPS 一致的完整界面：
+  // 左侧「数据表/视图」侧边栏 + 顶部标题/页签/工具栏。
+  // embed=1 是纯视图内嵌模式，只会显示当前视图的网格，不带侧边栏与上边栏。
+  // 链接权限由教师端保证为「任何人可查看/编辑（无需登录）」，可直接在 iframe 中打开，
+  // 与练习页 PracticeDoing 的「全部显示」模式保持一致。
+  const iframeUrl = hasWpsTable ? wpsTable.shareUrl : '';
   const openInNewTab = () => {
     if (wpsTable?.shareUrl) window.open(wpsTable.shareUrl, '_blank');
   };
@@ -92,13 +98,13 @@ export function WpsExamDoingPage() {
 
   // iframe 加载超时兜底：WPS 多维表格为重型 SPA（常驻 WebSocket + 懒加载），
   // 其 load 事件可能迟迟不触发，导致 onLoad 永不回调、转圈遮罩永久盖住 iframe。
-  // 10s 后强制撤下遮罩，露出 iframe 实际内容并提供「新标签页打开」逃生口。
+  // 15s 后强制撤下遮罩，露出 iframe 实际内容并提供「新标签页打开」逃生口。
   useEffect(() => {
     if (!hasWpsTable) return;
     setIframeLoaded(false);
     setIframeError(false);
     setIframeTimeout(false);
-    const t = setTimeout(() => setIframeTimeout(true), 10000);
+    const t = setTimeout(() => setIframeTimeout(true), 15000);
     return () => clearTimeout(t);
   }, [iframeUrl]);
 
@@ -287,41 +293,60 @@ export function WpsExamDoingPage() {
             </div>
           </div>
 
-          {/* Right: WPS iframe */}
+          {/* Right: WPS iframe + 打开按钮 */}
           {hasWpsTable && (
-            <div style={{ flex: 1, position: 'relative', background: '#f0f2f5' }}>
-              {/* 右上角逃生口：始终可用，内嵌失败时可改在新标签页打开 */}
-              <div style={{ position: 'absolute', top: 8, right: 12, zIndex: 10 }}>
-                <Button size="small" icon={<LinkOutlined />} onClick={openInNewTab}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f0f2f5' }}>
+              {/* 顶部工具栏：始终显示「在新标签页打开」按钮 */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '8px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0', flexShrink: 0,
+              }}>
+                <Text strong style={{ fontSize: 14 }}>
+                  <TableOutlined style={{ marginRight: 8 }} />
+                  多维表格
+                </Text>
+                <Button type="primary" icon={<LinkOutlined />} onClick={openInNewTab}>
                   在新标签页打开
                 </Button>
               </div>
 
-              {/* 加载遮罩：onLoad 触发 / 报错 / 10s 超时 三者任一发生即撤下，避免永久转圈 */}
-              {showSpinner && (
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5', zIndex: 5 }}>
-                  <Spin tip="正在加载 WPS 多维表格..." />
-                </div>
-              )}
+              {/* iframe 区域 */}
+              <div style={{ flex: 1, position: 'relative' }}>
+                {/* 加载遮罩 */}
+                {showSpinner && (
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5', zIndex: 5 }}>
+                    <Spin tip="正在加载 WPS 多维表格..." />
+                  </div>
+                )}
 
-              {/* 超时/错误提示：iframe 迟迟未触发 onLoad，提示学生用新标签页打开 */}
-              {(iframeTimeout || iframeError) && !iframeLoaded && (
-                <div style={{ position: 'absolute', top: 44, left: 12, right: 12, zIndex: 6 }}>
-                  <Alert
-                    type="warning" showIcon banner
-                    message="WPS 表格加载较慢或被浏览器拦截"
-                    description="若上方区域长时间空白，请点击右上角「在新标签页打开」在新窗口操作，完成后返回本页交卷。"
-                  />
-                </div>
-              )}
+                {/* 超时/错误提示：显示全屏卡片 + 大按钮 */}
+                {(iframeTimeout || iframeError) && !iframeLoaded && (
+                  <div style={{
+                    position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center', background: '#f0f2f5',
+                    zIndex: 6, padding: 40, textAlign: 'center',
+                  }}>
+                    <TableOutlined style={{ fontSize: 48, color: '#1890ff', marginBottom: 16 }} />
+                    <Title level={5} style={{ marginBottom: 8 }}>表格未能在页面内显示</Title>
+                    <Text style={{ color: '#666', marginBottom: 20, lineHeight: 1.8 }}>
+                      浏览器安全策略可能阻止了内嵌加载。<br/>
+                      请点击下方按钮在新标签页中操作多维表格，完成后返回此页面交卷。
+                    </Text>
+                    <Button type="primary" size="large" icon={<LinkOutlined />} onClick={openInNewTab}>
+                      在新标签页打开多维表格
+                    </Button>
+                  </div>
+                )}
 
-              <iframe
-                src={iframeUrl}
-                style={{ width: '100%', height: '100%', border: 'none' }}
-                title="WPS 多维表格"
-                onLoad={() => setIframeLoaded(true)}
-                onError={() => setIframeError(true)}
-              />
+                <iframe
+                  src={iframeUrl}
+                  style={{ width: '100%', height: '100%', border: 'none' }}
+                  title="WPS 多维表格"
+                  onLoad={() => setIframeLoaded(true)}
+                  onError={() => setIframeError(true)}
+                  referrerPolicy="no-referrer"
+                />
+              </div>
             </div>
           )}
         </div>

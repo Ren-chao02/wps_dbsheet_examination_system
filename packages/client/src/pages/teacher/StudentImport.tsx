@@ -36,8 +36,15 @@ export default function StudentImport() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-    } catch {
-      message.error('下载模板失败');
+    } catch (err: any) {
+      let msg = '下载模板失败';
+      try {
+        if (err.response?.data instanceof Blob) {
+          const text = await err.response.data.text();
+          msg = JSON.parse(text).message || msg;
+        }
+      } catch {}
+      message.error(msg);
     }
   };
 
@@ -51,9 +58,14 @@ export default function StudentImport() {
     try {
       const formData = new FormData();
       formData.append('file', fileList[0].originFileObj || fileList[0]);
-      const res = await api.post<ImportResult>('/students/import', formData, {
+      const res = await api.post('/students/import', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
+      if (res.data.async) {
+        setImportResult(null);
+        message.success(res.data.message || '导入任务已提交，请到任务列表查看进度');
+        return;
+      }
       setImportResult(res.data);
       setCurrent(3);
       message.success('导入完成');
@@ -79,8 +91,15 @@ export default function StudentImport() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-    } catch {
-      message.error('下载失败记录失败');
+    } catch (err: any) {
+      let msg = '下载失败记录失败';
+      try {
+        if (err.response?.data instanceof Blob) {
+          const text = await err.response.data.text();
+          msg = JSON.parse(text).message || msg;
+        }
+      } catch {}
+      message.error(msg);
     }
   };
 
@@ -106,17 +125,15 @@ export default function StudentImport() {
       content: (
         <div style={{ padding: '20px 0' }}>
           <Dragger
-            accept=".xlsx,.xls,.csv"
+            accept=".xlsx"
             maxCount={1}
             fileList={fileList}
             beforeUpload={(file) => {
               const isValidType = [
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                'application/vnd.ms-excel',
-                'text/csv',
-              ].includes(file.type) || /\.(xlsx|xls|csv)$/i.test(file.name);
+              ].includes(file.type) || /\.xlsx$/i.test(file.name);
               if (!isValidType) {
-                message.error('仅支持 .xlsx、.xls、.csv 格式文件');
+                message.error('仅支持 .xlsx 格式文件');
                 return Upload.LIST_IGNORE;
               }
               const isLt5M = file.size / 1024 / 1024 < 5;
@@ -136,7 +153,7 @@ export default function StudentImport() {
             </p>
             <p className="ant-upload-text">点击或拖拽文件到此区域上传</p>
             <p className="ant-upload-hint">
-              支持 .xlsx、.xls、.csv 格式，文件大小不超过 5MB
+              支持 .xlsx 格式，文件大小不超过 5MB
             </p>
           </Dragger>
         </div>

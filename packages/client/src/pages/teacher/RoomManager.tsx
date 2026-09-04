@@ -270,6 +270,17 @@ export function RoomManager() {
               a.download = 'room-import-template.json';
               a.click();
               URL.revokeObjectURL(url);
+            }).catch(async (err: any) => {
+              let msg = '模板下载失败';
+              try {
+                if (err.response?.data instanceof Blob) {
+                  const text = await err.response.data.text();
+                  msg = JSON.parse(text).message || msg;
+                } else if (err.response?.data?.message) {
+                  msg = err.response.data.message;
+                }
+              } catch {}
+              message.error(msg);
             });
           }}>
             导出模板

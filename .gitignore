@@ -32,3 +32,6 @@ debug-*
 *.jpg
 *.jpeg
 *.gif
+
+# Playwright MCP 调试产物
+.playwright-mcp/

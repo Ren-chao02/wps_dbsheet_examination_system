@@ -264,7 +264,9 @@ class ExportService {
       return data.map(item => {
         const row: any = {};
         for (const col of columns) {
-          let value = item[col.key];
+          let value = col.key.includes('.')
+            ? col.key.split('.').reduce((o: any, k) => (o == null ? undefined : o[k]), item)
+            : item[col.key];
 
           // 应用格式化函数
           if (col.format && value !== undefined && value !== null) {
@@ -337,27 +339,31 @@ class ExportService {
    * ✅ 清理过期导出文件（定期调用）
    */
   cleanupExpiredFiles(maxAgeHours: number = 24): number {
-    try {
-      const files = require('fs').readdirSync(this.outputDir);
-      const now = Date.now();
-      let deletedCount = 0;
+    const files = require('fs').readdirSync(this.outputDir);
+    const now = Date.now();
+    let deletedCount = 0;
 
-      for (const file of files) {
+    for (const file of files) {
+      try {
         const filePath = join(this.outputDir, file);
         const stats = require('fs').statSync(filePath);
+
+        // 跳过目录
+        if (stats.isDirectory()) continue;
+
         const ageHours = (now - stats.mtimeMs) / (1000 * 60 * 60);
 
         if (ageHours > maxAgeHours) {
           unlinkSync(filePath);
           deletedCount++;
         }
+      } catch (err) {
+        // 逐文件容错：单个文件失败不影响整体清理
+        console.warn('清理单个文件失败:', err);
       }
-
-      return deletedCount;
-    } catch (err) {
-      console.error('清理过期文件失败:', err);
-      return 0;
     }
+
+    return deletedCount;
   }
 }
 

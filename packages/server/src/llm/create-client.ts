@@ -18,6 +18,7 @@ const PROVIDER_BASE_URLS: Record<string, string> = {
   deepseek: 'https://api.deepseek.com',
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   glm: 'https://open.bigmodel.cn/api/paas/v4',
+  sensenova: 'https://token.sensenova.cn/v1', // Token Plan 公测免费端点
   ollama: 'http://localhost:11434/v1',
 };
 

@@ -36,6 +36,15 @@ vi.mock('../../config', () => ({
   },
 }));
 
+// Mock createLLMClient：测试连接逻辑，不真正请求外部 LLM
+const { mockCreateLLMClient } = vi.hoisted(() => ({
+  mockCreateLLMClient: vi.fn(),
+}));
+
+vi.mock('../../llm/create-client', () => ({
+  createLLMClient: mockCreateLLMClient,
+}));
+
 import { llmConfigService } from '../llm-config-service';
 
 describe('llmConfigService', () => {
@@ -241,6 +250,140 @@ describe('llmConfigService', () => {
       await llmConfigService.clear();
 
       expect(mockLlmConfigDeleteMany).toHaveBeenCalled();
+    });
+  });
+
+  // ── testConnection ──
+  describe('testConnection', () => {
+    const baseInput = {
+      provider: 'deepseek',
+      apiKey: 'sk-test-key',
+      baseURL: '',
+      model: 'deepseek-chat',
+      temperature: 0.4,
+      maxTokens: 2048,
+      timeoutMs: 60000,
+      rateLimitPerMin: 20,
+    };
+
+    /** 伪造 LLMClient：可配置流式 chunk 或抛错 */
+    function fakeClient(chunks: any[] = [], error?: Error) {
+      return {
+        chat: async function* () {
+          if (error) throw error;
+          for (const c of chunks) yield c;
+        },
+      };
+    }
+
+    it('连接成功：聚合流式回复并返回耗时', async () => {
+      mockCreateLLMClient.mockReturnValue(
+        fakeClient([{ delta: 'pong' }, { finishReason: 'stop' }]),
+      );
+
+      const result = await llmConfigService.testConnection(baseInput);
+
+      expect(result.ok).toBe(true);
+      expect(result.provider).toBe('deepseek');
+      expect(result.model).toBe('deepseek-chat');
+      expect(result.reply).toBe('pong');
+      expect(typeof result.latencyMs).toBe('number');
+      expect(mockCreateLLMClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'deepseek',
+          apiKey: 'sk-test-key',
+          model: 'deepseek-chat',
+        }),
+      );
+    });
+
+    it('apiKey 为空时回退到已生效 env key', async () => {
+      mockLlmConfigFindUnique.mockResolvedValue(null); // DB 无配置 → env
+      envLlmConfig.apiKey = 'env-key-xxxx';
+      mockCreateLLMClient.mockReturnValue(fakeClient([{ finishReason: 'stop' }]));
+
+      const result = await llmConfigService.testConnection({
+        ...baseInput,
+        apiKey: '',
+      });
+
+      expect(result.ok).toBe(true);
+      expect(mockCreateLLMClient).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKey: 'env-key-xxxx' }),
+      );
+    });
+
+    it('无任何 key（非 ollama）返回 no_api_key', async () => {
+      mockLlmConfigFindUnique.mockResolvedValue(null);
+      envLlmConfig.apiKey = '';
+
+      const result = await llmConfigService.testConnection({
+        ...baseInput,
+        apiKey: '',
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.errorType).toBe('no_api_key');
+      expect(mockCreateLLMClient).not.toHaveBeenCalled();
+    });
+
+    it('ollama 无 key 仍可测试', async () => {
+      mockCreateLLMClient.mockReturnValue(fakeClient([{ finishReason: 'stop' }]));
+
+      const result = await llmConfigService.testConnection({
+        ...baseInput,
+        provider: 'ollama',
+        model: 'qwen2.5:7b',
+        apiKey: '',
+      });
+
+      expect(result.ok).toBe(true);
+      expect(mockCreateLLMClient).toHaveBeenCalled();
+    });
+
+    it('401 → invalid_api_key', async () => {
+      mockCreateLLMClient.mockReturnValue(
+        fakeClient([], Object.assign(new Error('401 invalid key'), { status: 401 })),
+      );
+
+      const result = await llmConfigService.testConnection(baseInput);
+
+      expect(result.ok).toBe(false);
+      expect(result.errorType).toBe('invalid_api_key');
+      expect(result.message).toContain('API Key 无效');
+    });
+
+    it('404 → invalid_model', async () => {
+      mockCreateLLMClient.mockReturnValue(
+        fakeClient([], Object.assign(new Error('404 model not found'), { status: 404 })),
+      );
+
+      const result = await llmConfigService.testConnection(baseInput);
+
+      expect(result.ok).toBe(false);
+      expect(result.errorType).toBe('invalid_model');
+    });
+
+    it('无 status 且超时 → timeout', async () => {
+      mockCreateLLMClient.mockReturnValue(
+        fakeClient([], new Error('Request timed out.')),
+      );
+
+      const result = await llmConfigService.testConnection(baseInput);
+
+      expect(result.ok).toBe(false);
+      expect(result.errorType).toBe('timeout');
+    });
+
+    it('无 status 网络错误 → network', async () => {
+      mockCreateLLMClient.mockReturnValue(
+        fakeClient([], new Error('getaddrinfo ENOTFOUND api.deepseek.com')),
+      );
+
+      const result = await llmConfigService.testConnection(baseInput);
+
+      expect(result.ok).toBe(false);
+      expect(result.errorType).toBe('network');
     });
   });
 });

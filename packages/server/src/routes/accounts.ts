@@ -13,7 +13,18 @@ import { authenticate, authorizePermission } from '../middleware/auth';
 
 export const accountRouter = Router();
 
-const upload = multer({ dest: path.join(__dirname, '../../uploads/tmp') });
+const upload = multer({
+  dest: path.join(__dirname, '../../uploads/tmp'),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext === '.xlsx') {
+      cb(null, true);
+    } else {
+      cb(new Error('仅支持 xlsx 格式'));
+    }
+  },
+});
 
 // 所有接口需要认证 + SYSTEM_MANAGEMENT 权限
 accountRouter.use(authenticate);
@@ -400,12 +411,13 @@ accountRouter.get('/import-template', async (_req: Request, res: Response) => {
 // POST /api/accounts/import — 批量导入账户
 // ============================================================
 accountRouter.post('/import', upload.single('file'), async (req: Request, res: Response) => {
+  let filePath: string | undefined;
   try {
     if (!req.file) {
       return res.status(400).json({ message: '请上传文件' });
     }
 
-    const filePath = req.file.path;
+    filePath = req.file.path;
     const originalName = req.file.originalname;
 
     // 读取 Excel
@@ -445,7 +457,7 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
       const password = String(row.getCell(2).value || '').trim();
       const realName = String(row.getCell(3).value || '').trim();
       const email = String(row.getCell(4).value || '').trim();
-      const roleCode = String(row.getCell(5).value || '').trim() || 'TEACHER';
+      const roleCode = String(row.getCell(5).value || '').trim().toUpperCase() || 'TEACHER';
 
       if (!username || !password) {
         if (username || password || realName || email) {
@@ -453,6 +465,20 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
           failedRows++;
           errors.push({ row: i, username: username || `(第${i}行)`, error: '用户名和密码不能为空' });
         }
+        continue;
+      }
+
+      if (password.length < 6) {
+        totalRows++;
+        failedRows++;
+        errors.push({ row: i, username, error: '密码长度不能少于6位' });
+        continue;
+      }
+
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        totalRows++;
+        failedRows++;
+        errors.push({ row: i, username, error: '邮箱格式不正确' });
         continue;
       }
 
@@ -468,7 +494,12 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
         }
 
         // 查找角色
-        const systemRoleId = roleMap.get(roleCode) || null;
+        const systemRoleId = roleMap.get(roleCode);
+        if (!systemRoleId && roleCode !== 'TEACHER') {
+          failedRows++;
+          errors.push({ row: i, username, error: `未知角色编码: ${roleCode}` });
+          continue;
+        }
         const userRole = roleCode === 'ADMIN' ? 'admin' : 'teacher';
 
         const passwordHash = await bcrypt.hash(password, 10);
@@ -479,7 +510,7 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
             realName: realName || null,
             email: email || null,
             role: userRole,
-            systemRoleId,
+            systemRoleId: systemRoleId || null,
           },
         });
         successRows++;
@@ -521,7 +552,7 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
         successRows,
         failedRows,
         errorFile,
-        status: failedRows === totalRows ? 'FAILED' : 'FINISHED',
+        status: totalRows === 0 ? 'FINISHED' : (failedRows === totalRows ? 'FAILED' : 'FINISHED'),
         completedAt: new Date(),
       },
     });
@@ -538,6 +569,9 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
       errorFile: errorFile ? `/api/import-tasks/${importTask.id}/error-file` : null,
     });
   } catch (err: any) {
+    if (filePath) {
+      try { fs.unlinkSync(filePath); } catch {}
+    }
     res.status(500).json({ message: '导入失败', detail: err.message });
   }
 });

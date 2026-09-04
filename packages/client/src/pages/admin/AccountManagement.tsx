@@ -191,7 +191,16 @@ export default function AccountManagement() {
       link.remove();
       window.URL.revokeObjectURL(url);
       message.success('导出成功');
-    } catch { message.error('导出失败'); }
+    } catch (err: any) {
+      let msg = '导出失败';
+      try {
+        if (err.response?.data instanceof Blob) {
+          const text = await err.response.data.text();
+          msg = JSON.parse(text).message || msg;
+        }
+      } catch {}
+      message.error(msg);
+    }
   };
 
   const roleOptions = roles
