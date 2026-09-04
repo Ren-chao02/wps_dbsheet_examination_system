@@ -51,15 +51,25 @@ vi.mock('../../middleware/auth', () => ({
 
 let mockSchema: SchemaResponse;
 let mockGetSchemaError: Error | null = null;
+/** 记录最近一次 KingsoftAdapter 实例化参数（用于断言缓存的 accessToken 被传入） */
+let lastAdapterArgs: { fileId: string; accessToken: string; apiSecret?: string } | null = null;
 
 vi.mock('../../engine/adapters/kingsoft-adapter', () => ({
   KingsoftAdapter: class MockKingsoftAdapter {
-    constructor(_fileId: string, _accessToken: string, _apiSecret?: string) {}
+    constructor(fileId: string, accessToken: string, apiSecret?: string) {
+      lastAdapterArgs = { fileId, accessToken, apiSecret };
+    }
     async getSchema(): Promise<SchemaResponse> {
       if (mockGetSchemaError) throw mockGetSchemaError;
       return mockSchema;
     }
   },
+}));
+
+// Mock WPS 配置服务 — accessToken 缺省时自动读取服务端缓存的路径
+const { wpsConfigGetMock } = vi.hoisted(() => ({ wpsConfigGetMock: vi.fn() }));
+vi.mock('../../services/wps-config-service', () => ({
+  wpsConfigService: { get: (...args: unknown[]) => wpsConfigGetMock(...args) },
 }));
 
 // mock 生效后导入路由
@@ -174,6 +184,9 @@ describe('POST /api/questions/reverse-rules', () => {
     mockRole = 'teacher';
     mockSchema = makeSchema();
     mockGetSchemaError = null;
+    lastAdapterArgs = null;
+    wpsConfigGetMock.mockReset();
+    wpsConfigGetMock.mockResolvedValue(null); // 默认：服务端无缓存 token
   });
 
   it('未认证返回 401', async () => {
@@ -202,7 +215,7 @@ describe('POST /api/questions/reverse-rules', () => {
     expect(res.status).toBe(403);
   });
 
-  it('缺 accessToken 返回 400', async () => {
+  it('缺 accessToken 且服务端无缓存 WPS Token 时返回 400', async () => {
     const app = makeApp();
     const res = await request(app)
       .post('/api/questions/reverse-rules')
@@ -212,7 +225,24 @@ describe('POST /api/questions/reverse-rules', () => {
         fileId: 'file-1',
       });
     expect(res.status).toBe(400);
-    expect(res.body.message).toBe('参数错误');
+    expect(res.body.message).toContain('accessToken');
+    expect(wpsConfigGetMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('缺 accessToken 时自动使用服务端缓存 token 生成规则', async () => {
+    wpsConfigGetMock.mockResolvedValue({ accessToken: 'cached-token', clientId: 'c1' });
+    const app = makeApp();
+    const res = await request(app)
+      .post('/api/questions/reverse-rules')
+      .set('Authorization', TEACHER_TOKEN)
+      .send({
+        capabilities: ['field.single_select'],
+        fileId: 'file-1',
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.suggestions).toBeInstanceOf(Array);
+    // 路由应把缓存 token 传给 KingsoftAdapter，而不是报缺参
+    expect(lastAdapterArgs?.accessToken).toBe('cached-token');
   });
 
   it('空 capabilities 返回 400', async () => {
