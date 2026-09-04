@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
-  Button, Card, Typography, Tag, message, Spin, Alert, Space, Result, List, Empty,
+  Button, Card, Typography, Tag, message, Spin, Alert, Space, Result, List, Empty, Tooltip,
 } from 'antd';
 import {
   ArrowLeftOutlined, CheckOutlined, LinkOutlined, ReloadOutlined, RightOutlined,
+  StarFilled, StarOutlined,
 } from '@ant-design/icons';
 import { practiceApi } from '../../services/api';
 import type { RuleResult } from '../../types';
+import { useWpsEmbed } from '../../hooks/useWpsEmbed';
 
 const { Text, Title, Paragraph } = Typography;
 
@@ -69,9 +71,73 @@ export function PracticeDoing() {
   const [loading, setLoading] = useState(!payload);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<GradingResult | null>(null);
-  const [iframeError, setIframeError] = useState(false);
-  const [iframeLoaded, setIframeLoaded] = useState(false);
-  const [iframeTimeout, setIframeTimeout] = useState(false);
+  // ── WPS iframe 嵌入（遮罩/超时/重载/新标签登录后自动刷新） ──
+  const {
+    reloadKey,
+    iframeLoaded,
+    iframeError,
+    iframeTimeout,
+    showSpinner,
+    showFallback,
+    reload,
+    openInNewTab,
+    handleIframeLoad,
+    handleIframeError,
+  } = useWpsEmbed(shareUrl, 10000);
+  // ── 收藏（个人题集）：星标状态全局共享（作答页 + 结果页） ──
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+  const [favPendingId, setFavPendingId] = useState<string | null>(null);
+
+  // 进入作答页即拉取已收藏集合，保证星标初始态正确
+  useEffect(() => {
+    practiceApi
+      .favorites()
+      .then((items: any[]) => setFavoriteIds(new Set(items.map((it) => it.question.id))))
+      .catch(() => { /* 拉取失败静默：星标默认未收藏，不影响作答 */ });
+  }, []);
+
+  /** 切换单题收藏（乐观更新，失败回滚） */
+  const handleToggleFavorite = async (questionId: string) => {
+    if (favPendingId === questionId) return;
+    const wasFavorited = favoriteIds.has(questionId);
+    setFavPendingId(questionId);
+    setFavoriteIds(prev => {
+      const next = new Set(prev);
+      wasFavorited ? next.delete(questionId) : next.add(questionId);
+      return next;
+    });
+    try {
+      const res = await practiceApi.toggleFavorite(questionId);
+      message.success(res.favorited ? '已收藏，可在「我的题集」查看' : '已取消收藏');
+    } catch {
+      setFavoriteIds(prev => {
+        const next = new Set(prev);
+        wasFavorited ? next.add(questionId) : next.delete(questionId);
+        return next;
+      });
+      message.error('收藏操作失败，请重试');
+    } finally {
+      setFavPendingId(null);
+    }
+  };
+
+  /** 收藏按钮（作答页/结果页统一渲染） */
+  const renderStar = (questionId: string, size: 'small' | 'middle' = 'small') => {
+    const fav = favoriteIds.has(questionId);
+    return (
+      <Tooltip title={fav ? '取消收藏' : '收藏本题'}>
+        <Button
+          type="text"
+          size={size}
+          loading={favPendingId === questionId}
+          icon={fav
+            ? <StarFilled style={{ color: '#faad14' }} />
+            : <StarOutlined style={{ color: '#8c8c8c' }} />}
+          onClick={() => handleToggleFavorite(questionId)}
+        />
+      </Tooltip>
+    );
+  };
 
   // 若无 state（如刷新页面），仅能恢复 shareUrl；questions 快照需后端补 GET /practice/:recordId 接口
   useEffect(() => {
@@ -89,25 +155,8 @@ export function PracticeDoing() {
     })();
   }, [payload]);
 
-  // 按 demo-wps-embed.html「全部显示」模式加载：直接使用分享链接，不带 embed 参数
-  const iframeUrl = shareUrl ? shareUrl : '';
-  const openInNewTab = () => {
-    if (shareUrl) window.open(shareUrl, '_blank');
-  };
-  // 加载遮罩是否展示：onLoad 触发 / 报错 / 超时 三者任一发生即撤下
-  const showSpinner = !!shareUrl && !iframeLoaded && !iframeError && !iframeTimeout;
-
-  // iframe 加载超时兜底：WPS 多维表格为重型 SPA（常驻 WebSocket + 懒加载），
-  // 其 load 事件可能迟迟不触发，导致 onLoad 永不回调、转圈遮罩永久盖住 iframe。
-  // 10s 后强制撤下遮罩，露出 iframe 实际内容并提供「新标签页打开」逃生口。
-  useEffect(() => {
-    if (!shareUrl) return;
-    setIframeLoaded(false);
-    setIframeError(false);
-    setIframeTimeout(false);
-    const t = setTimeout(() => setIframeTimeout(true), 10000);
-    return () => clearTimeout(t);
-  }, [iframeUrl]);
+  // 按 demo-wps-embed.html「全部显示」模式加载：直接使用分享链接，不带 embed 参数；
+  // iframe 加载状态/超时/重载/新标签登录后自动刷新由 useWpsEmbed 统一管理。
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -132,6 +181,35 @@ export function PracticeDoing() {
   // ───── 结果态 ─────
   if (result) {
     const passRate = result.maxScore > 0 ? Math.round((result.score / result.maxScore) * 100) : 0;
+    // 「收藏全部错题」目标：未通过且尚未收藏的题
+    const wrongToFavorite = result.details
+      .filter(d => !d.isCorrect && !favoriteIds.has(d.questionId))
+      .map(d => d.questionId);
+
+    const handleCollectWrong = async () => {
+      if (wrongToFavorite.length === 0) {
+        message.info('错题已全部收藏');
+        return;
+      }
+      for (const qid of wrongToFavorite) {
+        setFavoriteIds(prev => {
+          const next = new Set(prev);
+          next.add(qid);
+          return next;
+        });
+        try {
+          await practiceApi.toggleFavorite(qid);
+        } catch {
+          setFavoriteIds(prev => {
+            const next = new Set(prev);
+            next.delete(qid);
+            return next;
+          });
+        }
+      }
+      message.success(`已将 ${wrongToFavorite.length} 道错题加入收藏，可在「我的题集」查看`);
+    };
+
     return (
       <div style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
         <Result
@@ -147,7 +225,19 @@ export function PracticeDoing() {
           ]}
         />
 
-        <Card title="判分明细" style={{ marginTop: 16 }}>
+        <Card
+          title="判分明细"
+          style={{ marginTop: 16 }}
+          extra={
+            <Button
+              size="small" icon={<StarOutlined />}
+              disabled={wrongToFavorite.length === 0}
+              onClick={handleCollectWrong}
+            >
+              收藏全部错题{wrongToFavorite.length > 0 ? `（${wrongToFavorite.length}）` : ''}
+            </Button>
+          }
+        >
           <List
             dataSource={result.details}
             renderItem={(d, idx) => (
@@ -163,6 +253,7 @@ export function PracticeDoing() {
                     <Tag color={d.isCorrect ? 'success' : 'error'}>
                       {d.isCorrect ? '正确' : '错误'}
                     </Tag>
+                    {renderStar(d.questionId)}
                   </Space>
                   <Text strong>{d.questionTitle}</Text>
 
@@ -269,6 +360,7 @@ export function PracticeDoing() {
                     </Tag>
                     <Tag>{typeLabels[currentQuestion.type] || currentQuestion.type}</Tag>
                     <Text style={{ fontWeight: 600, color: '#1890ff' }}>{currentQuestion.score} 分</Text>
+                    {renderStar(currentQuestion.questionId)}
                   </Space>
                 </div>
                 <Title level={4} style={{ margin: '0 0 12px', fontSize: 16 }}>
@@ -327,37 +419,47 @@ export function PracticeDoing() {
         {/* 右侧 WPS iframe */}
         {hasShareUrl && (
           <div style={{ flex: 1, position: 'relative', background: '#f0f2f5' }}>
-            {/* 右上角逃生口：始终可用，内嵌失败时可改在新标签页打开 */}
-            <div style={{ position: 'absolute', top: 8, right: 12, zIndex: 10 }}>
+            {/* 右上角工具：刷新表格 + 在新标签页打开（WPS 登录/备用操作入口） */}
+            <div style={{ position: 'absolute', top: 8, right: 12, zIndex: 10, display: 'flex', gap: 8 }}>
+              <Button size="small" icon={<ReloadOutlined />} onClick={reload}>
+                刷新表格
+              </Button>
               <Button size="small" icon={<LinkOutlined />} onClick={openInNewTab}>
                 在新标签页打开
               </Button>
             </div>
 
-            {/* 加载遮罩：onLoad 触发 / 报错 / 10s 超时 三者任一发生即撤下，避免永久转圈 */}
+            {/* 加载遮罩：onLoad 触发 / 报错 / 超时 三者任一发生即撤下，避免永久转圈 */}
             {showSpinner && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5', zIndex: 5 }}>
                 <Spin tip="正在加载 WPS 多维表格..." />
               </div>
             )}
 
-            {/* 超时/错误提示：iframe 迟迟未触发 onLoad，提示学生用新标签页打开 */}
-            {(iframeTimeout || iframeError) && !iframeLoaded && (
+            {/* 超时/错误提示：iframe 迟迟未触发 onLoad，提示学生刷新或新标签页打开 */}
+            {showFallback && (
               <div style={{ position: 'absolute', top: 44, left: 12, right: 12, zIndex: 6 }}>
                 <Alert
                   type="warning" showIcon banner
-                  message="WPS 表格加载较慢或被浏览器拦截"
-                  description="若上方区域长时间空白，请点击右上角「在新标签页打开」在新窗口操作，完成后返回本页交卷。"
+                  message="WPS 表格加载较慢、被浏览器拦截或提示需登录"
+                  description={
+                    <div style={{ lineHeight: 1.9 }}>
+                      若表格区域提示「登录 WPS」：请点右上「在新标签页打开」完成登录后回到本页，表格会自动刷新；
+                      仍提示未登录时，可直接在新标签页操作表格，完成后返回本页交卷（判分读取表格数据，与在哪操作无关）。
+                      也可点击「刷新表格」重试加载。
+                    </div>
+                  }
                 />
               </div>
             )}
 
             <iframe
-              src={iframeUrl}
+              key={reloadKey}
+              src={shareUrl || ''}
               style={{ width: '100%', height: '100%', border: 'none' }}
               title="WPS 多维表格练习"
-              onLoad={() => setIframeLoaded(true)}
-              onError={() => setIframeError(true)}
+              onLoad={handleIframeLoad}
+              onError={handleIframeError}
             />
           </div>
         )}

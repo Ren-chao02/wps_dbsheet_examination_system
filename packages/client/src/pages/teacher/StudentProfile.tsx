@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Row, Col, Statistic, Table, Tag, Spin, message, Button, Space } from 'antd';
-import { ArrowLeftOutlined, TrophyOutlined, CheckCircleOutlined, FileTextOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Statistic, Table, Tag, Spin, message, Button, Space, Typography } from 'antd';
+import { ArrowLeftOutlined, TrophyOutlined, CheckCircleOutlined, FileTextOutlined, TableOutlined } from '@ant-design/icons';
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts';
 import api from '../../services/api';
+import { PracticeFileModal } from '../../components/student/PracticeFileModal';
+
+const { Text } = Typography;
 
 interface StudentProfileData {
   student: { id: string; username: string; realName: string | null };
@@ -28,9 +31,22 @@ export function StudentProfilePage() {
   const [data, setData] = useState<StudentProfileData | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // 练习表格配置（题库练习 / 我的题集）
+  const [practiceFile, setPracticeFile] = useState<{ fileId: string; updatedAt: string } | null>(null);
+  const [practiceOpen, setPracticeOpen] = useState(false);
+
+  const fetchPracticeFile = useCallback(() => {
+    if (!id) return;
+    api
+      .get<{ assignment: { fileId: string; updatedAt: string } | null }>(`/students/${id}/practice-file`)
+      .then((res) => setPracticeFile(res.data.assignment))
+      .catch(() => { /* 非关键信息，静默失败 */ });
+  }, [id]);
+
   useEffect(() => {
     api.get(`/statistics/student/${id}`).then(res => setData(res.data)).catch(() => message.error('加载失败')).finally(() => setLoading(false));
-  }, [id]);
+    fetchPracticeFile();
+  }, [id, fetchPracticeFile]);
 
   if (loading) return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>;
   if (!data) return null;
@@ -59,6 +75,32 @@ export function StudentProfilePage() {
         <Col span={6}><Card><Statistic title="通过考试" value={data.passedExams} prefix={<CheckCircleOutlined />} valueStyle={{ color: '#52c41a' }} /></Card></Col>
         <Col span={6}><Card><Statistic title="通过率" value={data.passRate} suffix="%" valueStyle={{ color: data.passRate >= 60 ? '#52c41a' : '#ff4d4f' }} /></Card></Col>
       </Row>
+
+      {/* 练习表格配置 */}
+      <Card
+        size="small"
+        title={<Space><TableOutlined />练习表格（题库练习 / 我的题集）</Space>}
+        style={{ marginBottom: 24 }}
+        extra={
+          <Button type="link" size="small" onClick={() => setPracticeOpen(true)}>
+            {practiceFile ? '修改配置' : '去配置'}
+          </Button>
+        }
+      >
+        {practiceFile ? (
+          <Space wrap>
+            <Tag color="success">已配置</Tag>
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              文件 ID：{practiceFile.fileId}
+              {practiceFile.updatedAt ? ` · 更新于 ${new Date(practiceFile.updatedAt).toLocaleString()}` : ''}
+            </Text>
+          </Space>
+        ) : (
+          <Text type="secondary" style={{ fontSize: 13 }}>
+            尚未配置 — 配置该学生的专属练习表格后，才能使用「题库练习」与「我的题集 · 再练一次」。
+          </Text>
+        )}
+      </Card>
 
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={12}>
@@ -122,6 +164,13 @@ export function StudentProfilePage() {
           ]}
         />
       </Card>
+
+      <PracticeFileModal
+        student={{ id: id!, realName: data.student.realName, username: data.student.username }}
+        open={practiceOpen}
+        onClose={() => setPracticeOpen(false)}
+        onSaved={fetchPracticeFile}
+      />
     </div>
   );
 }

@@ -11,6 +11,7 @@ import ExcelJS from 'exceljs';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { enqueueImport } from '../jobs/import-queue';
+import { wpsConfigService } from '../services/wps-config-service';
 
 export const studentRouter = Router();
 
@@ -172,12 +173,121 @@ studentRouter.get('/', async (req: Request, res: Response) => {
           department: { select: { id: true, name: true, code: true } },
           major: { select: { id: true, name: true, code: true } },
           classRoom: { select: { id: true, name: true, code: true } },
+          // ✅ 练习表格配置摘要（学生管理页显示"已配置/未配置"）
+          practiceTableAssignment: { select: { id: true, fileId: true, shareUrl: true, updatedAt: true } },
         },
       }),
       prisma.user.count({ where }),
     ]);
 
     res.json({ data, total, page: Number(page), pageSize: Number(pageSize) });
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// ============================================================
+// 练习表格分配（题库练习/个人题集用；teacher/admin 代学生配置）
+// ============================================================
+
+const practiceFileSchema = z.object({
+  shareUrl: z.string().min(1, '请粘贴该学生练习表格的分享链接'),
+  accessToken: z.string().optional(),
+});
+
+/** 从分享链接中提取 fileId：https://www.kdocs.cn/l/xxxxxx */
+function extractPracticeFileId(shareUrl: string): string | null {
+  const match = shareUrl.trim().match(/\/l\/([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
+// GET /api/students/:id/practice-file — 查询单个学生的练习表格配置
+studentRouter.get('/:id/practice-file', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const student = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        username: true,
+        realName: true,
+        practiceTableAssignment: {
+          select: { fileId: true, shareUrl: true, accessToken: true, updatedAt: true },
+        },
+      },
+    });
+    if (!student) {
+      return res.status(404).json({ message: '学生不存在' });
+    }
+    res.json({
+      student: { id: student.id, username: student.username, realName: student.realName },
+      assignment: student.practiceTableAssignment ?? null,
+    });
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// PUT /api/students/:id/practice-file — 配置/更新学生的练习表格
+studentRouter.put('/:id/practice-file', async (req: Request, res: Response) => {
+  try {
+    const parsed = practiceFileSchema.parse(req.body);
+    const { id } = req.params;
+
+    const student = await prisma.user.findFirst({
+      where: { id, role: 'student' },
+      select: { id: true, username: true, realName: true },
+    });
+    if (!student) {
+      return res.status(404).json({ message: '学生不存在' });
+    }
+
+    const shareUrl = parsed.shareUrl.trim();
+    const fileId = extractPracticeFileId(shareUrl);
+    if (!fileId) {
+      return res.status(400).json({ message: '分享链接格式不正确，需包含 /l/xxxxxx（如 https://www.kdocs.cn/l/xxxxxx）' });
+    }
+
+    // accessToken 缺省时复用系统 WPS Token（WpsTokenManager 缓存）
+    let accessToken = parsed.accessToken?.trim();
+    if (!accessToken) {
+      const cached = await wpsConfigService.get();
+      accessToken = cached?.accessToken || '';
+    }
+    if (!accessToken) {
+      return res.status(400).json({
+        message: '未提供 access_token，且系统未配置 WPS Token。请先到「缓存管理 → WPS Token 管理」配置，或在弹窗中手动粘贴。',
+      });
+    }
+
+    const assignment = await prisma.practiceTableAssignment.upsert({
+      where: { studentId: student.id },
+      update: { fileId, shareUrl, accessToken },
+      create: { studentId: student.id, fileId, shareUrl, accessToken },
+    });
+
+    res.json({
+      student: { id: student.id, username: student.username, realName: student.realName },
+      assignment,
+    });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ message: '参数错误', errors: err.errors });
+    }
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// DELETE /api/students/:id/practice-file — 清除学生的练习表格配置
+studentRouter.delete('/:id/practice-file', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const student = await prisma.user.findUnique({ where: { id }, select: { id: true } });
+    if (!student) {
+      return res.status(404).json({ message: '学生不存在' });
+    }
+    await prisma.practiceTableAssignment.deleteMany({ where: { studentId: student.id } });
+    res.json({ ok: true });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { Card, Statistic, Row, Col, Collapse, Tag, Spin, Empty, message, Result, Tooltip } from 'antd';
-import { TrophyOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Card, Statistic, Row, Col, Collapse, Tag, Spin, Empty, message, Result, Tooltip, Button, Typography } from 'antd';
+import { TrophyOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import type { StudentSubmission } from '../../types';
+
+const { Title } = Typography;
 
 const actionLabels: Record<string, string> = {
   check_table_exists: '表存在',
@@ -29,6 +31,7 @@ const actionLabels: Record<string, string> = {
 
 export function ExamResultPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [submission, setSubmission] = useState<StudentSubmission | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -39,13 +42,32 @@ export function ExamResultPage() {
   if (loading) return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>;
   if (!submission) return <Empty description="未找到成绩" />;
 
+  // 成绩查询详情页（/student/exam/:id/result）的返回按钮：
+  // 已出分 -> 回到「成绩查询」列表；刚交卷未出分 -> 回到「我的考试」（可看到"已提交"状态）
+  const handleBack = () =>
+    navigate(submission.status === 'graded' ? '/student/history' : '/student/dashboard');
+
+  const backHeader = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+      <Button type="text" icon={<ArrowLeftOutlined />} onClick={handleBack}>
+        返回
+      </Button>
+      <Title level={5} style={{ margin: 0 }}>成绩详情</Title>
+    </div>
+  );
+
   if (submission.status !== 'graded') {
     return (
-      <Result
-        icon={<TrophyOutlined />}
-        title="答卷已提交"
-        subTitle="请等待教师完成评分后查看成绩"
-      />
+      <div className="page-container" style={{ maxWidth: 900 }}>
+        {backHeader}
+        <Card>
+          <Result
+            icon={<TrophyOutlined />}
+            title="答卷已提交"
+            subTitle="请等待教师完成评分后查看成绩"
+          />
+        </Card>
+      </div>
     );
   }
 
@@ -53,6 +75,7 @@ export function ExamResultPage() {
 
   return (
     <div className="page-container" style={{ maxWidth: 900 }}>
+      {backHeader}
       <Card>
         <Result
           status={passed ? 'success' : 'error'}

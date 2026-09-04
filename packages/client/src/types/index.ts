@@ -406,6 +406,13 @@ export interface StudentInfo {
   classRoom?: ClassRoom;
   lastLoginAt?: string;
   createdAt: string;
+  /** 练习表格配置摘要（学生列表接口附带；供"已配置/未配置"展示） */
+  practiceTableAssignment?: {
+    id: string;
+    fileId: string;
+    shareUrl: string | null;
+    updatedAt: string;
+  } | null;
 }
 
 // ========== 缓存管理模块类型 ==========
@@ -613,4 +620,55 @@ export interface CoachingChatParams {
   fileId?: string;
   accessToken?: string;
   apiSecret?: string;
+}
+
+// ============================================================
+// 个人题集（收藏 + 错题本）
+// ============================================================
+
+/** 题集列表中的题目摘要（GET /api/practice/favorite、/api/practice/wrong） */
+export interface QuestionBrief {
+  id: string;
+  title: string;
+  type: QuestionType;
+  difficulty: Difficulty;
+  score: number;
+  status: QuestionStatus;
+  description: string | null;
+  analysis: string | null;
+  hints: string | null;
+  primaryCategory?: { id: string; name: string } | null;
+  secondaryCategory?: { id: string; name: string } | null;
+}
+
+/** 收藏条目 */
+export interface FavoriteItem {
+  id: string;
+  createdAt: string;
+  question: QuestionBrief;
+}
+
+/** 错题条目 */
+export interface WrongItem {
+  id: string;
+  wrongCount: number;
+  lastWrongAt: string;
+  question: QuestionBrief;
+}
+
+/** POST /api/practice/start 响应（开练结果，随路由 state 传给作答页） */
+export interface StartResponse {
+  recordId: string;
+  questions: Array<{
+    questionId: string;
+    sortOrder: number;
+    title: string;
+    description: string | null;
+    type: string;
+    difficulty: string;
+    score: number;
+    hints: string | null;
+  }>;
+  maxScore: number;
+  shareUrl: string | null;
 }

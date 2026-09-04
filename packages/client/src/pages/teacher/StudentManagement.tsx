@@ -10,6 +10,7 @@ import dayjs from 'dayjs';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import type { StudentInfo, Department, Major, ClassRoom, PaginatedResponse } from '../../types';
+import { PracticeFileModal } from '../../components/student/PracticeFileModal';
 
 const genderMap: Record<string, string> = { MALE: '男', FEMALE: '女' };
 
@@ -26,6 +27,15 @@ export default function StudentManagement() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<StudentInfo | null>(null);
   const [form] = Form.useForm();
+
+  // 练习表格配置弹窗
+  const [practiceStudent, setPracticeStudent] = useState<StudentInfo | null>(null);
+  const [practiceModalOpen, setPracticeModalOpen] = useState(false);
+
+  const openPracticeFile = (student: StudentInfo) => {
+    setPracticeStudent(student);
+    setPracticeModalOpen(true);
+  };
 
   // 筛选状态
   const [filters, setFilters] = useState<{ departmentId?: string; majorId?: string; classRoomId?: string; search?: string }>({});
@@ -272,6 +282,20 @@ export default function StudentManagement() {
       },
     },
     {
+      title: '练习表格', key: 'practice', width: 110,
+      render: (_: any, r: StudentInfo) => {
+        const has = !!r.practiceTableAssignment;
+        return (
+          <Button
+            type="link" size="small" style={{ padding: 0 }}
+            onClick={() => openPracticeFile(r)}
+          >
+            {has ? '已配置' : '未配置'}
+          </Button>
+        );
+      },
+    },
+    {
       title: '创建时间', dataIndex: 'createdAt', key: 'createdAt', width: 120,
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '—',
     },
@@ -445,6 +469,14 @@ export default function StudentManagement() {
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* 配置练习表格弹窗 */}
+      <PracticeFileModal
+        student={practiceStudent}
+        open={practiceModalOpen}
+        onClose={() => setPracticeModalOpen(false)}
+        onSaved={() => fetchStudents(data.page)}
+      />
     </div>
   );
 }

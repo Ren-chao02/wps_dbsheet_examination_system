@@ -9,12 +9,14 @@ import {
   LeftOutlined,
   RightOutlined,
   TableOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import type { Question } from '../../types';
 import { FullscreenGuard } from '../../components/exam/FullscreenGuard';
 import { useExamSession } from '../../hooks/useExamSession';
 import { computeExamDeadline } from '../../utils/exam-time';
+import { useWpsEmbed } from '../../hooks/useWpsEmbed';
 
 const { Text, Paragraph, Title } = Typography;
 
@@ -31,9 +33,6 @@ export function WpsExamDoingPage() {
   const [loading, setLoading] = useState(true);
   const [currentStep, setCurrentStep] = useState(0);
   const [deadline, setDeadline] = useState<number | null>(null);
-  const [iframeError, setIframeError] = useState(false);
-  const [iframeLoaded, setIframeLoaded] = useState(false);
-  const [iframeTimeout, setIframeTimeout] = useState(false);
   const [now, setNow] = useState(Date.now());
 
   const {
@@ -87,26 +86,19 @@ export function WpsExamDoingPage() {
   // 使用完整分享链接直链（不带 embed=1 参数），呈现与 WPS 一致的完整界面：
   // 左侧「数据表/视图」侧边栏 + 顶部标题/页签/工具栏。
   // embed=1 是纯视图内嵌模式，只会显示当前视图的网格，不带侧边栏与上边栏。
-  // 链接权限由教师端保证为「任何人可查看/编辑（无需登录）」，可直接在 iframe 中打开，
-  // 与练习页 PracticeDoing 的「全部显示」模式保持一致。
-  const iframeUrl = hasWpsTable ? wpsTable.shareUrl : '';
-  const openInNewTab = () => {
-    if (wpsTable?.shareUrl) window.open(wpsTable.shareUrl, '_blank');
-  };
-  // 加载遮罩是否展示：onLoad 触发 / 报错 / 超时 三者任一发生即撤下
-  const showSpinner = hasWpsTable && !iframeLoaded && !iframeError && !iframeTimeout;
-
-  // iframe 加载超时兜底：WPS 多维表格为重型 SPA（常驻 WebSocket + 懒加载），
-  // 其 load 事件可能迟迟不触发，导致 onLoad 永不回调、转圈遮罩永久盖住 iframe。
-  // 15s 后强制撤下遮罩，露出 iframe 实际内容并提供「新标签页打开」逃生口。
-  useEffect(() => {
-    if (!hasWpsTable) return;
-    setIframeLoaded(false);
-    setIframeError(false);
-    setIframeTimeout(false);
-    const t = setTimeout(() => setIframeTimeout(true), 15000);
-    return () => clearTimeout(t);
-  }, [iframeUrl]);
+  // iframe 加载/超时/重载/新标签登录后自动刷新由 useWpsEmbed 统一管理。
+  const {
+    reloadKey,
+    iframeLoaded,
+    iframeError,
+    iframeTimeout,
+    showSpinner,
+    showFallback,
+    reload,
+    openInNewTab,
+    handleIframeLoad,
+    handleIframeError,
+  } = useWpsEmbed(hasWpsTable ? wpsTable.shareUrl : null, 15000);
 
   if (loading) {
     return (
@@ -296,7 +288,7 @@ export function WpsExamDoingPage() {
           {/* Right: WPS iframe + 打开按钮 */}
           {hasWpsTable && (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f0f2f5' }}>
-              {/* 顶部工具栏：始终显示「在新标签页打开」按钮 */}
+              {/* 顶部工具栏：刷新表格 + 在新标签页打开（WPS 登录/备用操作） */}
               <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 padding: '8px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0', flexShrink: 0,
@@ -305,9 +297,14 @@ export function WpsExamDoingPage() {
                   <TableOutlined style={{ marginRight: 8 }} />
                   多维表格
                 </Text>
-                <Button type="primary" icon={<LinkOutlined />} onClick={openInNewTab}>
-                  在新标签页打开
-                </Button>
+                <Space>
+                  <Button icon={<ReloadOutlined />} onClick={reload}>
+                    刷新表格
+                  </Button>
+                  <Button type="primary" icon={<LinkOutlined />} onClick={openInNewTab}>
+                    在新标签页打开
+                  </Button>
+                </Space>
               </div>
 
               {/* iframe 区域 */}
@@ -319,8 +316,8 @@ export function WpsExamDoingPage() {
                   </div>
                 )}
 
-                {/* 超时/错误提示：显示全屏卡片 + 大按钮 */}
-                {(iframeTimeout || iframeError) && !iframeLoaded && (
+                {/* 超时/错误/未登录提示：全屏卡片 + 操作按钮 */}
+                {showFallback && (
                   <div style={{
                     position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
                     alignItems: 'center', justifyContent: 'center', background: '#f0f2f5',
@@ -328,22 +325,30 @@ export function WpsExamDoingPage() {
                   }}>
                     <TableOutlined style={{ fontSize: 48, color: '#1890ff', marginBottom: 16 }} />
                     <Title level={5} style={{ marginBottom: 8 }}>表格未能在页面内显示</Title>
-                    <Text style={{ color: '#666', marginBottom: 20, lineHeight: 1.8 }}>
-                      浏览器安全策略可能阻止了内嵌加载。<br/>
-                      请点击下方按钮在新标签页中操作多维表格，完成后返回此页面交卷。
+                    <Text style={{ color: '#666', marginBottom: 20, lineHeight: 1.9 }}>
+                      浏览器安全策略可能阻止了内嵌加载，或表格提示需要登录 WPS。<br />
+                      请点下方「在新标签页打开」完成登录后回到本页，表格会自动刷新；<br />
+                      仍提示未登录时，可直接在新标签页操作表格，完成后返回本页交卷
+                      （判分读取的是表格数据，与你在哪里操作无关）。
                     </Text>
-                    <Button type="primary" size="large" icon={<LinkOutlined />} onClick={openInNewTab}>
-                      在新标签页打开多维表格
-                    </Button>
+                    <Space>
+                      <Button size="large" icon={<ReloadOutlined />} onClick={reload}>
+                        已登录，刷新表格
+                      </Button>
+                      <Button type="primary" size="large" icon={<LinkOutlined />} onClick={openInNewTab}>
+                        在新标签页打开多维表格
+                      </Button>
+                    </Space>
                   </div>
                 )}
 
                 <iframe
-                  src={iframeUrl}
+                  key={reloadKey}
+                  src={wpsTable?.shareUrl || ''}
                   style={{ width: '100%', height: '100%', border: 'none' }}
                   title="WPS 多维表格"
-                  onLoad={() => setIframeLoaded(true)}
-                  onError={() => setIframeError(true)}
+                  onLoad={handleIframeLoad}
+                  onError={handleIframeError}
                   referrerPolicy="no-referrer"
                 />
               </div>

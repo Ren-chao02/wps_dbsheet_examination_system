@@ -24,6 +24,7 @@ import {
   type RecordData,
 } from '../engine/rule-engine';
 import { createAdapterFromSpaceId } from '../engine/adapters/kingsoft-adapter';
+import { wpsConfigService } from './wps-config-service';
 
 // ============================================================
 // 类型定义
@@ -104,38 +105,66 @@ export async function gradePracticeRecord(
     .map(s => ({ snapshot: s, question: questionMap.get(s.questionId) }))
     .filter((x): x is { snapshot: PracticeQuestionSnapshot; question: NonNullable<typeof x.question> } => !!x.question);
 
-  // 3. 定位 WPS 文件
-  // 优先 record.tableSpaceId，回退 PracticeTableAssignment
-  let effectiveSpaceId = record.tableSpaceId;
-  if (!effectiveSpaceId) {
+  // 3. 定位 WPS 文件 + 使用「当前有效」的 WPS token
+  // 系统 token 每 ~2h 由 wps_config 自动刷新，而 tableSpaceId / assignment 里存的是
+  // 创建/开始时刻的快照 —— 快照过期会导致 403 Token expired。因此判分必须优先取
+  // 实时 token（getValidAccessToken 临近过期会自动先刷新），快照仅作兜底。
+  const spaceParts = (record.tableSpaceId || '').split(':');
+  const snapshotFileId = spaceParts[0] || undefined;
+  const snapshotToken = spaceParts[1] || undefined;
+
+  const liveToken = await wpsConfigService.getValidAccessToken();
+
+  let fileId = snapshotFileId;
+  let assignmentToken: string | undefined;
+  if (!fileId || (!liveToken && !snapshotToken)) {
     const assignment = await prisma.practiceTableAssignment.findUnique({
       where: { studentId: record.studentId },
     });
-    if (assignment) {
-      effectiveSpaceId = assignment.accessToken
-        ? `${assignment.fileId}:${assignment.accessToken}`
-        : assignment.fileId;
-    }
+    assignmentToken = assignment?.accessToken || undefined;
+    if (!fileId) fileId = assignment?.fileId || undefined;
   }
 
-  // 外部注入 accessToken
-  if (accessToken && effectiveSpaceId) {
-    const fileId = effectiveSpaceId.split(':')[0];
-    effectiveSpaceId = `${fileId}:${accessToken}`;
-  }
+  // token 优先级：外部注入 > 实时系统 token > tableSpaceId 快照 > assignment 快照
+  const effectiveToken = accessToken || liveToken || snapshotToken || assignmentToken || '';
+
+  const effectiveSpaceId = fileId
+    ? `${fileId}:${effectiveToken}`
+    : record.tableSpaceId || '';
 
   const adapter = createAdapterFromSpaceId(effectiveSpaceId);
   if (!adapter) {
-    const parts = (effectiveSpaceId || '').split(':');
-    const hasToken = parts.length >= 2 && parts[1];
+    const hasToken = !!effectiveToken;
     const reason = hasToken
       ? 'WPS API 连接失败，无法创建适配器'
       : '缺少有效的 WPS access_token，无法获取练习表格数据';
     throw new Error(reason);
   }
 
-  // 4. 获取 Schema
-  const schema: SchemaResponse = await adapter.getSchema();
+  // 4. 获取 Schema（带「建表一致性延迟」自动重试）
+  // WPS 文档 API 对刚创建/刚修改的表可能存在秒级一致性延迟：学生刚建完表就提交时，
+  // 首次 schema 可能还没读到新表 → 全题误判「未找到表」。若本题要求建的表一张都
+  // 没读到，先等待 3 秒重拉一次再判。
+  let schema: SchemaResponse = await adapter.getSchema();
+  {
+    const expectedTableNames = new Set<string>();
+    for (const x of orderedQuestions) {
+      for (const rule of (x.question.answerRules as unknown as AnswerRule[]) || []) {
+        if (rule.action === 'check_table_exists' && rule.params?.tableName) {
+          expectedTableNames.add(String(rule.params.tableName));
+        }
+      }
+    }
+    if (expectedTableNames.size > 0) {
+      const actualNames = (schema.detail?.sheets || []).map(s => s.name);
+      const allMissing = [...expectedTableNames].every(n => !actualNames.includes(n));
+      if (allMissing) {
+        console.log('[practice-grading] 题目要求建的表尚未读到，3s 后重试 schema/query');
+        await new Promise(r => setTimeout(r, 3000));
+        schema = await adapter.getSchema();
+      }
+    }
+  }
 
   // 5. 预取记录类规则数据（与 gradeSubmission 同逻辑）
   const allRules = orderedQuestions.flatMap(
