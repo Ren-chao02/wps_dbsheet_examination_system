@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
-import { autoEndExpiredExams } from '../utils/exam-utils';
+import { autoEndExpiredExams, finalizeExamSubmissions } from '../utils/exam-utils';
 
 export const examRouter = Router();
 examRouter.use(authenticate);
@@ -383,14 +383,24 @@ examRouter.delete('/:id', async (req: Request, res: Response) => {
       return res.status(400).json({ message: '考试进行中，无法删除' });
     }
 
-    // 使用事务先清理间接关联的外键约束记录
+    // 使用事务显式清理全部关联记录，避免外键约束导致删除失败、留下孤儿考试
+    const examId = req.params.id;
     await prisma.$transaction(async (tx) => {
-      // 1. 删除考场学生关联（间接关联，无级联删除设置）
-      await tx.examRoomStudent.deleteMany({
-        where: { assignment: { examId: req.params.id } },
-      });
-      // 2. 删除考试
-      await tx.exam.delete({ where: { id: req.params.id } });
+      // 1. 考场学生（间接关联，无级联）
+      await tx.examRoomStudent.deleteMany({ where: { assignment: { examId } } });
+      // 2. 考试场次
+      await tx.examSession.deleteMany({ where: { examId } });
+      // 3. 考生答卷（其详情/验证结果通过 onDelete: Cascade 级联）
+      await tx.studentSubmission.deleteMany({ where: { examId } });
+      // 4. 行为日志 / 行为分析报告
+      await tx.studentBehaviorLog.deleteMany({ where: { examId } });
+      await tx.behaviorAnalysisReport.deleteMany({ where: { examId } });
+      // 5. 表格分配 / 考场分配 / 考试题目（schema 有级联，显式清理更稳）
+      await tx.examTableAssignment.deleteMany({ where: { examId } });
+      await tx.examRoomAssignment.deleteMany({ where: { examId } });
+      await tx.examQuestion.deleteMany({ where: { examId } });
+      // 6. 考试主体
+      await tx.exam.delete({ where: { id: examId } });
     });
 
     res.json({ message: '删除成功' });
@@ -492,6 +502,25 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
       return res.status(400).json({ message: '考试所属批次尚未激活，请先激活批次后再发布考试' });
     }
 
+    // ✅ 校验：必须已分配考生，且所有考生都已分配 WPS 表格，否则不允许发布
+    const studentIds = (await prisma.examRoomStudent.findMany({
+      where: { assignment: { examId: req.params.id } },
+      select: { studentId: true },
+    })).map(s => s.studentId);
+    if (studentIds.length === 0) {
+      return res.status(400).json({ message: '考试尚未分配考生，无法发布，请先在考试设置中分配考生' });
+    }
+    const tableAssignedStudentIds = new Set(
+      (await prisma.examTableAssignment.findMany({
+        where: { examId: req.params.id },
+        select: { studentId: true },
+      })).map(t => t.studentId),
+    );
+    const missingTables = studentIds.filter(id => !tableAssignedStudentIds.has(id));
+    if (missingTables.length > 0) {
+      return res.status(400).json({ message: `还有 ${missingTables.length} 名考生未分配 WPS 表格，无法发布` });
+    }
+
     // 发布时：有未来开始时间 → scheduled，否则 → published
     const newStatus = exam.startTime && new Date(exam.startTime) > new Date() ? 'scheduled' : 'published';
 
@@ -540,6 +569,22 @@ examRouter.post('/:id/start', async (req: Request, res: Response) => {
       return res.status(400).json({ message: '考试未发布或已排期，无法开始' });
     }
 
+    // ✅ 校验：所有已分配考生必须已分配 WPS 表格，否则不允许开始
+    const startStudentIds = (await prisma.examRoomStudent.findMany({
+      where: { assignment: { examId: req.params.id } },
+      select: { studentId: true },
+    })).map(s => s.studentId);
+    const startTableIds = new Set(
+      (await prisma.examTableAssignment.findMany({
+        where: { examId: req.params.id },
+        select: { studentId: true },
+      })).map(t => t.studentId),
+    );
+    const missingStartTables = startStudentIds.filter(id => !startTableIds.has(id));
+    if (missingStartTables.length > 0) {
+      return res.status(400).json({ message: `还有 ${missingStartTables.length} 名考生未分配 WPS 表格，无法开始考试` });
+    }
+
     const updated = await prisma.exam.update({
       where: { id: req.params.id },
       data: { status: 'in_progress', startTime: new Date() },
@@ -568,9 +613,10 @@ examRouter.post('/:id/end', async (req: Request, res: Response) => {
       return res.status(400).json({ message: '考试未在进行中' });
     }
 
+    const endedAt = new Date();
     const updated = await prisma.exam.update({
       where: { id: req.params.id },
-      data: { status: 'ended', endTime: new Date() },
+      data: { status: 'ended', endTime: endedAt },
     });
 
     // 级联更新考场预约状态
@@ -578,6 +624,12 @@ examRouter.post('/:id/end', async (req: Request, res: Response) => {
       where: { examId: req.params.id, status: 'in_progress' },
       data: { status: 'completed' },
     });
+
+    // 全局状态兜底：强制回收所有"考试中"的提交，标记为系统代交
+    const submittedCount = await finalizeExamSubmissions(req.params.id, endedAt);
+    if (submittedCount > 0) {
+      console.log(`[exam/end] exam ${req.params.id}: auto-submitted ${submittedCount} stale submissions`);
+    }
 
     res.json(updated);
   } catch {

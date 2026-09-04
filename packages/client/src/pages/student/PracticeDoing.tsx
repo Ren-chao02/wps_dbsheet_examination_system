@@ -89,7 +89,8 @@ export function PracticeDoing() {
     })();
   }, [payload]);
 
-  const iframeUrl = shareUrl ? `${shareUrl}${shareUrl.includes('?') ? '&' : '?'}embed=1` : '';
+  // 按 demo-wps-embed.html「全部显示」模式加载：直接使用分享链接，不带 embed 参数
+  const iframeUrl = shareUrl ? shareUrl : '';
   const openInNewTab = () => {
     if (shareUrl) window.open(shareUrl, '_blank');
   };

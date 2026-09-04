@@ -21,7 +21,8 @@ const updateDepartmentSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   code: z.string().min(1).max(50).optional(),
   description: z.string().nullable().optional(),
-  sortOrder: z.number().int().optional(),
+  // 前端 <Input type="number"> 提交字符串，用 coerce 兼容
+  sortOrder: z.coerce.number().int().optional(),
 });
 
 const createMajorSchema = z.object({
@@ -35,7 +36,7 @@ const updateMajorSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   code: z.string().min(1).max(50).optional(),
   description: z.string().nullable().optional(),
-  sortOrder: z.number().int().optional(),
+  sortOrder: z.coerce.number().int().optional(),
 });
 
 const createClassRoomSchema = z.object({
@@ -49,7 +50,7 @@ const updateClassRoomSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   code: z.string().min(1).max(50).optional(),
   academicYear: z.string().min(4).optional(),
-  gradeLevel: z.number().int().min(1).max(8).optional(),
+  gradeLevel: z.coerce.number().int().min(1).max(8).optional(),
 });
 
 // ============ 院系 CRUD ============
@@ -192,24 +193,17 @@ departmentRouter.delete('/:id', authorize('admin', 'teacher'), async (req: Reque
       });
     }
 
-    // 检查专业下是否有学生（通过班级关联）
-    const studentsInMajors = await prisma.user.count({
-      where: {
-        majorId: { in: (await prisma.major.findMany({ where: { departmentId }, select: { id: true } })).map(m => m.id) },
-        role: 'student',
-      },
-    });
+    // 检查专业下是否有学生（通过 major 或 classRoom 关联，取并集避免重复学生被少算）
+    const majorIds = (await prisma.major.findMany({ where: { departmentId }, select: { id: true } })).map(m => m.id);
+    const classRoomIds = (await prisma.classRoom.findMany({ where: { departmentId }, select: { id: true } })).map(c => c.id);
 
-    const studentsInClassRooms = await prisma.user.count({
-      where: {
-        classRoomId: {
-          in: (await prisma.classRoom.findMany({ where: { departmentId }, select: { id: true } })).map(c => c.id),
-        },
-        role: 'student',
-      },
-    });
+    const studentOrConditions = [];
+    if (majorIds.length > 0) studentOrConditions.push({ majorId: { in: majorIds } });
+    if (classRoomIds.length > 0) studentOrConditions.push({ classRoomId: { in: classRoomIds } });
 
-    const totalStudents = Math.max(studentsInMajors, studentsInClassRooms);
+    const totalStudents = studentOrConditions.length > 0
+      ? await prisma.user.count({ where: { role: 'student', OR: studentOrConditions } })
+      : 0;
     if (totalStudents > 0 && force !== 'true') {
       return res.status(409).json({
         message: `该院系关联数据中有 ${totalStudents} 名学生，无法删除。如需级联删除，请传递 force=true 参数`,

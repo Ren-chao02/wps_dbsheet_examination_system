@@ -23,9 +23,6 @@ import {
   SafetyOutlined,
   ClockCircleOutlined,
   KeyOutlined,
-  EyeOutlined,
-  EyeInvisibleOutlined,
-  CopyOutlined,
   SaveOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
@@ -47,12 +44,13 @@ export function WpsTokenManager() {
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [showToken, setShowToken] = useState(false);
-  const [showRefreshToken, setShowRefreshToken] = useState(false);
   const [manualFormVisible, setManualFormVisible] = useState(false);
   const [manualForm] = Form.useForm();
   const [refreshModalOpen, setRefreshModalOpen] = useState(false);
   const [refreshForm] = Form.useForm();
+  const [credentialForm] = Form.useForm();
+  const [credConfigured, setCredConfigured] = useState(false);
+  const [credSaving, setCredSaving] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -76,7 +74,24 @@ export function WpsTokenManager() {
       }
     };
     loadFromServer();
-  }, [getWpsTokenRemainingSeconds, setWpsToken]);
+
+    // 加载已保存的 WPS 应用凭据（DB 优先，回退环境变量）
+    const loadCredentials = async () => {
+      try {
+        const cred = await api.get('/wps-token/credentials');
+        if (cred.data?.apiKey || cred.data?.apiSecret) {
+          credentialForm.setFieldsValue({
+            clientId: cred.data.apiKey,
+            clientSecret: cred.data.apiSecret,
+          });
+        }
+        setCredConfigured(!!cred.data?.configured);
+      } catch {
+        // 忽略加载失败
+      }
+    };
+    loadCredentials();
+  }, [getWpsTokenRemainingSeconds, setWpsToken, credentialForm]);
 
   // 每秒更新倒计时
   useEffect(() => {
@@ -204,24 +219,6 @@ export function WpsTokenManager() {
     message.success('已清除本地和服务端 Token 缓存');
   };
 
-  const handleCopyToken = () => {
-    if (!wpsToken?.accessToken) return;
-    navigator.clipboard.writeText(wpsToken.accessToken).then(() => {
-      message.success('access_token 已复制到剪贴板');
-    }).catch(() => {
-      message.error('复制失败，请手动复制');
-    });
-  };
-
-  const handleCopyRefreshToken = () => {
-    if (!wpsToken?.refreshToken) return;
-    navigator.clipboard.writeText(wpsToken.refreshToken).then(() => {
-      message.success('refresh_token 已复制到剪贴板');
-    }).catch(() => {
-      message.error('复制失败，请手动复制');
-    });
-  };
-
   const handleManualUpdate = async (values: {
     accessToken: string;
     refreshToken: string;
@@ -264,6 +261,24 @@ export function WpsTokenManager() {
     message.success('Token 已手动更新');
   };
 
+  const handleSaveCredentials = async () => {
+    try {
+      const values = await credentialForm.validateFields();
+      setCredSaving(true);
+      await api.post('/wps-token/credentials', {
+        apiKey: values.clientId,
+        apiSecret: values.clientSecret,
+      });
+      setCredConfigured(true);
+      message.success('WPS 应用凭据已保存，自动刷新将立即使用');
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.response?.data?.detail || '保存凭据失败';
+      message.error(msg);
+    } finally {
+      setCredSaving(false);
+    }
+  };
+
   if (!mounted) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
@@ -285,6 +300,50 @@ export function WpsTokenManager() {
       </div>
 
       <Space direction="vertical" style={{ width: '100%' }} size="large">
+        <Card
+          title={
+            <Space>
+              <SafetyOutlined />
+              应用凭据配置（client_id / client_secret）
+            </Space>
+          }
+          extra={
+            <Tag color={credConfigured ? 'success' : 'warning'}>
+              {credConfigured ? '已配置' : '未配置'}
+            </Tag>
+          }
+        >
+          <Alert
+            type="info"
+            showIcon
+            message="克隆项目部署后，在此填写一次金山开放平台的应用凭据即可，无需修改 .env。保存后自动刷新会立即使用该凭据。"
+            style={{ marginBottom: 16 }}
+          />
+          <Form form={credentialForm} layout="inline" onFinish={handleSaveCredentials}>
+            <Form.Item
+              name="clientId"
+              label="client_id"
+              rules={[{ required: true, message: '请输入 client_id' }]}
+              style={{ flex: '1 1 300px', marginBottom: 12 }}
+            >
+              <Input.Password placeholder="金山开放平台应用 client_id" />
+            </Form.Item>
+            <Form.Item
+              name="clientSecret"
+              label="client_secret"
+              rules={[{ required: true, message: '请输入 client_secret' }]}
+              style={{ flex: '1 1 300px', marginBottom: 12 }}
+            >
+              <Input.Password placeholder="金山开放平台应用 client_secret" />
+            </Form.Item>
+            <Form.Item style={{ marginBottom: 12 }}>
+              <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={credSaving}>
+                保存凭据
+              </Button>
+            </Form.Item>
+          </Form>
+        </Card>
+
         {!wpsToken && (
           <Card>
             <Empty
@@ -357,28 +416,7 @@ export function WpsTokenManager() {
                   visibilityToggle={false}
                   readOnly
                   addonBefore={<KeyOutlined />}
-                  suffix={
-                    <Space>
-                      <Button
-                        type="text"
-                        icon={showToken ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-                        onClick={() => setShowToken(s => !s)}
-                        title={showToken ? '隐藏' : '显示'}
-                      />
-                      <Button
-                        type="text"
-                        icon={<CopyOutlined />}
-                        onClick={handleCopyToken}
-                        title="复制"
-                      />
-                    </Space>
-                  }
                 />
-                {showToken && (
-                  <Paragraph copyable={{ text: wpsToken.accessToken }}>
-                    <Text code style={{ wordBreak: 'break-all' }}>{wpsToken.accessToken}</Text>
-                  </Paragraph>
-                )}
               </Space>
             </Card>
 
@@ -389,28 +427,7 @@ export function WpsTokenManager() {
                   visibilityToggle={false}
                   readOnly
                   addonBefore={<SafetyOutlined />}
-                  suffix={
-                    <Space>
-                      <Button
-                        type="text"
-                        icon={showRefreshToken ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-                        onClick={() => setShowRefreshToken(s => !s)}
-                        title={showRefreshToken ? '隐藏' : '显示'}
-                      />
-                      <Button
-                        type="text"
-                        icon={<CopyOutlined />}
-                        onClick={handleCopyRefreshToken}
-                        title="复制"
-                      />
-                    </Space>
-                  }
                 />
-                {showRefreshToken && wpsToken.refreshToken && (
-                  <Paragraph copyable={{ text: wpsToken.refreshToken }}>
-                    <Text code style={{ wordBreak: 'break-all' }}>{wpsToken.refreshToken}</Text>
-                  </Paragraph>
-                )}
               </Space>
             </Card>
           </>

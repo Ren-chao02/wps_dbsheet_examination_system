@@ -4,6 +4,7 @@ import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { skeletonGenerator } from '../engine/skeleton-generator';
 import { answerReverser } from '../engine/answer-reverser';
+import { wpsConfigService } from '../services/wps-config-service';
 
 export const questionRouter = Router();
 questionRouter.use(authenticate);
@@ -321,11 +322,14 @@ questionRouter.post('/skeleton', authorize('teacher', 'admin'), async (req: Requ
  * POST /api/questions/reverse-rules
  * 从标准答案的真实 Schema 反向生成 answerRules（参数 100% 真实）。
  * 调用 KingsoftAdapter.getSchema()，accessToken 过期透传 401。
+ *
+ * accessToken 可不传：缺省时自动从「WPS Token 管理」缓存中读取，
+ * 避免出题人在此步骤重复粘贴 token。
  */
 const reverseRulesSchema = z.object({
   capabilities: z.array(z.string().min(1)).min(1, '至少选择一个能力'),
   fileId: z.string().min(1, 'fileId 必填'),
-  accessToken: z.string().min(1, 'accessToken 必填'),
+  accessToken: z.string().optional(),
   apiSecret: z.string().optional(),
 });
 
@@ -335,7 +339,22 @@ questionRouter.post('/reverse-rules', authorize('teacher', 'admin'), async (req:
     if (!parsed.success) {
       return res.status(400).json({ message: '参数错误', errors: parsed.error.flatten() });
     }
-    const output = await answerReverser.reverse(parsed.data);
+    // accessToken 缺省时从服务端缓存读取（WpsTokenManager 持久化的 token）
+    let { accessToken, apiSecret } = parsed.data;
+    if (!accessToken) {
+      const cached = await wpsConfigService.get();
+      if (!cached?.accessToken) {
+        return res.status(400).json({
+          message: '未传入 accessToken，且服务端缓存中无可用的 WPS Token，请先在「缓存管理 → WPS Token 管理」中配置',
+        });
+      }
+      accessToken = cached.accessToken;
+    }
+    const output = await answerReverser.reverse({
+      ...parsed.data,
+      accessToken,
+      apiSecret: apiSecret || undefined,
+    });
     res.json(output);
   } catch (err: any) {
     const msg = err.message || '';

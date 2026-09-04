@@ -6,7 +6,7 @@
  *
  * @see docs/superpowers/specs/2026-07-07-exam-authoring-assist.md §4.3
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Card, Form, Input, Button, Space, Alert, Table, Tag, Typography, message, Divider,
 } from 'antd';
@@ -43,6 +43,31 @@ export function AnswerImporter({
   const [notes, setNotes] = useState<string[]>([]);
   const [loadingSkeleton, setLoadingSkeleton] = useState(false);
   const [loadingReverse, setLoadingReverse] = useState(false);
+  // 缓存 Token 状态：mount 时拉 /wps-config 判断是否可用，避免出题人重复粘贴 token
+  const [cachedTokenStatus, setCachedTokenStatus] = useState<'unknown' | 'valid' | 'expired' | 'none'>('unknown');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get<{ data: { accessToken: string; expiresAt: number } | null }>('/wps-config');
+        if (cancelled) return;
+        const data = res.data?.data;
+        if (!data || !data.accessToken) {
+          setCachedTokenStatus('none');
+        } else if (data.expiresAt > Date.now()) {
+          setCachedTokenStatus('valid');
+        } else {
+          setCachedTokenStatus('expired');
+        }
+      } catch {
+        if (!cancelled) setCachedTokenStatus('none');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const hasCachedToken = cachedTokenStatus === 'valid';
 
   const isDisabled = disabled || selectedCapabilityIds.length === 0;
 
@@ -75,7 +100,7 @@ export function AnswerImporter({
       const res = await api.post<ReverseOutput>('/questions/reverse-rules', {
         capabilities: selectedCapabilityIds,
         fileId: values.fileId,
-        accessToken: values.accessToken,
+        accessToken: values.accessToken || undefined,  // 留空时后端自动用缓存 token
         apiSecret: values.apiSecret || undefined,
       });
       const output = res.data;
@@ -94,7 +119,7 @@ export function AnswerImporter({
       } else if (msg) {
         message.error(msg);
       } else if (err.errorFields) {
-        message.error('请填写 fileId 和 accessToken');
+        message.error(hasCachedToken ? '请填写 fileId' : '请填写 fileId 和 accessToken');
       } else {
         message.error('反向生成失败');
       }
@@ -143,10 +168,11 @@ export function AnswerImporter({
         layout="vertical"
         disabled={isDisabled}
         onValuesChange={(_, allValues) => {
-          if (allValues.fileId && allValues.accessToken) {
+          // 有缓存 token 时，只填 fileId 即可上提凭据（accessToken 由后端兜底）
+          if (allValues.fileId && (allValues.accessToken || hasCachedToken)) {
             onCredentialsChange?.({
               fileId: allValues.fileId,
-              accessToken: allValues.accessToken,
+              accessToken: allValues.accessToken || '',
               apiSecret: allValues.apiSecret || undefined,
             });
           } else {
@@ -154,6 +180,33 @@ export function AnswerImporter({
           }
         }}
       >
+        {cachedTokenStatus === 'valid' && (
+          <Alert
+            type="success"
+            showIcon
+            message="已使用缓存的 WPS access_token"
+            description="访问令牌可留空，系统会自动使用「缓存管理 → WPS Token 管理」中的 Token。如需指定其它 Token 可手动填写。"
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        {cachedTokenStatus === 'expired' && (
+          <Alert
+            type="warning"
+            showIcon
+            message="缓存的 WPS access_token 已过期"
+            description="请到「缓存管理 → WPS Token 管理」刷新 Token，或在下方手动粘贴新的 access_token。"
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        {cachedTokenStatus === 'none' && (
+          <Alert
+            type="info"
+            showIcon
+            message="未检测到缓存的 WPS access_token"
+            description="可先到「缓存管理 → WPS Token 管理」配置 Token 后此步无需重复粘贴；或在下方直接填写 access_token。"
+            style={{ marginBottom: 16 }}
+          />
+        )}
         <Form.Item
           name="fileId"
           label="文件 ID（fileId）"
@@ -164,10 +217,10 @@ export function AnswerImporter({
         <Form.Item
           name="accessToken"
           label="访问令牌（access_token）"
-          rules={[{ required: true, message: '请输入 accessToken' }]}
-          tooltip="WPS 开放平台 access_token，用于读取标准答案文件 Schema"
+          rules={hasCachedToken ? [] : [{ required: true, message: '请输入 accessToken' }]}
+          tooltip="留空时使用「WPS Token 管理」缓存的 token；缓存无 token 时必填"
         >
-          <Input.Password placeholder="WPS 开放平台 access_token" />
+          <Input.Password placeholder={hasCachedToken ? '留空则使用缓存 Token' : 'WPS 开放平台 access_token'} />
         </Form.Item>
         <Form.Item name="apiSecret" label="API Secret（可选）" tooltip="v3 签名鉴权时需要">
           <Input.Password placeholder="仅 v3 鉴权需要" />

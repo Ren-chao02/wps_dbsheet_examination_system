@@ -30,20 +30,27 @@ export function StatisticsPage() {
     }).catch(() => message.error('加载失败')).finally(() => setLoading(false));
   }, [id]);
 
-  const handleExportCSV = async () => {
+  const handleExportExcel = async () => {
     try {
       const res = await api.get(`/statistics/exam/${id}/export`, { responseType: 'blob' });
-      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
+      const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${stats?.examTitle || '成绩'}_分析报告.csv`;
+      a.download = `${stats?.examTitle || '成绩'}_成绩分析.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       a.remove();
-    } catch {
-      message.error('导出失败');
+    } catch (err: any) {
+      let msg = '导出失败';
+      try {
+        if (err.response?.data instanceof Blob) {
+          const text = await err.response.data.text();
+          msg = JSON.parse(text).message || msg;
+        }
+      } catch {}
+      message.error(msg);
     }
   };
 
@@ -68,7 +75,7 @@ export function StatisticsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2>{stats.examTitle} — 成绩分析</h2>
         <Space>
-          <Button icon={<DownloadOutlined />} onClick={handleExportCSV}>导出 CSV</Button>
+          <Button icon={<DownloadOutlined />} onClick={handleExportExcel}>导出 Excel</Button>
         </Space>
       </div>
 

@@ -68,10 +68,27 @@ export async function enqueueImport(taskId: string, filePath: string): Promise<{
     console.log('[ImportQueue] Redis 不可用，同步执行导入');
     // 同步模式下需要知道 userId
     const task = await prisma.importTask.findUnique({ where: { id: taskId } });
-    const result = await processImport(taskId, filePath, task?.createdBy || '');
-    // 清理临时文件
-    try { fs.unlinkSync(filePath); } catch {}
-    return { syncResult: result };
+    try {
+      const result = await processImport(taskId, filePath, task?.createdBy || '');
+      return { syncResult: result };
+    } catch (err: any) {
+      console.error(`[ImportQueue] 同步导入失败: taskId=${taskId}, error=${err.message}`);
+      try {
+        await prisma.importTask.update({
+          where: { id: taskId },
+          data: {
+            status: 'FAILED',
+            completedAt: new Date(),
+          },
+        });
+      } catch (e: any) {
+        console.error(`[ImportQueue] 更新任务状态失败: taskId=${taskId}, error=${e.message}`);
+      }
+      return { syncResult: { totalRows: 0, successRows: 0, failedRows: 0, errorFile: null } };
+    } finally {
+      // 清理临时文件
+      try { fs.unlinkSync(filePath); } catch {}
+    }
   }
 
   const task = await prisma.importTask.findUnique({ where: { id: taskId } });
@@ -121,8 +138,22 @@ export function startImportWorkers(): void {
     { connection: conn, concurrency: 1 },
   );
 
-  importWorker.on('failed', (job, err) => {
+  importWorker.on('failed', async (job, err) => {
     console.error(`[ImportQueue] 导入失败: job=${job?.id}, error=${err.message}`);
+    const taskId = job?.data?.taskId;
+    if (taskId) {
+      try {
+        await prisma.importTask.update({
+          where: { id: taskId },
+          data: {
+            status: 'FAILED',
+            completedAt: new Date(),
+          },
+        });
+      } catch (e: any) {
+        console.error(`[ImportQueue] 更新任务状态失败: taskId=${taskId}, error=${e.message}`);
+      }
+    }
   });
 
   importWorker.on('completed', (job) => {

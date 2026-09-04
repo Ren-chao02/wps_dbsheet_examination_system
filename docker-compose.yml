@@ -39,8 +39,9 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: exam-app
+    # 仅绑定本地回环：应用只由 cloudflared（内网穿透）暴露到公网，防止绕过隧道直接触达 3002
     ports:
-      - '3002:3002'
+      - '127.0.0.1:3002:3002'
     env_file:
       - .env
     depends_on:

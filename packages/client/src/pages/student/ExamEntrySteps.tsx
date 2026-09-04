@@ -14,11 +14,12 @@ import dayjs from 'dayjs';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import { exitFullscreen } from '../../components/exam/FullscreenGuard';
+import { computeLatestEntryTime, computeExamDeadline } from '../../utils/exam-time';
 
 const RULES_TEXT = `考场开放
-1. 各科考试考场开放时间（包括考场开放开始时间及考场入口关闭时间）将公布在"WPS实训室-考试系统-首页-我的待考科目"中；
+1. 各科考试考场开放时间（包括考场开放开始时间及考场入口关闭时间）将公布在"多维表格考试系统-首页-我的待考科目"中；
 2. 考场开放后考生可以登录并进入相应考场，请考生务必在考场入口关闭前进入考场，并完成考生信息确认、阅读考规（每次重新进入考场时均需重新完成信息确认等工作），完成后保持登录状态等候考试开始；
-3. 考场入口：WPS 365教育版 - WPS教学平台 应用 - WPS实训室 - 我的考试；
+3. 考场入口：多维表格考试系统 - 我的考试；
 4. 若系统界面显示过小/过大（如"下一步"等按钮未显示出等），请前往电脑的显示设置-屏幕中，调整缩放比例/显示器分辨率至合适值；
 5. 相应科目的考场入口关闭后，未按照本条第2款的约定完成相应考前工作的考生不得再进入考场。
 
@@ -123,27 +124,29 @@ export function ExamEntrySteps() {
     return exam?.startTime ? new Date(exam.startTime).getTime() : null;
   }, [exam]);
 
-  const modeEffectiveEnd = useMemo(() => {
-    return exam?.endTime ? new Date(exam.endTime).getTime() : null;
-  }, [exam]);
-
-  const modeEffectiveDuration = useMemo(() => {
-    return exam?.batch?.examDuration || exam?.durationMinutes || 0;
-  }, [exam]);
-
+  // 考试截止时间：与 WpsExamDoing 共用 computeExamDeadline，保证入场界面与
+  // 答题界面剩余时间口径完全一致（基于 exam.endTime，而非学生 startedAt）。
   const deadline = useMemo(() => {
     if (!exam) return null;
-    if (modeEffectiveEnd) return modeEffectiveEnd;
-    if (modeEffectiveStart && modeEffectiveDuration) {
-      return modeEffectiveStart + modeEffectiveDuration * 60 * 1000;
-    }
-    return null;
-  }, [exam, modeEffectiveStart, modeEffectiveEnd, modeEffectiveDuration]);
+    return computeExamDeadline(exam);
+  }, [exam]);
 
   const remaining = useMemo(() => {
     if (!deadline) return null;
     return deadline - now;
   }, [deadline, now]);
+
+  // 最晚进入考场时间（固定时间戳，不随时间变化）：
+  // unified = 开始时间 + 迟到容忍；flexible = 结束时间 - 考试时长
+  const latestEntryMs = useMemo(() => {
+    if (!exam) return null;
+    return computeLatestEntryTime({
+      startTime: exam.startTime,
+      endTime: exam.endTime,
+      durationMinutes: exam.durationMinutes,
+      batch: exam.batch,
+    });
+  }, [exam]);
 
   // 集中统一模式：距离开考倒计时（含候考窗口）
   const waitingTime = exam?.batch?.waitingTime || 0;
@@ -161,26 +164,29 @@ export function ExamEntrySteps() {
 
   // Step 2 中是否可以开始作答
   const canStart = useMemo(() => {
+    // 断点续考：已有 in_progress submission，跳过时间检查
+    if (submission?.status === 'in_progress') return true;
     if (examMode === 'flexible') return true;
-    // unified: 到达开考时间后方可开始，但不能超过迟到截止时间
     if (!modeEffectiveStart) return true;
-    const lateCutoff = modeEffectiveStart + lateTolerance * 60 * 1000;
-    return now >= modeEffectiveStart && now <= lateCutoff;
-  }, [examMode, modeEffectiveStart, now, lateTolerance]);
+    // 迟到时间只做前端显示，不拦截进入考试
+    return now >= modeEffectiveStart;
+  }, [examMode, modeEffectiveStart, now, submission]);
 
   // 迟到截止提示
   const isLate = useMemo(() => {
+    // 断点续考不算迟到
+    if (submission?.status === 'in_progress') return false;
     if (examMode !== 'unified' || !modeEffectiveStart) return false;
     const lateCutoff = modeEffectiveStart + lateTolerance * 60 * 1000;
     return now > lateCutoff;
-  }, [examMode, modeEffectiveStart, now, lateTolerance]);
+  }, [examMode, modeEffectiveStart, now, lateTolerance, submission]);
 
   const timeLabel = step === 2 && examMode === 'unified' && untilStart !== null && untilStart > 0
     ? '距离开考'
     : isLate
       ? '已过迟到截止'
       : step === 2
-        ? '最晚进入考场时间'
+        ? '剩余时间'
         : '考试剩余时间';
   const timeColor = step === 2 && examMode === 'unified' && untilStart !== null && untilStart > 0 ? '#1890ff' : isLate ? '#ff4d4f' : step === 2 ? '#ff4d4f' : '#52c41a';
 
@@ -282,31 +288,55 @@ export function ExamEntrySteps() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <Avatar size="small" icon={<UserOutlined />} />
-          {remaining !== null && (
-            <div
-              style={{
-                background: timeColor,
-                color: '#fff',
-                padding: '4px 12px',
-                borderRadius: 4,
-                fontSize: 13,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              <ClockCircleOutlined />
-              <span>{timeLabel}</span>
-              <span style={{ fontWeight: 700 }}>
-                {step === 2 && examMode === 'unified' && untilStart !== null && untilStart > 0
-                  ? formatCountdown(untilStart)
-                  : remaining !== null
-                    ? formatCountdown(remaining)
-                    : '—'}
-              </span>
-            </div>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {/* 固定的最晚进入考场时间（step 2 且可入场时展示，不随时间变化） */}
+            {step === 2 && !isLate && !(examMode === 'unified' && untilStart !== null && untilStart > 0) && latestEntryMs !== null && (
+              <div
+                style={{
+                  background: '#1890ff',
+                  color: '#fff',
+                  padding: '4px 12px',
+                  borderRadius: 4,
+                  fontSize: 13,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <ClockCircleOutlined />
+                <span>最晚入场</span>
+                <span style={{ fontWeight: 700 }}>{dayjs(latestEntryMs).format('HH:mm')}</span>
+              </div>
+            )}
+
+            {/* 倒计时块（随时间变化） */}
+            {remaining !== null && (
+              <div
+                style={{
+                  background: timeColor,
+                  color: '#fff',
+                  padding: '4px 12px',
+                  borderRadius: 4,
+                  fontSize: 13,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <ClockCircleOutlined />
+                <span>{timeLabel}</span>
+                <span style={{ fontWeight: 700 }}>
+                  {step === 2 && examMode === 'unified' && untilStart !== null && untilStart > 0
+                    ? formatCountdown(untilStart)
+                    : remaining !== null
+                      ? formatCountdown(remaining)
+                      : '—'}
+                </span>
+              </div>
+            )}
+          </div>
           <Button danger icon={<LogoutOutlined />} onClick={handleExit}>
             退出考场
           </Button>
@@ -453,20 +483,24 @@ export function ExamEntrySteps() {
                   </>
                 ) : isLate ? (
                   <>
-                    <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#ff4d4f' }}>已超过入场截止时间</h3>
+                    <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: '#faad14' }}>已过迟到截止时间</h3>
                     <p style={{ color: '#666', marginBottom: 24 }}>
-                      您已超过迟到容忍时间（{lateTolerance} 分钟），无法进入考试
+                      您已超过迟到容忍时间（{lateTolerance} 分钟），但仍可点击下方按钮进入考试
                     </p>
                   </>
                 ) : (
                   <>
                     <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
-                      {examMode === 'flexible' ? '开始作答' : '准备作答'}
+                      {submission?.status === 'in_progress'
+                        ? '继续作答'
+                        : examMode === 'flexible' ? '开始作答' : '准备作答'}
                     </h3>
                     <p style={{ color: '#666', marginBottom: 24 }}>
-                      {examMode === 'flexible'
-                        ? '随到随考模式，点击下方按钮即可开始考试'
-                        : '考试已开始，请点击下方按钮进入作答'}
+                      {submission?.status === 'in_progress'
+                        ? '检测到您上次未完成答题，请点击下方按钮继续作答'
+                        : examMode === 'flexible'
+                          ? '随到随考模式，点击下方按钮即可开始考试'
+                          : '考试已开始，请点击下方按钮进入作答'}
                     </p>
                   </>
                 )}
@@ -530,8 +564,8 @@ export function ExamEntrySteps() {
                   >
                     {!canStart && untilStart !== null && untilStart > 0
                       ? `请等待 ${formatCountdown(untilStart)}`
-                      : isLate
-                        ? '已超过入场截止时间'
+                      : submission?.status === 'in_progress'
+                        ? '继续作答'
                         : '开始作答'}
                   </Button>
                 </div>

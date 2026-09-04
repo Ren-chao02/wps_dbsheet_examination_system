@@ -94,6 +94,10 @@ interface ViewInfo {
   id: string;
   name: string;
   type: string;
+  filter?: any;
+  sort?: any;
+  group?: any;
+  fieldsAttribute?: { field: string; hidden: boolean }[];
 }
 
 // ============================================================
@@ -122,6 +126,7 @@ const WPS_TYPE_TO_CANONICAL: Record<string, string> = {
   MultipleSelect: 'multiple_select',
   // 复杂字段
   Attachment: 'attachment',
+  OneWayLink: 'one_way_link',
   Link: 'link',
   Lookup: 'lookup',
   Contact: 'contact',
@@ -140,6 +145,95 @@ const WPS_TYPE_TO_CANONICAL: Record<string, string> = {
 
 function canonicalType(wpsType: string): string {
   return WPS_TYPE_TO_CANONICAL[wpsType] || wpsType.toLowerCase();
+}
+
+// ============================================================
+// 视图筛选/排序/分组 解析辅助（兼容 v3/v7 常见结构）
+// ============================================================
+
+/** 从单个筛选条目中取字段引用（field / field_id / fieldId） */
+function filterItemField(item: any): string | undefined {
+  if (!item || typeof item !== 'object') return undefined;
+  if (typeof item.field === 'string') return item.field;
+  if (typeof item.field_id === 'string') return item.field_id;
+  if (typeof item.fieldId === 'string') return item.fieldId;
+  if (typeof item.fieldName === 'string') return item.fieldName;
+  return undefined;
+}
+
+/** 提取单个筛选条目的比对值（values / value / criteria.values） */
+function filterItemValues(item: any): string[] {
+  if (!item) return [];
+  // 兼容 v7: { criteria: { op, values: [{ type, value }] } }
+  if (item.criteria && typeof item.criteria === 'object') {
+    const cv = item.criteria.values;
+    if (Array.isArray(cv)) {
+      return cv.map((v: any) => {
+        if (v !== null && typeof v === 'object') return String(v.value !== undefined ? v.value : v);
+        return String(v);
+      });
+    }
+    if (item.criteria.value !== undefined && item.criteria.value !== null) {
+      return [String(item.criteria.value)];
+    }
+  }
+  const v = item.values;
+  if (Array.isArray(v)) return v.map(String);
+  if (item.value !== undefined && item.value !== null) return [String(item.value)];
+  return [];
+}
+
+/** 提取单个筛选条目的操作符（operator / criteria.op） */
+function filterItemOperator(item: any): string {
+  if (!item) return '';
+  if (item.criteria && typeof item.criteria === 'object') {
+    return String(item.criteria.op || item.criteria.operator || '').toLowerCase();
+  }
+  return String(item.operator || item.condition || '').toLowerCase();
+}
+
+/** 将视图 filter 原始结构规范化为筛选条目数组 */
+function filterItemsOf(raw: any): any[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  const arr = raw.criteria || raw.conditions || raw.items;
+  if (Array.isArray(arr)) return arr;
+  // 兼容 { mode, filters: [...] }
+  if (Array.isArray(raw.filters)) return raw.filters;
+  return [];
+}
+
+/** 将视图 sort 原始结构规范化为排序条件数组 */
+function sortConditionsOf(raw: any): any[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  const arr = raw.conditions || raw.sortBy || raw.items;
+  if (Array.isArray(arr)) return arr;
+  return [];
+}
+
+function normOrderValue(o: any): string {
+  return String(o || '').toLowerCase();
+}
+
+/** 操作符匹配：兼容 expected '>=' 与 v7 的 GreaterEqu / GreatOrEquals 等别名 */
+function operatorMatches(actualOp: string, wantedOp: string): boolean {
+  const a = String(actualOp || '').toLowerCase();
+  const w = String(wantedOp || '').toLowerCase();
+  if (!w) return true;
+  if (a.includes(w)) return true;
+  const ALIASES: Record<string, string[]> = {
+    '>=': ['greater', 'gte', 'ge', '>=', 'at least', 'no less'],
+    '<=': ['less', 'lte', 'le', '<=', 'at most'],
+    '>': ['greater', 'gt'],
+    '<': ['less', 'lt'],
+    '=': ['equal', 'is', 'eq', 'equals'],
+    '!=': ['notequal', 'neq', 'not equal'],
+    'contains': ['contain', 'includes', 'has'],
+    'in': ['in'],
+  };
+  const cands = ALIASES[w] || [];
+  return cands.some(c => a.includes(c.toLowerCase()));
 }
 
 // ============================================================
@@ -472,17 +566,74 @@ const ruleHandlers: Record<string, RuleHandler> = {
   },
 
   /**
-   * 验证公式字段（Schema 不含公式详情，标记 needsReview）
-   * params: { tableName: string, fieldName: string, formula?: string }
+   * 验证公式字段
+   * v7 Schema 会在 field.data.formula 暴露公式表达式，可据此自动判分。
+   * params: {
+   *   tableName: string,
+   *   fieldName: string,
+   *   contains?: string[]  // 公式字符串必须包含的子串（去空、忽略大小写）
+   * }
+   * 说明：公式写法多样，此处做"关键词包含"级校验，不做逐字等价比对。
    */
   check_field_formula(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: { tableName: params.tableName, fieldName: params.fieldName, contains: params.contains },
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+    const field = findField(sheet, params.fieldName);
+    if (!field) {
+      return {
+        passed: false,
+        score: 0,
+        expected: { tableName: params.tableName, fieldName: params.fieldName, contains: params.contains },
+        actual: { tableName: params.tableName, fieldName: params.fieldName, found: false },
+        errorMessage: `字段「${params.fieldName}」不存在`,
+        needsReview: false,
+      };
+    }
+    if (canonicalType(field.type) !== 'formula') {
+      return {
+        passed: false,
+        score: 0,
+        expected: { tableName: params.tableName, fieldName: params.fieldName, type: 'formula' },
+        actual: { tableName: params.tableName, fieldName: params.fieldName, type: canonicalType(field.type) },
+        errorMessage: `字段「${params.fieldName}」不是公式字段`,
+        needsReview: false,
+      };
+    }
+
+    const formula = String(field.data?.formula ?? field.formula ?? '').trim();
+    const tokens: string[] = (params.contains || []).map((t: any) => String(t).toLowerCase());
+    if (!formula) {
+      return {
+        passed: false,
+        score: 0,
+        expected: { fieldName: params.fieldName, contains: params.contains },
+        actual: { fieldName: params.fieldName, formula: null },
+        errorMessage: `公式字段「${params.fieldName}」缺少公式表达式`,
+        needsReview: false,
+      };
+    }
+    if (!tokens.length) {
+      return { passed: true, score: 0, expected: params, actual: { formula }, needsReview: false };
+    }
+
+    const lower = formula.toLowerCase();
+    const missing = tokens.filter(t => !lower.includes(t));
     return {
-      passed: false,
+      passed: missing.length === 0,
       score: 0,
-      expected: params,
-      actual: null,
-      errorMessage: `公式字段验证需教师人工复核（Schema 不含公式表达式详情）`,
-      needsReview: true,
+      expected: { fieldName: params.fieldName, contains: params.contains },
+      actual: { fieldName: params.fieldName, formula, missingTokens: missing },
+      errorMessage: missing.length ? `公式缺少关键词: ${missing.join(', ')}` : undefined,
+      needsReview: false,
     };
   },
 
@@ -528,42 +679,302 @@ const ruleHandlers: Record<string, RuleHandler> = {
   },
 
   /**
-   * 以下规则需要视图/表单/记录的详细信息，
-   * 当前 Schema 不包含这些细节，标记 needsReview
+   * 验证视图筛选条件
+   * params: { tableName, viewName?, criteria?: {field, operator?, values?}[], minCriteria?: number }
+   * criteria 中的每个条件都需在视图筛选中被满足（字段 + 值匹配）；minCriteria 校验至少 N 个条件。
    */
   check_view_filter(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const allViews = sheet.views || [];
+    const targetViews = params.viewName
+      ? allViews.filter(v => v.name === params.viewName)
+      : allViews.filter(v => !!v.filter);
+    if (params.viewName && targetViews.length === 0) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, viewName: params.viewName, found: false },
+        errorMessage: `视图「${params.viewName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const reqCriteria: any[] = params.criteria || [];
+    const minCriteria = params.minCriteria || 0;
+
+    const criteriaCovered = (view: any, expected: any) => {
+      const items = filterItemsOf(view.filter);
+      return items.some(it => {
+        if (filterItemField(it) !== expected.field) return false;
+        if (expected.operator) {
+          if (!operatorMatches(filterItemOperator(it), expected.operator)) return false;
+        }
+        const wantValues = filterItemValues(expected);
+        if (wantValues.length === 0) return true;
+        const haveValues = filterItemValues(it);
+        return wantValues.every(w => haveValues.some(h => h === w || h.includes(w) || w.includes(h)));
+      });
+    };
+
+    const matchedView = targetViews.find(view => {
+      const itemCount = filterItemsOf(view.filter).length;
+      if (itemCount < Math.max(minCriteria, reqCriteria.length)) return false;
+      return reqCriteria.every(c => criteriaCovered(view, c));
+    });
+
+    const actualFilters = targetViews.map((v: any) => ({
+      viewName: v.name,
+      filter: v.filter || undefined,
+    }));
+
     return {
-      passed: false,
+      passed: !!matchedView,
       score: 0,
-      expected: params,
-      actual: null,
-      errorMessage: `视图筛选条件需教师人工复核（Schema 不含视图筛选详情）`,
-      needsReview: true,
+      expected: {
+        tableName: params.tableName,
+        viewName: params.viewName,
+        criteria: reqCriteria,
+        minCriteria,
+      },
+      actual: { tableName: params.tableName, viewFilters: actualFilters },
+      errorMessage: matchedView
+        ? undefined
+        : (params.viewName
+            ? `视图「${params.viewName}」未满足筛选条件 ${JSON.stringify(reqCriteria)}`
+            : `表「${params.tableName}」中没有视图满足筛选条件 ${JSON.stringify(reqCriteria)}`),
+      needsReview: false,
     };
   },
 
   /**
-   * 验证视图排序（Schema 不含排序详情，标记 needsReview）
+   * 验证视图排序规则
+   * params: { tableName, viewName?, sortBy?: {field, order?: 'asc'|'desc'}[] }
+   * sortBy 中的排序条件需按顺序出现在视图排序中。
    */
   check_view_sort(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const allViews = sheet.views || [];
+    const targetViews = params.viewName
+      ? allViews.filter(v => v.name === params.viewName)
+      : allViews.filter(v => !!v.sort);
+    if (params.viewName && targetViews.length === 0) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, viewName: params.viewName, found: false },
+        errorMessage: `视图「${params.viewName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const reqSort: any[] = params.sortBy || [];
+
+    const matchedView = targetViews.find(view => {
+      const conds = sortConditionsOf(view.sort);
+      if (conds.length < reqSort.length) return false;
+      return reqSort.every((wanted, i) => {
+        const actual = conds[i];
+        if (!actual) return false;
+        if (filterItemField(actual) !== wanted.field) return false;
+        if (!wanted.order) return true;
+        // v7 sort 条件用 is_ascending 布尔；v3 用 order/direction/type
+        let actualOrder: string;
+        if (typeof actual.is_ascending === 'boolean') {
+          actualOrder = actual.is_ascending ? 'asc' : 'desc';
+        } else {
+          actualOrder = normOrderValue(actual.order || actual.direction || actual.type);
+        }
+        return actualOrder.includes(normOrderValue(wanted.order));
+      });
+    });
+
+    const actualSorts = targetViews.map((v: any) => ({
+      viewName: v.name,
+      sort: v.sort || undefined,
+    }));
+
     return {
-      passed: false,
+      passed: !!matchedView,
       score: 0,
-      expected: params,
-      actual: null,
-      errorMessage: `视图排序设置需教师人工复核（Schema 不含视图排序详情）`,
-      needsReview: true,
+      expected: { tableName: params.tableName, viewName: params.viewName, sortBy: reqSort },
+      actual: { tableName: params.tableName, viewSorts: actualSorts },
+      errorMessage: matchedView
+        ? undefined
+        : (params.viewName
+            ? `视图「${params.viewName}」未满足排序规则 ${JSON.stringify(reqSort)}`
+            : `表「${params.tableName}」中没有视图满足排序规则 ${JSON.stringify(reqSort)}`),
+      needsReview: false,
     };
   },
 
   check_view_group(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const allViews = sheet.views || [];
+    // 若指定 viewName 只在该视图内找分组；否则在表内所有视图中找任一含分组配置的视图
+    const targetViews = params.viewName
+      ? allViews.filter(v => v.name === params.viewName)
+      : allViews;
+    if (params.viewName && targetViews.length === 0) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, viewName: params.viewName, found: false },
+        errorMessage: `视图「${params.viewName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const groupMatchesField = (group: any, field: string): boolean => {
+      if (!group) return false;
+      const conditions = group.conditions || (Array.isArray(group) ? group : null);
+      if (conditions) {
+        return (conditions as any[]).some((c: any) => c && (c.field === field || c.field_id === field));
+      }
+      // 兼容直接以 group.field / group.fieldName 表示
+      return group.field === field || group.fieldName === field;
+    };
+
+    const hasGroup = params.groupByField
+      ? targetViews.some(v => groupMatchesField(v.group, params.groupByField))
+      : targetViews.some(v => !!v.group);
+
+    const expected = {
+      tableName: params.tableName,
+      viewName: params.viewName,
+      groupByField: params.groupByField,
+    };
+    const actual = {
+      tableName: params.tableName,
+      matchedViews: targetViews
+        .filter(v => !!v.group)
+        .map(v => ({
+          viewName: v.name,
+          viewType: v.type,
+          group: v.group,
+        })),
+    };
+
     return {
-      passed: false,
+      passed: hasGroup,
       score: 0,
-      expected: params,
-      actual: null,
-      errorMessage: `视图分组设置需教师人工复核（Schema 不含视图分组详情）`,
-      needsReview: true,
+      expected,
+      actual,
+      errorMessage: hasGroup
+        ? undefined
+        : (params.viewName
+            ? `视图「${params.viewName}」未按「${params.groupByField || '任意字段'}」分组`
+            : `表「${params.tableName}」中没有任何视图配置分组${params.groupByField ? `（需要按「${params.groupByField}」分组）` : ''}`),
+      needsReview: false,
+    };
+  },
+
+  /**
+   * 验证视图中的字段显示/隐藏状态
+   * params: { tableName, viewName?, hiddenFields?: string[], visibleFields?: string[] }
+   * hiddenFields 要求这些字段在视图中被隐藏；visibleFields 要求这些字段在视图中显示。
+   */
+  check_view_field_hidden(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const allViews = sheet.views || [];
+    const targetViews = params.viewName
+      ? allViews.filter(v => v.name === params.viewName)
+      : allViews;
+    if (params.viewName && targetViews.length === 0) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, viewName: params.viewName, found: false },
+        errorMessage: `视图「${params.viewName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const reqHidden: string[] = params.hiddenFields || [];
+    const reqVisible: string[] = params.visibleFields || [];
+
+    const matchedView = targetViews.find((v: any) => {
+      const fa = v.fieldsAttribute || [];
+      const hiddenSet = new Set(fa.filter((x: any) => x.hidden).map((x: any) => x.field));
+      const visibleSet = new Set(fa.filter((x: any) => !x.hidden).map((x: any) => x.field));
+      // 字段未出现在 attributes 中视为“未隐藏”（可见），因此只要求显式列为 hidden 的匹配即可
+      if (reqHidden.some(f => !hiddenSet.has(f))) return false;
+      if (reqVisible.length > 0 && fa.length === 0) return false;
+      if (reqVisible.some(f => !visibleSet.has(f))) return false;
+      return true;
+    });
+
+    const visibility = targetViews
+      .filter((v: any) => v.fieldsAttribute)
+      .map((v: any) => ({
+        viewName: v.name,
+        hiddenFields: (v.fieldsAttribute || []).filter((x: any) => x.hidden).map((x: any) => x.field),
+        visibleFields: (v.fieldsAttribute || []).filter((x: any) => !x.hidden).map((x: any) => x.field),
+      }));
+
+    return {
+      passed: !!matchedView,
+      score: 0,
+      expected: {
+        tableName: params.tableName,
+        viewName: params.viewName,
+        hiddenFields: reqHidden,
+        visibleFields: reqVisible,
+      },
+      actual: { tableName: params.tableName, viewFieldVisibility: visibility },
+      errorMessage: matchedView
+        ? undefined
+        : (params.viewName
+            ? `视图「${params.viewName}」未按要求隐藏字段 ${JSON.stringify(reqHidden)}`
+            : `表「${params.tableName}」没有任何视图按要求隐藏字段 ${JSON.stringify(reqHidden)}`),
+      needsReview: false,
     };
   },
 
@@ -575,6 +986,70 @@ const ruleHandlers: Record<string, RuleHandler> = {
       actual: null,
       errorMessage: `表单设置需教师人工复核（Schema 不含表单设置详情）`,
       needsReview: true,
+    };
+  },
+
+  /**
+   * 验证字段默认值
+   * params: { tableName, fieldName, defaultValue?, defaultType? }
+   * defaultValue 缺省时仅要求字段配置了默认值；否则要求默认值包含该字符串。
+   */
+  check_field_default(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+    const field = findField(sheet, params.fieldName);
+    if (!field) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, fieldName: params.fieldName, found: false },
+        errorMessage: `表「${params.tableName}」中未找到字段「${params.fieldName}」`,
+        needsReview: false,
+      };
+    }
+
+    const data = field.data || {};
+    const actualValue = field.defaultValue ?? data.default_value ?? data.defaultValue ?? data.defValue;
+    const actualType = field.defaultValueType ?? data.default_value_type ?? data.defaultValueType;
+    const hasDefault = actualValue !== undefined && actualValue !== null && actualValue !== '';
+
+    const passed = params.defaultValue
+      ? hasDefault && String(actualValue).includes(String(params.defaultValue))
+      : hasDefault && (params.defaultType
+          ? String(actualType || '').toLowerCase().includes(String(params.defaultType).toLowerCase())
+          : true);
+
+    return {
+      passed: !!passed,
+      score: 0,
+      expected: {
+        tableName: params.tableName,
+        fieldName: params.fieldName,
+        defaultValue: params.defaultValue,
+        defaultType: params.defaultType,
+      },
+      actual: {
+        tableName: params.tableName,
+        fieldName: params.fieldName,
+        defaultValue: actualValue ?? null,
+        defaultType: actualType ?? null,
+      },
+      errorMessage: passed
+        ? undefined
+        : (params.defaultValue
+            ? `字段「${params.fieldName}」的默认值不是「${params.defaultValue}」`
+            : `字段「${params.fieldName}」未配置默认值`),
+      needsReview: false,
     };
   },
 
@@ -763,6 +1238,61 @@ const ruleHandlers: Record<string, RuleHandler> = {
       actual: { tableName: params.tableName, fieldName: params.fieldName, linkSheetId, targetTableName },
       errorMessage: passed ? undefined : `关联字段「${params.fieldName}」目标表不匹配：期望 ${expectedTarget}，实际 ${targetTableName || 'ID: ' + linkSheetId}`,
       needsReview: false,
+    };
+  },
+
+  /**
+   * 验证关联字段"允许多条记录"开关
+   * v7 Schema：双向关联(Link)会在 data.multiple_links 暴露该开关（默认关闭，勾选后为 true）；
+   * 单向关联(OneWayLink)不暴露字段 data，开关无法验证（此时 needsReview=true）。
+   * params: { tableName, fieldName, multiple: boolean } // multiple 默认 true
+   */
+  check_field_link_multiple(schema, params) {
+    const sheet = findSheet(schema.detail.sheets, params.tableName);
+    if (!sheet) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, found: false },
+        errorMessage: `表「${params.tableName}」不存在`,
+        needsReview: false,
+      };
+    }
+    const field = findField(sheet, params.fieldName);
+    if (!field) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: { tableName: params.tableName, fieldName: params.fieldName, found: false },
+        errorMessage: `字段「${params.fieldName}」不存在`,
+        needsReview: false,
+      };
+    }
+
+    const type = canonicalType(field.type);
+    const expected = params.multiple !== false;
+    const actual = field.data?.multiple_links ?? field.multipleLinks ?? null;
+
+    if (type === 'link' && actual !== null) {
+      return {
+        passed: actual === expected,
+        score: 0,
+        expected: { tableName: params.tableName, fieldName: params.fieldName, multipleLinks: expected },
+        actual: { tableName: params.tableName, fieldName: params.fieldName, multipleLinks: actual },
+        errorMessage: actual === expected ? undefined : `关联字段「${params.fieldName}」允许多条记录=${actual}，期望 ${expected}`,
+        needsReview: false,
+      };
+    }
+
+    return {
+      passed: false,
+      score: 0,
+      expected: { tableName: params.tableName, fieldName: params.fieldName, multipleLinks: expected },
+      actual: { tableName: params.tableName, fieldName: params.fieldName, type, multipleLinks: actual },
+      errorMessage: `关联字段「${params.fieldName}」为${type}类型，'允许多条记录'开关无法从 schema 自动验证，需人工复核`,
+      needsReview: true,
     };
   },
 
@@ -1131,12 +1661,15 @@ export function getActionLabel(action: string): string {
     check_field_format: '验证字段格式',
     check_field_unique: '验证唯一约束',
     check_field_link_target: '验证关联目标表',
+    check_field_link_multiple: '验证关联允许多条',
     check_table_fields: '验证表字段完整性',
     check_view_exists: '验证视图存在',
     check_view_type: '验证视图类型',
     check_view_filter: '验证视图筛选',
     check_view_sort: '验证视图排序',
     check_view_group: '验证视图分组',
+    check_view_field_hidden: '验证视图字段显隐',
+    check_field_default: '验证字段默认值',
     check_form_exists: '验证表单存在',
     check_form_fields: '验证表单字段',
     check_form_field_required: '验证表单字段必填',

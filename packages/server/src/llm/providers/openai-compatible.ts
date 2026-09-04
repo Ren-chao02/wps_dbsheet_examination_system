@@ -1,7 +1,7 @@
 /**
  * OpenAICompatibleClient — Phase 2 §4.1
  *
- * 适配所有 OpenAI 兼容端点：DeepSeek / Qwen / GLM / Ollama-OpenAI。
+ * 适配所有 OpenAI 兼容端点：DeepSeek / Qwen / GLM / SenseNova / Ollama-OpenAI。
  * 用 openai SDK 的流式 chat.completions.create，自行装配跨 delta 分片的 tool_calls。
  *
  * 依赖注入：构造时传入已建好的 OpenAI client，便于测试注入伪造实现。

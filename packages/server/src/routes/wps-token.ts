@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { authenticate, authorize } from '../middleware/auth';
-import { config } from '../config';
+import { wpsConfigService } from '../services/wps-config-service';
 
 export const wpsTokenRouter = Router();
 
@@ -29,9 +29,10 @@ wpsTokenRouter.post('/refresh', async (req: Request, res: Response) => {
     if (!refreshToken) {
       return res.status(400).json({ message: '缺少 refresh_token' });
     }
-    // 优先使用请求中的凭据，否则回退到服务端配置
-    const effectiveClientId = clientId || config.kingsoft.apiKey;
-    const effectiveClientSecret = clientSecret || config.kingsoft.apiSecret;
+    // 凭据解析：请求参数 → 数据库（前端已配置）→ 环境变量
+    const { clientId: dbClientId, clientSecret: dbClientSecret } = await wpsConfigService.getEffectiveCredentials();
+    const effectiveClientId = clientId || dbClientId || '';
+    const effectiveClientSecret = clientSecret || dbClientSecret || '';
     if (!effectiveClientId || !effectiveClientSecret) {
       return res.status(500).json({ message: '未配置 WPS 应用凭据' });
     }
@@ -70,19 +71,24 @@ wpsTokenRouter.post('/refresh', async (req: Request, res: Response) => {
 
 /**
  * GET /api/wps-token/credentials
- * 获取已保存的 WPS 应用凭据（用于自动填充）
+ * 获取已保存的 WPS 应用凭据（DB 优先，回退环境变量）
  */
-wpsTokenRouter.get('/credentials', (_req: Request, res: Response) => {
-  res.json({
-    apiKey: process.env.KINGSOFT_API_KEY || '',
-    apiSecret: process.env.KINGSOFT_API_SECRET || '',
-    configured: !!(process.env.KINGSOFT_API_KEY && process.env.KINGSOFT_API_SECRET),
-  });
+wpsTokenRouter.get('/credentials', async (_req: Request, res: Response) => {
+  try {
+    const { clientId, clientSecret } = await wpsConfigService.getEffectiveCredentials();
+    res.json({
+      apiKey: clientId,
+      apiSecret: clientSecret,
+      configured: !!(clientId && clientSecret),
+    });
+  } catch (err: any) {
+    res.status(500).json({ message: '获取凭据失败', detail: err.message });
+  }
 });
 
 /**
  * POST /api/wps-token/credentials
- * 保存 WPS 应用凭据到 .env 文件
+ * 保存 WPS 应用凭据：数据库为主（持久化，容器重建不丢）+ 尽力写 .env 文件
  * Body: { apiKey: string, apiSecret: string }
  */
 wpsTokenRouter.post('/credentials', async (req: Request, res: Response) => {
@@ -92,26 +98,39 @@ wpsTokenRouter.post('/credentials', async (req: Request, res: Response) => {
       return res.status(400).json({ message: '缺少 apiKey 或 apiSecret' });
     }
 
-    const envPath = path.resolve(process.cwd(), '.env');
-    let content = fs.readFileSync(envPath, 'utf-8');
+    // 1) 持久化到数据库（主持久化：克隆部署/容器重建后仍生效）
+    await wpsConfigService.saveCredentials(apiKey, apiSecret);
 
-    // 替换或追加 KINGSOFT_API_KEY
-    if (/^KINGSOFT_API_KEY=/m.test(content)) {
-      content = content.replace(/^KINGSOFT_API_KEY=.*$/m, `KINGSOFT_API_KEY="${apiKey}"`);
-    } else {
-      content += `\nKINGSOFT_API_KEY="${apiKey}"`;
+    // 2) 尽力写入 .env 文件（便于非 Docker 部署查看）
+    try {
+      const envPath = path.resolve(process.cwd(), '.env');
+      let content = '';
+      try {
+        content = fs.readFileSync(envPath, 'utf-8');
+      } catch {
+        content = '';
+      }
+
+      // 替换或追加 KINGSOFT_API_KEY
+      if (/^KINGSOFT_API_KEY=/m.test(content)) {
+        content = content.replace(/^KINGSOFT_API_KEY=.*$/m, `KINGSOFT_API_KEY="${apiKey}"`);
+      } else {
+        content += `\nKINGSOFT_API_KEY="${apiKey}"`;
+      }
+
+      // 替换或追加 KINGSOFT_API_SECRET
+      if (/^KINGSOFT_API_SECRET=/m.test(content)) {
+        content = content.replace(/^KINGSOFT_API_SECRET=.*$/m, `KINGSOFT_API_SECRET="${apiSecret}"`);
+      } else {
+        content += `\nKINGSOFT_API_SECRET="${apiSecret}"`;
+      }
+
+      fs.writeFileSync(envPath, content, 'utf-8');
+    } catch {
+      // .env 写入失败不阻塞（如容器内只读），DB 已持久化
     }
 
-    // 替换或追加 KINGSOFT_API_SECRET
-    if (/^KINGSOFT_API_SECRET=/m.test(content)) {
-      content = content.replace(/^KINGSOFT_API_SECRET=.*$/m, `KINGSOFT_API_SECRET="${apiSecret}"`);
-    } else {
-      content += `\nKINGSOFT_API_SECRET="${apiSecret}"`;
-    }
-
-    fs.writeFileSync(envPath, content, 'utf-8');
-
-    // 同步更新运行时环境变量
+    // 3) 同步更新运行时环境变量（立即生效，无需重启）
     process.env.KINGSOFT_API_KEY = apiKey;
     process.env.KINGSOFT_API_SECRET = apiSecret;
 

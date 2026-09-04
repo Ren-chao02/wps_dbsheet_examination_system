@@ -3,6 +3,7 @@
  *
  * GET    /api/llm-config  — 返回脱敏配置（apiKey 脱敏为 sk-****abcd）
  * POST   /api/llm-config  — 保存配置（apiKey 为空 = 保留旧值）
+ * POST   /api/llm-config/test — 测试连接（用表单当前值发一次最小请求，不保存）
  * DELETE /api/llm-config  — 清除 DB 配置（回退到 .env 环境变量）
  *
  * 管理员与教师可访问（与 WPS Token 管理同模式：教师需自行配置 AI 服务才能用教练功能）。
@@ -56,6 +57,22 @@ llmConfigRouter.post('/', async (req: Request, res: Response) => {
     res.json({ message: '配置已保存' });
   } catch (err: any) {
     res.status(500).json({ message: '保存失败', detail: err.message });
+  }
+});
+
+// POST /api/llm-config/test — 测试连接（不保存，用表单当前值实时测试）
+// 返回 { ok, latencyMs?, reply?, message, detail?, errorType? }
+llmConfigRouter.post('/test', async (req: Request, res: Response) => {
+  const parsed = saveSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: '参数错误', errors: parsed.error.flatten() });
+  }
+
+  try {
+    const result = await llmConfigService.testConnection(parsed.data);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ message: '测试连接失败', detail: err.message });
   }
 });
 

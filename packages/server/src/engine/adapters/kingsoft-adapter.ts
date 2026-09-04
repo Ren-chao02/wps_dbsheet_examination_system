@@ -105,6 +105,8 @@ export interface ViewInfo {
     mode?: string;
     conditions?: { field: string; order: string }[];
   };
+  /** 视图中各字段的显示/隐藏状态（对应 WPS schema 的 fields_attribute） */
+  fieldsAttribute?: { field: string; hidden: boolean }[];
 }
 
 export interface TableInfo {
@@ -257,6 +259,12 @@ export class KingsoftAdapter {
         filter: v.filter || undefined,
         sort: v.sort || undefined,
         group: v.group || undefined,
+        fieldsAttribute: Array.isArray(v.fields_attribute)
+          ? v.fields_attribute.map((fa: any) => ({
+              field: fa.field,
+              hidden: fa.hidden === true,
+            }))
+          : undefined,
       })),
     }));
 

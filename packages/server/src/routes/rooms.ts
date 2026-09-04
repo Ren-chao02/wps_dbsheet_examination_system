@@ -112,6 +112,28 @@ roomRouter.get('/', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/rooms/export-template - 导出考场导入模板（Excel格式说明）
+roomRouter.get('/export-template', (_req: Request, res: Response) => {
+  res.json({
+    template: {
+      columns: ['考场编码', '考场名称', '容量', '位置描述'],
+      example: [
+        ['A101', '第一机房', 50, '教学楼A座1楼'],
+        ['A102', '第二机房', 45, '教学楼A座1楼'],
+        ['B201', '第三机房', 60, '教学楼B座2楼'],
+      ],
+      rules: {
+        '考场编码': '必填，唯一标识，如 A101、B203',
+        '考场名称': '必填，如 第一机房、第二实验室',
+        '容量': '必填，正整数，表示最大容纳人数',
+        '位置描述': '可选，详细地址说明',
+      },
+      maxRows: 100,
+      format: 'CSV / Excel (.xlsx)',
+    },
+  });
+});
+
 // GET /api/rooms/:id - 获取考场详情（含关联预约、学生列表）
 roomRouter.get('/:id', async (req: Request, res: Response) => {
   try {
@@ -307,24 +329,4 @@ roomRouter.delete('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/rooms/export-template - 导出考场导入模板（Excel格式说明）
-roomRouter.get('/export-template', (_req: Request, res: Response) => {
-  res.json({
-    template: {
-      columns: ['考场编码', '考场名称', '容量', '位置描述'],
-      example: [
-        ['A101', '第一机房', 50, '教学楼A座1楼'],
-        ['A102', '第二机房', 45, '教学楼A座1楼'],
-        ['B201', '第三机房', 60, '教学楼B座2楼'],
-      ],
-      rules: {
-        '考场编码': '必填，唯一标识，如 A101、B203',
-        '考场名称': '必填，如 第一机房、第二实验室',
-        '容量': '必填，正整数，表示最大容纳人数',
-        '位置描述': '可选，详细地址说明',
-      },
-      maxRows: 100,
-      format: 'CSV / Excel (.xlsx)',
-    },
-  });
-});
+

@@ -144,11 +144,17 @@ export function ExportCenter() {
 
       message.destroy();
 
-      if (res.data.success && res.data.result) {
-        message.success(`成功导出 ${res.data.result.recordCount} 条记录`);
+      if (res.data.success && res.data.data) {
+        message.success(`成功导出 ${res.data.data.recordCount} 条记录`);
 
-        // 自动下载文件
-        window.open(res.data.result.downloadUrl, '_blank');
+        // 自动下载文件（带鉴权 token 的 axios blob 下载）
+        const downloadRes = await api.get(res.data.data.downloadUrl, { responseType: 'blob' });
+        const url = URL.createObjectURL(downloadRes.data);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = res.data.data.filename || '导出文件';
+        a.click();
+        URL.revokeObjectURL(url);
 
         // 刷新任务列表
         fetchTasks();
@@ -176,9 +182,25 @@ export function ExportCenter() {
   };
 
   // ✅ 下载文件
-  const handleDownload = (task: ExportTask) => {
-    if (task.result?.downloadUrl) {
-      window.open(task.result.downloadUrl, '_blank');
+  const handleDownload = async (task: ExportTask) => {
+    if (!task.result?.downloadUrl) return;
+    try {
+      const downloadRes = await api.get(task.result.downloadUrl, { responseType: 'blob' });
+      const url = URL.createObjectURL(downloadRes.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = task.result.fileName || '导出文件';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      let msg = '下载失败';
+      try {
+        if (err.response?.data instanceof Blob) {
+          const text = await err.response.data.text();
+          msg = JSON.parse(text).message || msg;
+        }
+      } catch {}
+      message.error(msg);
     }
   };
 

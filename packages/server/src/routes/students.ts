@@ -29,10 +29,10 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (['.xlsx', '.xls', '.csv'].includes(ext)) {
+    if (['.xlsx'].includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('仅支持 xlsx/xls/csv 格式'));
+      cb(new Error('仅支持 xlsx 格式'));
     }
   },
 });
@@ -75,12 +75,12 @@ function generateDefaultPassword(studentId: string): string {
 }
 
 /** 性别中文 → 枚举 */
-function parseGenderCN(val: string | undefined): 'MALE' | 'FEMALE' | undefined {
+function parseGenderCN(val: string | undefined): 'MALE' | 'FEMALE' | null | undefined {
   if (!val) return undefined;
   const v = val.trim();
   if (v === '男') return 'MALE';
   if (v === '女') return 'FEMALE';
-  return undefined;
+  return null; // 非法值
 }
 
 /** 枚举 → 性别中文 */
@@ -180,6 +180,138 @@ studentRouter.get('/', async (req: Request, res: Response) => {
     res.json({ data, total, page: Number(page), pageSize: Number(pageSize) });
   } catch {
     res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// ============================================================
+// GET /api/students/export — 导出学生列表为 Excel
+// ============================================================
+
+studentRouter.get('/export', async (req: Request, res: Response) => {
+  try {
+    const { departmentId, majorId, classRoomId, search } = req.query;
+
+    const where: any = { role: 'student' };
+    if (departmentId) where.departmentId = String(departmentId);
+    if (majorId) where.majorId = String(majorId);
+
+    // ✅ 教师导出时也只能导出自己负责班级的学生
+    if (req.user!.role === 'teacher') {
+      const teacherClasses = await prisma.teacherClass.findMany({
+        where: { teacherId: req.user!.userId },
+        select: { classId: true },
+      });
+      const myClassIds = teacherClasses.map(tc => tc.classId);
+      if (classRoomId) {
+        if (!myClassIds.includes(String(classRoomId))) {
+          where.classRoomId = '__none__'; // 返回空结果
+        } else {
+          where.classRoomId = String(classRoomId);
+        }
+      } else {
+        where.classRoomId = { in: myClassIds };
+      }
+    } else if (classRoomId) {
+      where.classRoomId = String(classRoomId);
+    }
+
+    if (search) {
+      where.OR = [
+        { username: { contains: String(search), mode: 'insensitive' } },
+        { realName: { contains: String(search), mode: 'insensitive' } },
+        { studentId: { contains: String(search), mode: 'insensitive' } },
+      ];
+    }
+
+    const students = await prisma.user.findMany({
+      where,
+      orderBy: { studentId: 'asc' },
+      select: {
+        studentId: true,
+        realName: true,
+        gender: true,
+        phoneNumber: true,
+        email: true,
+        department: { select: { name: true } },
+        major: { select: { name: true } },
+        classRoom: { select: { name: true, code: true } },
+      },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('学生列表');
+
+    // 表头
+    worksheet.columns = [
+      { header: '学号', key: 'studentId', width: 16 },
+      { header: '姓名', key: 'realName', width: 12 },
+      { header: '性别', key: 'gender', width: 8 },
+      { header: '手机号', key: 'phoneNumber', width: 16 },
+      { header: '邮箱', key: 'email', width: 24 },
+      { header: '院系', key: 'department', width: 20 },
+      { header: '专业', key: 'major', width: 20 },
+      { header: '班级', key: 'classRoom', width: 20 },
+      { header: '班级编码', key: 'classRoomCode', width: 16 },
+    ];
+
+    // 数据行
+    for (const s of students) {
+      worksheet.addRow({
+        studentId: s.studentId || '',
+        realName: s.realName || '',
+        gender: genderToCN(s.gender),
+        phoneNumber: s.phoneNumber || '',
+        email: s.email || '',
+        department: s.department?.name || '',
+        major: s.major?.name || '',
+        classRoom: s.classRoom?.name || '',
+        classRoomCode: s.classRoom?.code || '',
+      });
+    }
+
+    // 设置响应头
+    const fileName = encodeURIComponent(`学生列表_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch {
+    res.status(500).json({ message: '导出失败' });
+  }
+});
+
+// ============================================================
+// GET /api/students/import-template — 下载导入模板
+// ============================================================
+
+studentRouter.get('/import-template', async (_req: Request, res: Response) => {
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('导入模板');
+
+    worksheet.columns = [
+      { header: '学号', key: 'studentId', width: 16 },
+      { header: '姓名', key: 'realName', width: 12 },
+      { header: '性别(男/女)', key: 'gender', width: 10 },
+      { header: '手机号', key: 'phoneNumber', width: 16 },
+      { header: '邮箱', key: 'email', width: 24 },
+      { header: '班级编码', key: 'classRoomCode', width: 16 },
+    ];
+
+    // 设置表头样式（加粗）
+    const headerRow = worksheet.getRow(1);
+    headerRow.font = { bold: true };
+    headerRow.commit();
+
+    const fileName = encodeURIComponent('学生导入模板.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch {
+    res.status(500).json({ message: '下载模板失败' });
   }
 });
 
@@ -433,6 +565,7 @@ studentRouter.delete('/:id', authorize('admin'), async (req: Request, res: Respo
 // ============================================================
 
 studentRouter.post('/import', upload.single('file'), async (req: Request, res: Response) => {
+  let importTaskId: string | null = null;
   try {
     if (!req.file) {
       return res.status(400).json({ message: '请上传文件' });
@@ -459,13 +592,14 @@ studentRouter.post('/import', upload.single('file'), async (req: Request, res: R
     // 创建 ImportTask
     const importTask = await prisma.importTask.create({
       data: {
-        type: 'student',
+        type: 'student_import',
         fileName: originalName,
         totalRows,
         status: 'PENDING',
         createdBy: req.user!.userId,
       },
     });
+    importTaskId = importTask.id;
 
     // 大文件（>100行）走异步队列，小文件同步处理
     if (totalRows > 100) {
@@ -493,139 +627,16 @@ studentRouter.post('/import', upload.single('file'), async (req: Request, res: R
       async: false,
     });
   } catch (err: any) {
+    // 同步导入失败时，把任务标记为 FAILED，避免卡在 PENDING
+    if (importTaskId) {
+      try {
+        await prisma.importTask.update({
+          where: { id: importTaskId },
+          data: { status: 'FAILED', completedAt: new Date() },
+        });
+      } catch {}
+    }
     res.status(500).json({ message: '导入失败', detail: err.message });
-  }
-});
-
-// ============================================================
-// GET /api/students/export — 导出学生列表为 Excel
-// ============================================================
-
-studentRouter.get('/export', async (req: Request, res: Response) => {
-  try {
-    const { departmentId, majorId, classRoomId, search } = req.query;
-
-    const where: any = { role: 'student' };
-    if (departmentId) where.departmentId = String(departmentId);
-    if (majorId) where.majorId = String(majorId);
-
-    // ✅ 教师导出时也只能导出自己负责班级的学生
-    if (req.user!.role === 'teacher') {
-      const teacherClasses = await prisma.teacherClass.findMany({
-        where: { teacherId: req.user!.userId },
-        select: { classId: true },
-      });
-      const myClassIds = teacherClasses.map(tc => tc.classId);
-      if (classRoomId) {
-        if (!myClassIds.includes(String(classRoomId))) {
-          where.classRoomId = '__none__'; // 返回空结果
-        } else {
-          where.classRoomId = String(classRoomId);
-        }
-      } else {
-        where.classRoomId = { in: myClassIds };
-      }
-    } else if (classRoomId) {
-      where.classRoomId = String(classRoomId);
-    }
-
-    if (search) {
-      where.OR = [
-        { username: { contains: String(search), mode: 'insensitive' } },
-        { realName: { contains: String(search), mode: 'insensitive' } },
-        { studentId: { contains: String(search), mode: 'insensitive' } },
-      ];
-    }
-
-    const students = await prisma.user.findMany({
-      where,
-      orderBy: { studentId: 'asc' },
-      select: {
-        studentId: true,
-        realName: true,
-        gender: true,
-        phoneNumber: true,
-        email: true,
-        department: { select: { name: true } },
-        major: { select: { name: true } },
-        classRoom: { select: { name: true, code: true } },
-      },
-    });
-
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('学生列表');
-
-    // 表头
-    worksheet.columns = [
-      { header: '学号', key: 'studentId', width: 16 },
-      { header: '姓名', key: 'realName', width: 12 },
-      { header: '性别', key: 'gender', width: 8 },
-      { header: '手机号', key: 'phoneNumber', width: 16 },
-      { header: '邮箱', key: 'email', width: 24 },
-      { header: '院系', key: 'department', width: 20 },
-      { header: '专业', key: 'major', width: 20 },
-      { header: '班级', key: 'classRoom', width: 20 },
-      { header: '班级编码', key: 'classRoomCode', width: 16 },
-    ];
-
-    // 数据行
-    for (const s of students) {
-      worksheet.addRow({
-        studentId: s.studentId || '',
-        realName: s.realName || '',
-        gender: genderToCN(s.gender),
-        phoneNumber: s.phoneNumber || '',
-        email: s.email || '',
-        department: s.department?.name || '',
-        major: s.major?.name || '',
-        classRoom: s.classRoom?.name || '',
-        classRoomCode: s.classRoom?.code || '',
-      });
-    }
-
-    // 设置响应头
-    const fileName = encodeURIComponent(`学生列表_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
-
-    await workbook.xlsx.write(res);
-    res.end();
-  } catch {
-    res.status(500).json({ message: '导出失败' });
-  }
-});
-
-// ============================================================
-// GET /api/students/import-template — 下载导入模板
-// ============================================================
-
-studentRouter.get('/import-template', async (_req: Request, res: Response) => {
-  try {
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('导入模板');
-
-    worksheet.columns = [
-      { header: '学号', key: 'studentId', width: 16 },
-      { header: '姓名', key: 'realName', width: 12 },
-      { header: '性别(男/女)', key: 'gender', width: 10 },
-      { header: '手机号', key: 'phoneNumber', width: 16 },
-      { header: '邮箱', key: 'email', width: 24 },
-      { header: '班级编码', key: 'classRoomCode', width: 16 },
-    ];
-
-    // 设置表头样式（加粗）
-    const headerRow = worksheet.getRow(1);
-    headerRow.font = { bold: true };
-    headerRow.commit();
-
-    const fileName = encodeURIComponent('学生导入模板.xlsx');
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
-
-    await workbook.xlsx.write(res);
-    res.end();
-  } catch {
-    res.status(500).json({ message: '下载模板失败' });
   }
 });
 
@@ -732,6 +743,16 @@ export async function processImport(
     // 邮箱格式
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       rowErrors.push('邮箱格式不正确');
+    }
+
+    // 手机号格式
+    if (phoneNumber && !phoneRegex.test(phoneNumber)) {
+      rowErrors.push('手机号格式不正确');
+    }
+
+    // 性别校验（parseGenderCN 对非法值返回 null）
+    if (gender && parseGenderCN(gender) === null) {
+      rowErrors.push('性别只能填男或女');
     }
 
     if (rowErrors.length > 0) {

@@ -9,6 +9,7 @@ import {
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import { enterFullscreen } from '../../components/exam/FullscreenGuard';
+import { computeLatestEntryTime } from '../../utils/exam-time';
 import type { Exam } from '../../types';
 
 interface ExamWithSubmission extends Exam {
@@ -20,9 +21,29 @@ const statusMap: Record<string, { color: string; text: string }> = {
   pending: { color: 'default', text: '未参考' },
   in_progress: { color: 'processing', text: '考试中' },
   submitted: { color: 'warning', text: '已提交' },
-  grading: { color: 'warning', text: '评分中' },
   graded: { color: 'success', text: '已结束' },
+  // grading 已弱化为阅卷内部状态，学生侧不再感知（后端 my-exams 接口会映射为 submitted）
 };
+
+// 判断考试窗口是否已关闭（即考试时间已结束，禁止再入场/继续答题）。
+// 口径与 ExamEnvironmentCheck / 服务端校验保持一致：
+// - flexible（随到随考）：批次窗口 endTime 已过即关闭
+// - unified（集中统一）：考试自身 endTime（或 startTime + 时长）已过即结束
+function isExamWindowClosed(exam: ExamWithSubmission): boolean {
+  const now = Date.now();
+  const mode = exam.batch?.examMode || 'unified';
+
+  if (mode === 'flexible') {
+    const windowEnd = exam.batch?.endTime ? new Date(exam.batch.endTime).getTime() : null;
+    return windowEnd !== null && now > windowEnd;
+  }
+
+  const examEnd = exam.endTime ? new Date(exam.endTime).getTime() : null;
+  if (examEnd !== null) return now > examEnd;
+  const start = exam.startTime ? new Date(exam.startTime).getTime() : null;
+  const duration = exam.batch?.examDuration || exam.durationMinutes || 0;
+  return start !== null && duration > 0 && now > start + duration * 60 * 1000;
+}
 
 export function StudentDashboard() {
   const [exams, setExams] = useState<ExamWithSubmission[]>([]);
@@ -30,6 +51,13 @@ export function StudentDashboard() {
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const navigate = useNavigate();
+
+  // 每分钟刷新一次，保证页面停留时，考试结束后按钮能及时变为不可用
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     api
@@ -98,6 +126,25 @@ export function StudentDashboard() {
       },
     },
     {
+      title: '最晚入场',
+      width: 130,
+      align: 'center' as const,
+      render: (exam: ExamWithSubmission) => {
+        // 最晚进入考场时间（固定时间戳，非倒计时）：
+        // unified = 开始 + 迟到容忍；flexible = 结束 - 考试时长
+        const ms = computeLatestEntryTime(exam);
+        if (ms === null) return <span style={{ color: '#999' }}>—</span>;
+        const passed = Date.now() > ms;
+        return (
+          <Tooltip title={passed ? '已过最晚入场时间' : '超过此时间将无法进入考场'}>
+            <Tag color={passed ? 'default' : 'orange'} style={{ margin: 0 }}>
+              {dayjs(ms).format('MM-DD HH:mm')}
+            </Tag>
+          </Tooltip>
+        );
+      },
+    },
+    {
       title: '考试名称 / 批次',
       dataIndex: 'title',
       render: (title: string, exam: ExamWithSubmission) => (
@@ -145,16 +192,18 @@ export function StudentDashboard() {
             </Button>
           );
         }
+        const windowClosed = isExamWindowClosed(exam);
         return (
           <Button
             type="primary"
             size="small"
+            disabled={windowClosed}
             onClick={async () => {
               await enterFullscreen();
               navigate(`/student/exam/${exam.id}/check`);
             }}
           >
-            {status === 'in_progress' ? '继续答题' : '进入考试'}
+            {windowClosed ? '已结束' : status === 'in_progress' ? '继续答题' : '进入考试'}
           </Button>
         );
       },

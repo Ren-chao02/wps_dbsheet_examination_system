@@ -123,8 +123,12 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
         accessToken,
       }));
 
+    if (students.length === 0) {
+      message.warning('该考试尚未分配考生，请先返回上一步（考生设置）分配考生后再分配表格');
+      return;
+    }
     if (items.length === 0) {
-      message.warning('请至少为一个考生填写分享链接');
+      message.warning('请至少为一个考生填写 WPS 表格分享链接');
       return;
     }
 
@@ -185,6 +189,17 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
         type="info"
         showIcon
         message="请先在 WPS 中为每个考生创建空白多维表格，然后将分享链接粘贴到下方。"
+        description={
+          <div>
+            <p style={{ marginBottom: 4 }}>
+              <strong>重要：分享链接必须设置为「任何人可查看/编辑」（无需登录）。</strong>
+            </p>
+            <p style={{ marginBottom: 0, color: '#666' }}>
+              在 WPS 多维表格右上角「分享」→ 权限设置为「知道链接的人都能查看/编辑」。
+              否则学生在考试界面会看到 WPS 登录页而非表格内容。
+            </p>
+          </div>
+        }
         style={{ marginBottom: 16 }}
       />
 
