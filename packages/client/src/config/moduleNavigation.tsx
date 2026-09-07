@@ -230,7 +230,6 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
         label: '数据导出中心',
         icon: <FileTextOutlined />,
         permission: 'EXAM_MANAGEMENT',
-        hidden: true, // TODO: Phase 3实现统一导出中心
         description: 'Excel/PDF/CSV批量导出工具',
       },
 

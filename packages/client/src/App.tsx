@@ -38,6 +38,7 @@ import { EnhancedExamMonitor } from './pages/teacher/EnhancedExamMonitor';
 import { MonitoringList } from './pages/teacher/MonitoringList';
 import { StatisticsList } from './pages/teacher/StatisticsList';
 import { AutoGradingPage } from './pages/teacher/AutoGradingPage';
+import { ExportCenter } from './pages/teacher/ExportCenter';
 import { GradingPage } from './pages/teacher/GradingPage';
 import StudentManagement from './pages/teacher/StudentManagement';
 import StudentImport from './pages/teacher/StudentImport';
@@ -144,6 +145,7 @@ export default function App() {
         <Route path="invitations" element={<InvitationManagement />} />
         <Route path="applications" element={<ApplicationReview />} />
         <Route path="import-tasks" element={<ImportTaskList />} />
+        <Route path="export-center" element={<ExportCenter />} />
         <Route path="wps-token" element={<WpsTokenManager />} />
         <Route path="llm-config" element={<LlmConfigManager />} />
       </Route>

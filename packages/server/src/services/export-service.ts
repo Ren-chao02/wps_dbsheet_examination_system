@@ -106,6 +106,18 @@ class ExportService {
   }
 
   /**
+   * 清洗用户提供的文件名，防止路径注入/非法字符；返回空串表示需自动生成
+   */
+  private sanitizeBaseFilename(name?: string): string {
+    if (!name) return '';
+    return name
+      .replace(/[\\/:*?"<>|\r\n]/g, '_') // 非法文件名字符
+      .replace(/\.{2,}/g, '_')            // 防路径穿越（..）
+      .trim()
+      .slice(0, 80);
+  }
+
+  /**
    * ✅ 主导出方法 - 根据格式自动分发
    */
   async export(
@@ -158,7 +170,7 @@ class ExportService {
 
     // 生成文件名和路径
     const timestamp = dayjs().format('YYYYMMDD-HHmmss');
-    const baseFilename = options.filename || `export-${timestamp}`;
+    const baseFilename = this.sanitizeBaseFilename(options.filename) || `export-${timestamp}`;
     const filePath = join(this.outputDir, `${baseFilename}.xlsx`);
 
     // 写入文件
@@ -183,7 +195,7 @@ class ExportService {
 
     // 生成文件名和路径
     const timestamp = dayjs().format('YYYYMMDD-HHmmss');
-    const baseFilename = options.filename || `export-${timestamp}`;
+    const baseFilename = this.sanitizeBaseFilename(options.filename) || `export-${timestamp}`;
     const filePath = join(this.outputDir, `${baseFilename}.csv`);
 
     // 写入CSV（使用xlsx库的CSV支持）
@@ -242,7 +254,7 @@ class ExportService {
 
     // 保存HTML文件（实际项目中应转换为PDF）
     const timestamp = dayjs().format('YYYYMMDD-HHmmss');
-    const baseFilename = options.filename || `export-${timestamp}`;
+    const baseFilename = this.sanitizeBaseFilename(options.filename) || `export-${timestamp}`;
     const filePath = join(this.outputDir, `${baseFilename}.html`);
 
     require('fs').writeFileSync(filePath, htmlContent, 'utf-8');
@@ -303,7 +315,9 @@ class ExportService {
       fileSize: stats.size,
       recordCount,
       format,
-      downloadUrl: `/api/export/download?path=${encodeURIComponent(relativePath)}`,
+      // 相对 API 根（axios baseURL=/api）：请求 /api/export/download?path=…
+      // 若写成 /api/export/... 会与 baseURL 拼成 /api/api/export/... 导致 404
+      downloadUrl: `/export/download?path=${encodeURIComponent(relativePath)}`,
       createdAt: new Date(),
     };
   }

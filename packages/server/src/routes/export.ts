@@ -10,7 +10,6 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { randomUUID } from 'crypto';
 import { ExportFormat, exportService, TaskStatus } from '../services/export-service';
 import { authenticate, authorize } from '../middleware/auth';
 import { prisma } from '../config/prisma';
@@ -18,9 +17,6 @@ import { prisma } from '../config/prisma';
 const router = Router();
 router.use(authenticate);
 router.use(authorize('teacher', 'admin'));
-
-// ✅ 内存中的任务存储（生产环境应使用数据库或Redis）
-const exportTasks: Map<string, any> = new Map();
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 1️⃣ Zod Schema 定义
@@ -147,30 +143,34 @@ async function fetchEntityData(
 router.post('/trigger', async (req: Request, res: Response) => {
   try {
     const body = triggerExportSchema.parse(req.body);
-    const taskId = randomUUID();
-    const userId = req.user!.userId;
 
-    // 创建任务记录
-    const task: any = {
-      id: taskId,
-      userId,
-      entityType: body.entityType,
-      entityId: body.entityId,
-      format: body.format,
-      status: TaskStatus.PROCESSING,
-      progress: 0,
-      error: null,
-      result: null,
-      createdAt: new Date(),
-      completedAt: null,
-    };
+    // PDF 导出当前仅为 HTML 占位，明确拒绝避免用户拿到非 PDF 文件
+    if (body.format === ExportFormat.PDF) {
+      return res.status(400).json({
+        success: false,
+        error: 'PDF 导出暂未实现，请选择 Excel 或 CSV',
+      });
+    }
 
-    exportTasks.set(taskId, task);
+    // 创建 DB 任务记录（持久化：重启不丢历史）
+    const task = await prisma.exportTask.create({
+      data: {
+        userId: req.user!.userId,
+        entityType: body.entityType,
+        entityId: body.entityId || null,
+        format: body.format,
+        status: TaskStatus.PROCESSING,
+        progress: 0,
+      },
+    });
 
-    // 执行导出逻辑
+    // 执行导出逻辑（同步模式：等待完成；异步模式：后台执行）
     const executeExport = async () => {
       try {
-        task.progress = 10;
+        await prisma.exportTask.update({
+          where: { id: task.id },
+          data: { progress: 10 },
+        });
 
         // 1. 获取数据
         const data = await fetchEntityData(
@@ -178,11 +178,15 @@ router.post('/trigger', async (req: Request, res: Response) => {
           body.entityId,
           body.options?.filters
         );
-        task.progress = 50;
 
         if (data.length === 0) {
           throw new Error('没有可导出的数据');
         }
+
+        await prisma.exportTask.update({
+          where: { id: task.id },
+          data: { progress: 50 },
+        });
 
         // 2. 执行导出
         const result = await exportService.export(data, body.format, {
@@ -190,18 +194,31 @@ router.post('/trigger', async (req: Request, res: Response) => {
           filename: body.options?.filename ||
             `${body.entityType}${body.entityId ? `-${body.entityId.substring(0, 8)}` : ''}`,
         });
-        task.progress = 90;
 
-        // 3. 更新任务状态
-        task.status = TaskStatus.COMPLETED;
-        task.progress = 100;
-        task.result = result;
-        task.completedAt = new Date();
+        // 3. 回写任务结果
+        await prisma.exportTask.update({
+          where: { id: task.id },
+          data: {
+            status: TaskStatus.COMPLETED,
+            progress: 100,
+            fileName: result.fileName,
+            fileSize: result.fileSize,
+            recordCount: result.recordCount,
+            downloadUrl: result.downloadUrl,
+            filePath: result.filePath,
+            completedAt: new Date(),
+          },
+        });
       } catch (err: any) {
         console.error('导出失败:', err);
-        task.status = TaskStatus.FAILED;
-        task.error = err.message || '导出过程出错';
-        task.completedAt = new Date();
+        await prisma.exportTask.update({
+          where: { id: task.id },
+          data: {
+            status: TaskStatus.FAILED,
+            error: err.message || '导出过程出错',
+            completedAt: new Date(),
+          },
+        });
       }
     };
 
@@ -209,30 +226,36 @@ router.post('/trigger', async (req: Request, res: Response) => {
     if (body.options?.async) {
       // 异步模式：立即返回任务ID，后台执行
       executeExport();
+      return res.json({
+        success: true,
+        taskId: task.id,
+        message: '导出任务已创建，请稍后查询结果',
+        statusUrl: `/export/tasks/${task.id}`,
+      });
+    }
+
+    // 同步模式：等待完成
+    await executeExport();
+
+    const finalTask = await prisma.exportTask.findUnique({ where: { id: task.id } });
+    if (finalTask?.status === TaskStatus.COMPLETED && finalTask.downloadUrl) {
       res.json({
         success: true,
-        taskId,
-        message: '导出任务已创建，请稍后查询结果',
-        statusUrl: `/api/export/tasks/${taskId}`,
+        taskId: task.id,
+        data: {
+          fileName: finalTask.fileName,
+          fileSize: finalTask.fileSize,
+          recordCount: finalTask.recordCount,
+          downloadUrl: finalTask.downloadUrl,
+        },
+        message: '导出完成',
       });
     } else {
-      // 同步模式：等待完成
-      await executeExport();
-
-      if (task.status === TaskStatus.COMPLETED) {
-        res.json({
-          success: true,
-          taskId,
-          data: task.result,
-          message: '导出完成',
-        });
-      } else {
-        res.status(500).json({
-          success: false,
-          error: task.error,
-          taskId,
-        });
-      }
+      res.status(500).json({
+        success: false,
+        error: finalTask?.error || '导出失败',
+        taskId: task.id,
+      });
     }
   } catch (err: any) {
     console.error('触发导出失败:', err);
@@ -243,6 +266,28 @@ router.post('/trigger', async (req: Request, res: Response) => {
   }
 });
 
+// ✅ DB 行 → 对外摘要（不含 filePath 等内部字段）
+function toExportSummary(row: any) {
+  return {
+    id: row.id,
+    userId: row.userId,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    format: row.format,
+    status: row.status,
+    progress: row.progress,
+    error: row.error,
+    createdAt: row.createdAt,
+    completedAt: row.completedAt,
+    result: row.downloadUrl ? {
+      fileName: row.fileName,
+      fileSize: row.fileSize,
+      recordCount: row.recordCount,
+      downloadUrl: row.downloadUrl,
+    } : null,
+  };
+}
+
 /**
  * GET /api/export/tasks
  *
@@ -251,43 +296,34 @@ router.post('/trigger', async (req: Request, res: Response) => {
 router.get('/tasks', async (req: Request, res: Response) => {
   try {
     const query = queryTasksSchema.parse(req.query);
+    const user = req.user!;
 
-    // 从内存中获取所有任务并筛选
-    let tasks = Array.from(exportTasks.values());
-
-    if (query.status) {
-      tasks = tasks.filter(t => t.status === query.status);
+    // 普通用户只看自己的任务；admin 可见全部（DB 持久化）
+    const where: any = {};
+    if (user.role !== 'admin') {
+      where.userId = user.userId;
     }
-    if (query.entityType) {
-      tasks = tasks.filter(t => t.entityType === query.entityType);
-    }
+    if (query.status) where.status = query.status;
+    if (query.entityType) where.entityType = query.entityType;
 
-    // 按时间倒序排序
-    tasks.sort((a, b) =>
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-
-    // 分页
-    const start = (query.page - 1) * query.pageSize;
-    const paginatedTasks = tasks.slice(start, start + query.pageSize);
+    const [rows, total] = await Promise.all([
+      prisma.exportTask.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      prisma.exportTask.count({ where }),
+    ]);
 
     res.json({
       success: true,
-      data: paginatedTasks.map(task => ({
-        ...task,
-        // 不返回完整result对象（节省带宽），仅返回摘要
-        result: task.result ? {
-          fileName: task.result.fileName,
-          fileSize: task.result.fileSize,
-          recordCount: task.result.recordCount,
-          downloadUrl: task.result.downloadUrl,
-        } : null,
-      })),
+      data: rows.map(toExportSummary),
       pagination: {
         page: query.page,
         pageSize: query.pageSize,
-        total: tasks.length,
-        totalPages: Math.ceil(tasks.length / query.pageSize),
+        total,
+        totalPages: Math.ceil(total / query.pageSize),
       },
     });
   } catch (err: any) {
@@ -304,28 +340,25 @@ router.get('/tasks', async (req: Request, res: Response) => {
  *
  * 功能：查询单个任务状态和结果
  */
-router.get('/tasks/:taskId', (req: Request, res: Response) => {
-  const task = exportTasks.get(req.params.taskId);
-
-  if (!task) {
-    return res.status(404).json({
-      success: false,
-      error: '任务不存在',
+router.get('/tasks/:taskId', async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const row = await prisma.exportTask.findUnique({
+      where: { id: req.params.taskId },
     });
-  }
 
-  res.json({
-    success: true,
-    data: {
-      ...task,
-      result: task.result ? {
-        fileName: task.result.fileName,
-        fileSize: task.result.fileSize,
-        recordCount: task.result.recordCount,
-        downloadUrl: task.result.downloadUrl,
-      } : null,
-    },
-  });
+    if (!row || (user.role !== 'admin' && row.userId !== user.userId)) {
+      return res.status(404).json({
+        success: false,
+        error: '任务不存在',
+      });
+    }
+
+    res.json({ success: true, data: toExportSummary(row) });
+  } catch (err: any) {
+    console.error('查询任务失败:', err);
+    res.status(400).json({ success: false, error: err.message || '查询失败' });
+  }
 });
 
 /**
@@ -333,7 +366,7 @@ router.get('/tasks/:taskId', (req: Request, res: Response) => {
  *
  * 功能：下载导出文件
  */
-router.get('/download', (req: Request, res: Response) => {
+router.get('/download', async (req: Request, res: Response) => {
   try {
     const filePath = req.query.path as string;
 
@@ -353,22 +386,18 @@ router.get('/download', (req: Request, res: Response) => {
       });
     }
 
-    // 校验：反查导出任务，确认当前用户有权下载该文件
-    const matchedTask = Array.from(exportTasks.values()).find(
-      t => t.result?.filePath === safePath
-    );
+    // 校验：反查 DB 导出任务，确认当前用户有权下载该文件
+    const user = req.user!;
+    const matchedTask = await prisma.exportTask.findFirst({
+      where: {
+        filePath: safePath,
+        ...(user.role === 'admin' ? {} : { userId: user.userId }),
+      },
+    });
     if (!matchedTask) {
       return res.status(403).json({
         success: false,
         error: '未找到对应的导出任务，无权下载',
-      });
-    }
-    const isOwner = matchedTask.userId === req.user!.userId;
-    const isAdmin = req.user!.role === 'admin';
-    if (!isOwner && !isAdmin) {
-      return res.status(403).json({
-        success: false,
-        error: '无权下载该文件',
       });
     }
 
@@ -479,29 +508,39 @@ router.get('/templates', (_req: Request, res: Response) => {
  *
  * 功能：删除导出任务及关联文件
  */
-router.delete('/tasks/:taskId', (req: Request, res: Response) => {
-  const task = exportTasks.get(req.params.taskId);
-
-  if (!task) {
-    return res.status(404).json({
-      success: false,
-      error: '任务不存在',
+router.delete('/tasks/:taskId', async (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const row = await prisma.exportTask.findUnique({
+      where: { id: req.params.taskId },
     });
-  }
 
-  // 删除关联的文件
-  if (task.result?.filePath) {
-    try {
-      unlinkSync(task.result.filePath);
-    } catch (err) {
-      console.warn('删除文件失败:', err);
+    if (!row) {
+      return res.status(404).json({ success: false, error: '任务不存在' });
     }
+
+    // 只允许任务属主或 admin 删除
+    if (row.userId !== user.userId && user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '无权删除该任务' });
+    }
+
+    // 删除关联的文件
+    if (row.filePath) {
+      try {
+        unlinkSync(row.filePath);
+      } catch (err) {
+        console.warn('删除文件失败:', err);
+      }
+    }
+
+    // 删除任务记录
+    await prisma.exportTask.delete({ where: { id: row.id } });
+
+    res.json({ success: true, message: '已删除' });
+  } catch (err: any) {
+    console.error('删除任务失败:', err);
+    res.status(500).json({ success: false, error: err.message || '删除失败' });
   }
-
-  // 删除任务记录
-  exportTasks.delete(req.params.taskId);
-
-  res.json({ success: true, message: '已删除' });
 });
 
 /**
@@ -509,32 +548,33 @@ router.delete('/tasks/:taskId', (req: Request, res: Response) => {
  *
  * 功能：批量清理过期任务和文件
  */
-router.post('/cleanup', (_req: Request, res: Response) => {
+router.post('/cleanup', async (req: Request, res: Response) => {
   const maxAgeHours = 24;
   const now = Date.now();
-  let deletedCount = 0;
+  const user = req.user!;
 
-  for (const [taskId, task] of exportTasks.entries()) {
-    const ageHours = (now - new Date(task.createdAt).getTime()) / (1000 * 60 * 60);
+  // 只清理自己的过期任务（admin 可清理全部）
+  const rows = await prisma.exportTask.findMany({
+    where: {
+      ...(user.role === 'admin' ? {} : { userId: user.userId }),
+      createdAt: { lt: new Date(now - maxAgeHours * 60 * 60 * 1000) },
+    },
+  });
 
-    if (ageHours > maxAgeHours) {
-      // 删除文件
-      if (task.result?.filePath) {
-        try { unlinkSync(task.result.filePath); } catch (e) { /* ignore */ }
-      }
-      // 删除任务
-      exportTasks.delete(taskId);
-      deletedCount++;
+  for (const row of rows) {
+    if (row.filePath) {
+      try { unlinkSync(row.filePath); } catch (e) { /* 文件可能已不存在 */ }
     }
+    await prisma.exportTask.delete({ where: { id: row.id } });
   }
 
-  // 同时清理过期文件
+  // 同时清理磁盘上的孤儿过期文件
   const fileDeletedCount = exportService.cleanupExpiredFiles(maxAgeHours);
 
   res.json({
     success: true,
     message: `清理完成`,
-    deletedTasks: deletedCount,
+    deletedTasks: rows.length,
     deletedFiles: fileDeletedCount,
   });
 });

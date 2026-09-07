@@ -35,3 +35,5 @@ debug-*
 
 # Playwright MCP 调试产物
 .playwright-mcp/
+# 导出中心生成的文件目录
+packages/server/exports/

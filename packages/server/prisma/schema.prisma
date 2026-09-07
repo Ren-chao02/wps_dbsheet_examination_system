@@ -172,6 +172,7 @@ model User {
   tableAssignmentsAsStudent  ExamTableAssignment[] @relation("ExamTableAssignmentStudent") // ✅ 作为考生的表格分配
   tableAssignmentsAsAssigner ExamTableAssignment[] @relation("ExamTableAssignmentAssigner") // ✅ 作为分配人的表格分配
   teachingClasses            TeacherClass[]   @relation("TeacherClasses") // ✅ 教师负责的班级（多对多）
+  exportTasks                ExportTask[]     @relation("ExportTaskOwner") // ✅ 统一导出中心任务（持久化）
 
   @@map("users")
 }
@@ -1034,3 +1035,27 @@ model TeacherClass {
 }
 
 
+
+// ✅ 统一导出中心任务（持久化：服务重启不丢历史；文件本体仍在磁盘 exports/ 目录）
+model ExportTask {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  entityType  String   @map("entity_type") @db.VarChar(32)
+  entityId    String?  @map("entity_id") @db.Uuid
+  format      String   @db.VarChar(16)
+  status      String   @default("processing") @db.VarChar(16) // pending|processing|completed|failed
+  progress    Int      @default(0)
+  error       String?  @db.Text
+  fileName    String?  @map("file_name") @db.VarChar(255)
+  fileSize    Int?     @map("file_size")
+  recordCount Int?     @map("record_count")
+  downloadUrl String?  @map("download_url") @db.VarChar(512)
+  filePath    String?  @map("file_path") @db.Text // 内部使用：下载授权与文件清理反查
+  createdAt   DateTime @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+
+  user User @relation("ExportTaskOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("export_tasks")
+}

@@ -110,7 +110,8 @@ export function StatisticsPage() {
               <BarChart data={questionChartData} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis type="number" domain={[0, 100]} unit="%" />
-                <YAxis type="category" dataKey="name" width={100} />
+                {/* Y 轴宽度需容纳截断后的题目名（≤12 个中文字+省略号），否则文本会溢出图边界 */}
+                <YAxis type="category" dataKey="name" width={170} tick={{ fontSize: 12 }} tickMargin={8} />
                 <Tooltip formatter={(value) => `${value}%`} />
                 <Bar dataKey="correctRate" name="正确率" fill="#1890ff" radius={[0, 4, 4, 0]}>
                   {questionChartData.map((entry, index) => (
