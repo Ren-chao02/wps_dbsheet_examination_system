@@ -147,27 +147,47 @@ export function ExportCenter() {
       if (res.data.success && res.data.data) {
         message.success(`成功导出 ${res.data.data.recordCount} 条记录`);
 
-        // 自动下载文件（带鉴权 token 的 axios blob 下载）
-        const downloadRes = await api.get(res.data.data.downloadUrl, { responseType: 'blob' });
-        const url = URL.createObjectURL(downloadRes.data);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = res.data.data.filename || '导出文件';
-        a.click();
-        URL.revokeObjectURL(url);
+        // 自动下载（失败不视为导出失败：文件已生成，可到「导出历史」手动下载）
+        try {
+          const downloadRes = await api.get(res.data.data.downloadUrl, { responseType: 'blob' });
+          const url = URL.createObjectURL(downloadRes.data);
+          const a = document.createElement('a');
+          a.href = url;
+          // 服务端字段为 fileName（大写 N）；兜底从 Content-Disposition 解析，仍取不到则补扩展名
+          const cd = downloadRes.headers?.['content-disposition'] as string | undefined;
+          const headerName = cd
+            ? decodeURIComponent(
+                (cd.match(/filename\*=UTF-8''([^;]+)/)?.[1] ||
+                 cd.match(/filename="?([^";]+)"?/)?.[1] ||
+                 ''),
+              )
+            : '';
+          const extMap: Record<string, string> = { excel: '.xlsx', csv: '.csv', pdf: '.pdf' };
+          const fileName =
+            res.data.data.fileName ||
+            headerName ||
+            `导出_${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)}${extMap[values.format] || ''}`;
+          a.download = fileName;
+          a.click();
+          URL.revokeObjectURL(url);
+        } catch (downloadErr) {
+          console.warn('自动下载失败，可到导出历史手动下载:', downloadErr);
+          message.warning('文件已生成，但浏览器自动下载未成功，请到「导出历史」手动下载');
+        }
 
-        // 刷新任务列表
-        fetchTasks();
         setExportModalOpen(false);
         form.resetFields();
       } else {
         message.error(res.data.error || '导出失败');
       }
     } catch (err: any) {
+      message.destroy();
       console.error('导出失败:', err);
       message.error(err.response?.data?.error || '导出失败');
     } finally {
       setExporting(false);
+      // 无论成功失败都刷新历史（失败的记录也应可见）
+      fetchTasks();
     }
   };
 
@@ -533,9 +553,10 @@ export function ExportCenter() {
           >
             <Select placeholder="请选择格式">
               {Object.entries(FORMAT_CONFIG).map(([key, cfg]) => (
-                <Select.Option key={key} value={key}>
+                <Select.Option key={key} value={key} disabled={key === 'pdf'}>
                   <Space>
                     {cfg.icon} {cfg.label}
+                    {key === 'pdf' && <Text type="secondary" style={{ fontSize: 12 }}>（暂未实现）</Text>}
                   </Space>
                 </Select.Option>
               ))}
