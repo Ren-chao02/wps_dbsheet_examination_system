@@ -247,6 +247,10 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
     if (exam.status === 'in_progress') {
       return res.status(400).json({ message: '考试进行中，无法编辑' });
     }
+    // ✅ 已结束考试不可再编辑（只读：仅可通过详情/统计等查看）
+    if (exam.status === 'ended') {
+      return res.status(400).json({ message: '考试已结束，无法编辑' });
+    }
 
     const data = examSchema.parse(req.body);
     const targetBatchId = data.batchId ?? exam.batchId;

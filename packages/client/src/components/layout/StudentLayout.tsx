@@ -129,9 +129,7 @@ export function StudentLayout() {
         <Header style={{
           position: 'sticky',
           top: 0, zIndex: 99, height: 48,
-          background: 'rgba(255,255,255,0.82)',
-          backdropFilter: 'saturate(180%) blur(24px)',
-          WebkitBackdropFilter: 'saturate(180%) blur(24px)',
+          background: 'rgba(255,255,255,0.97)',
           borderBottom: '0.5px solid #e5e5ea',
           padding: '0 20px',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',

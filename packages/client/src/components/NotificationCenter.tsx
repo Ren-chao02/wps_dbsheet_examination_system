@@ -25,7 +25,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import api from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { io, Socket } from 'socket.io-client';
-import { getSocketURL } from '../config/socket-url';
+import { createAuthedSocket } from '../config/socket-url';
 
 // 扩展dayjs相对时间插件
 dayjs.extend(relativeTime);
@@ -104,8 +104,8 @@ export function NotificationCenter() {
   useEffect(() => {
     if (!user?.id) return;
 
-    // 连接Socket.IO服务器
-    const socket = io(getSocketURL(), {
+    // 连接Socket.IO服务器（携带 JWT 鉴权）
+    const socket = createAuthedSocket({
       transports: ['websocket'],
       reconnection: true,
     });

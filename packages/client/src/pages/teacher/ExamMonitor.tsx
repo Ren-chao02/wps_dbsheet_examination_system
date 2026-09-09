@@ -4,7 +4,7 @@ import { Table, Tag, Card, Statistic, Row, Col, Spin, message, Badge } from 'ant
 import { UserOutlined, CheckCircleOutlined, ClockCircleOutlined, WarningOutlined } from '@ant-design/icons';
 import { io, Socket } from 'socket.io-client';
 import api from '../../services/api';
-import { getSocketURL } from '../../config/socket-url';
+import { createAuthedSocket } from '../../config/socket-url';
 
 const statusMap: Record<string, { color: string; text: string }> = {
   pending: { color: 'default', text: '未开始' },
@@ -44,7 +44,7 @@ export function ExamMonitor() {
 
   // Socket.IO connection
   useEffect(() => {
-    const socket = io(getSocketURL(), { transports: ['websocket', 'polling'] });
+    const socket = createAuthedSocket({ transports: ['websocket', 'polling'] });
     socketRef.current = socket;
 
     socket.on('connect', () => {

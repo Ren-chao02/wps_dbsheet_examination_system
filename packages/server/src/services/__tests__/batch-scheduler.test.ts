@@ -30,6 +30,8 @@ vi.mock('@prisma/client', () => ({
     exam = { findMany: mockExamFindMany, updateMany: mockExamUpdateMany };
     examBatch = { findMany: mockExamBatchFindMany, update: mockExamBatchUpdate };
     studentSubmission = { updateMany: mockSubmissionUpdateMany };
+    // 事务：以自身作为 tx 执行回调（模型方法都是同一批 mock，行为一致）
+    $transaction = async (fn: (tx: any) => Promise<unknown>, _opts?: unknown) => fn(this);
   },
 }));
 

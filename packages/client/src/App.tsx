@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, useLayoutEffect } from 'react';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from './stores/auth';
 import { LoginPage } from './pages/auth/LoginPage';
 import { RegisterPage } from './pages/auth/RegisterPage';
@@ -83,6 +83,19 @@ function PrivateRoute({ children, roles, permissions }: { children: React.ReactN
   return <>{children}</>;
 }
 
+// 路由切换时短暂开启 body[data-route-enter]（~0.8s），
+// 让 .ant-row > .ant-col 的错峰入场动画仅在整页首次进入时播放一次；
+// 弹层打开 / 数据刷新 / 重绘都不会重放，避免页面抖动。
+function RouteEnter() {
+  const { pathname } = useLocation();
+  useLayoutEffect(() => {
+    document.body.setAttribute('data-route-enter', '1');
+    const timer = window.setTimeout(() => document.body.removeAttribute('data-route-enter'), 800);
+    return () => window.clearTimeout(timer);
+  }, [pathname]);
+  return null;
+}
+
 export default function App() {
   const { loadFromStorage } = useAuthStore();
 
@@ -91,6 +104,8 @@ export default function App() {
   }, [loadFromStorage]);
 
   return (
+    <>
+    <RouteEnter />
     <Routes>
       {/* Auth */}
       <Route path="/login" element={<LoginPage />} />
@@ -176,5 +191,6 @@ export default function App() {
       <Route path="/" element={<Navigate to="/login" replace />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
+    </>
   );
 }

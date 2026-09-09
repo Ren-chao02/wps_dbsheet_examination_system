@@ -11,6 +11,7 @@
  * 必须提供有效的 WPS access_token 才能判分，缺少时直接抛出错误。
  */
 
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { evaluateRules, type AnswerRule, type RuleResult, type SchemaResponse, type RecordData } from '../engine/rule-engine';
 import { createAdapterFromSpaceId } from '../engine/adapters/kingsoft-adapter';
@@ -227,8 +228,14 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
     }
   }
 
-  // 3. 逐题判分
+  // 3. 逐题判分（纯计算，结果先在内存中累积；DB 写入统一放入下方事务）
   const questionResults: QuestionGradingResult[] = [];
+  const detailWrites: Array<{
+    detailId: string;
+    rows: Prisma.VerificationResultCreateManyInput[];
+    score: number | null;
+    isCorrect: boolean | null;
+  }> = [];
   let totalScore = 0;
   let maxScore = 0;
   let totalNeedsReview = 0;
@@ -242,22 +249,6 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
     const needsReviewCount = results.filter(r => r.needsReview).length;
     totalNeedsReview += needsReviewCount;
 
-    // 写入 VerificationResult 到数据库
-    await prisma.verificationResult.createMany({
-      data: results.map(r => ({
-        submissionDetailId: detail.id,
-        submissionId: submission.id,
-        ruleId: r.ruleId,
-        action: r.action,
-        expected: r.expected as any,
-        actual: r.actual as any,
-        passed: r.passed,
-        score: r.score,
-        errorMessage: r.errorMessage || null,
-        needsReview: r.needsReview,
-      })),
-    });
-
     // 计算该题规则总分（百分制，范围 0~qMaxScore，qMaxScore=全部规则分之和，通常为 100）
     const rawAutoScore = results.reduce((sum, r) => sum + (r.passed && !r.needsReview ? r.score : 0), 0);
     const isCorrect = results.every(r => r.passed) && needsReviewCount === 0;
@@ -269,15 +260,6 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
     const autoScore = needsReviewCount === 0 && qMaxPoints > 0 && qMaxScore > 0
       ? Math.round((rawAutoScore / qMaxScore) * qMaxPoints)
       : rawAutoScore;
-
-    // 更新 SubmissionDetail 的分数
-    await prisma.submissionDetail.update({
-      where: { id: detail.id },
-      data: {
-        score: needsReviewCount === 0 ? autoScore : null, // 有待复核项时不自动设分
-        isCorrect: needsReviewCount === 0 ? isCorrect : null,
-      },
-    });
 
     questionResults.push({
       detailId: detail.id,
@@ -292,31 +274,68 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
 
     totalScore += autoScore;
     maxScore += qMaxPoints;
+
+    detailWrites.push({
+      detailId: detail.id,
+      rows: results.map(r => ({
+        submissionDetailId: detail.id,
+        submissionId: submission.id,
+        ruleId: r.ruleId,
+        action: r.action,
+        expected: r.expected as any,
+        actual: r.actual as any,
+        passed: r.passed,
+        score: r.score,
+        errorMessage: r.errorMessage || null,
+        needsReview: r.needsReview,
+      })),
+      score: needsReviewCount === 0 ? autoScore : null, // 有待复核项时不自动设分
+      isCorrect: needsReviewCount === 0 ? isCorrect : null,
+    });
   }
 
-  // 4. 如果没有 needsReview 项，自动完成评分
+  // 4. 统一在单个事务中落库：
+  // - 判分链路有多次写入，且 BullMQ 失败会重试（attempts:3），必须幂等：
+  //   先清理上次运行可能残留的判分结果与明细分数，防止重试时重复累计
+  // - 必须原子：中途失败不留半套判分数据
   const hasNeedsReview = totalNeedsReview > 0;
 
-  if (!hasNeedsReview) {
-    await prisma.studentSubmission.update({
-      where: { id: submissionId },
-      data: {
-        status: 'graded',
-        totalScore,
-        gradedAt: new Date(),
-        graderComment: '自动判分完成',
-      },
+  await prisma.$transaction(async (tx) => {
+    await tx.verificationResult.deleteMany({ where: { submissionId: submission.id } });
+    await tx.submissionDetail.updateMany({
+      where: { submissionId: submission.id },
+      data: { score: null, isCorrect: null },
     });
-  } else {
-    // 有待复核项，保持 grading 状态等待教师复核
-    await prisma.studentSubmission.update({
-      where: { id: submissionId },
-      data: {
-        status: 'grading',
-        graderComment: `自动判分完成，有 ${totalNeedsReview} 条规则需人工复核`,
-      },
-    });
-  }
+
+    for (const w of detailWrites) {
+      await tx.verificationResult.createMany({ data: w.rows });
+      await tx.submissionDetail.update({
+        where: { id: w.detailId },
+        data: { score: w.score, isCorrect: w.isCorrect },
+      });
+    }
+
+    if (!hasNeedsReview) {
+      await tx.studentSubmission.update({
+        where: { id: submissionId },
+        data: {
+          status: 'graded',
+          totalScore,
+          gradedAt: new Date(),
+          graderComment: '自动判分完成',
+        },
+      });
+    } else {
+      // 有待复核项，保持 grading 状态等待教师复核
+      await tx.studentSubmission.update({
+        where: { id: submissionId },
+        data: {
+          status: 'grading',
+          graderComment: `自动判分完成，有 ${totalNeedsReview} 条规则需人工复核`,
+        },
+      });
+    }
+  }, { timeout: 30_000 });
 
   return {
     submissionId,

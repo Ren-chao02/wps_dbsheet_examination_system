@@ -129,7 +129,7 @@ export function LoginPage() {
         {import.meta.env.DEV && (
           <div style={{ marginTop: 24, padding: 16, background: '#f0f5ff', borderRadius: 4 }}>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              测试账号：admin/123456 (管理员) | teacher1/123456 (教师) | student1/123456 (学生)
+              测试账号：admin/123456 (管理员) | teacher1/123456 (教师) | 20252861/123456 (学生1) | 20252862/123456 (学生2)
             </Text>
           </div>
         )}

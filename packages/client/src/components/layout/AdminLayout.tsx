@@ -64,8 +64,7 @@ export function AdminLayout() {
       {/* === 毛玻璃顶栏 === */}
       <div style={{
         position: 'fixed', top: 0, left: 0, right: 0, height: 48,
-        background: 'rgba(255,255,255,0.82)', backdropFilter: 'saturate(180%) blur(24px)',
-        WebkitBackdropFilter: 'saturate(180%) blur(24px)', borderBottom: '0.5px solid #e5e5ea',
+        background: 'rgba(255,255,255,0.97)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', zIndex: 200,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 600, fontSize: 15, color: '#1d1d1f' }}>

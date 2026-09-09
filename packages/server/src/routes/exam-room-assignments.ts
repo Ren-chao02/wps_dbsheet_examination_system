@@ -2,10 +2,14 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
+import { rejectExamConfigMutationWhenEnded } from '../middleware/exam-lock';
 
 export const examRoomAssignmentRouter = Router();
 examRoomAssignmentRouter.use(authenticate);
 examRoomAssignmentRouter.use(authorize('teacher', 'admin'));
+
+// ✅ 考试已结束(ended)后，禁止继续修改该考试的考场/考生/监考等配置
+examRoomAssignmentRouter.use('/exams/:examId', rejectExamConfigMutationWhenEnded());
 
 const assignSchema = z.object({
   roomId: z.string().uuid(),

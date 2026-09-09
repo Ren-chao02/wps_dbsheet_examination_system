@@ -1,10 +1,14 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
+import { rejectExamConfigMutationWhenEnded } from '../middleware/exam-lock';
 
 export const examTableAssignmentRouter = Router();
 examTableAssignmentRouter.use(authenticate);
 examTableAssignmentRouter.use(authorize('teacher', 'admin'));
+
+// ✅ 考试已结束(ended)后，禁止继续修改该考试的 WPS 表格分配
+examTableAssignmentRouter.use('/:examId', rejectExamConfigMutationWhenEnded());
 
 function extractFileId(input: string): string {
   const trimmed = input.trim();
