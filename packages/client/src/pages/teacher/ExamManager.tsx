@@ -2,56 +2,14 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Table, Button, Tag, Space, message, Card, Popconfirm, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined, EditOutlined, DeleteOutlined, BarChartOutlined, SendOutlined, RollbackOutlined, StopOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, BarChartOutlined, EyeOutlined, SendOutlined, RollbackOutlined, StopOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { Exam, PaginatedResponse } from '../../types';
 import { ExamConfigWizard } from './ExamConfigWizard';
+import { ExamDetailDrawer } from './ExamDetailDrawer';
 import { useAuthStore } from '../../stores/auth';
-
-const modeLabels: Record<string, string> = { practice: '练习', quiz: '测验', exam: '正式考试' };
-const statusLabels: Record<string, { color: string; text: string }> = {
-  draft: { color: 'default', text: '草稿/待发布' },
-  published: { color: 'blue', text: '已发布（待考）' },
-  scheduled: { color: 'cyan', text: '已排期' },
-  in_progress: { color: 'processing', text: '进行中' },
-  ended: { color: 'blue', text: '已结束' },
-  cancelled: { color: 'red', text: '已取消' },
-  archived: { color: 'orange', text: '已归档' },
-};
-
-function formatTimeSlot(exam: Exam): string {
-  // 灵活模式：显示批次时间窗口
-  if (exam.batch?.examMode === 'flexible' && exam.batch?.startTime) {
-    const start = dayjs(exam.batch.startTime);
-    const end = exam.batch.endTime ? dayjs(exam.batch.endTime) : null;
-    const date = start.format('YYYY-MM-DD');
-    if (end && !start.isSame(end, 'day')) {
-      return `随到随考 ${start.format('YYYY-MM-DD HH:mm')} ~ ${end.format('YYYY-MM-DD HH:mm')}`;
-    }
-    return `随到随考 ${date} ${start.format('HH:mm')}${end ? ` ~ ${end.format('HH:mm')}` : ''}`;
-  }
-  // 集中统一模式或无批次：显示考试自身时间
-  if (!exam.startTime) return '未设置';
-  const start = dayjs(exam.startTime);
-  const end = exam.endTime ? dayjs(exam.endTime) : null;
-  if (end && !start.isSame(end, 'day')) {
-    return `${start.format('YYYY-MM-DD HH:mm')} ~ ${end.format('YYYY-MM-DD HH:mm')}`;
-  }
-  const date = start.format('YYYY-MM-DD');
-  const startTimeStr = start.format('HH:mm');
-  const endTimeStr = end ? end.format('HH:mm') : '';
-  return `${date} ${startTimeStr}${endTimeStr ? ` ~ ${endTimeStr}` : ''}`;
-}
-
-function formatRoomSettings(exam: Exam): string {
-  if (!exam.assignments || exam.assignments.length === 0) return '未设置';
-  return exam.assignments.map(a => a.room.code).join(', ');
-}
-
-function countAssignedStudents(exam: Exam): number {
-  return exam.assignments?.reduce((sum, a) => sum + (a._count?.students ?? 0), 0) ?? 0;
-}
+import { modeLabels, statusLabels, formatTimeSlot, formatRoomSettings, countAssignedStudents, examEditGuard } from '../../utils/examDisplay';
 
 export function ExamManager() {
   const navigate = useNavigate();
@@ -59,6 +17,8 @@ export function ExamManager() {
   const [data, setData] = useState<PaginatedResponse<Exam>>({ data: [], total: 0, page: 1, pageSize: 20 });
   const [loading, setLoading] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [detailExam, setDetailExam] = useState<Exam | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   // 判断当前用户是否为考试创建者（admin 视为所有者）
   const isOwner = (r: Exam) =>
@@ -205,13 +165,17 @@ export function ExamManager() {
       },
     },
     {
-      title: '操作', key: 'actions', width: 360, fixed: 'right', render: (_: any, r: Exam) => {
+      title: '操作', key: 'actions', width: 400, fixed: 'right', render: (_: any, r: Exam) => {
         const owner = isOwner(r);
         const notOwnerTip = '仅支持本人创建的考试';
+        const edit = examEditGuard(r.status, owner);
         return (
           <Space>
-            <Tooltip title={owner ? undefined : notOwnerTip}>
-              <Button size="small" icon={<EditOutlined />} onClick={() => navigate(`/teacher/exams/${r.id}/edit`)} disabled={r.status === 'in_progress' || !owner}>编辑</Button>
+            <Tooltip title={edit.tip}>
+              <Button size="small" icon={<EditOutlined />} onClick={() => navigate(`/teacher/exams/${r.id}/edit`)} disabled={edit.disabled}>编辑</Button>
+            </Tooltip>
+            <Tooltip title="查看考试详情">
+              <Button size="small" icon={<EyeOutlined />} onClick={() => { setDetailExam(r); setDetailOpen(true); }}>详情</Button>
             </Tooltip>
             <Button size="small" icon={<BarChartOutlined />} onClick={() => navigate(`/teacher/exams/${r.id}/statistics`)}>统计</Button>
             <Tooltip title={owner ? undefined : notOwnerTip}>
@@ -284,6 +248,11 @@ export function ExamManager() {
         open={wizardOpen}
         onClose={() => setWizardOpen(false)}
         onSuccess={() => fetchExams()}
+      />
+      <ExamDetailDrawer
+        exam={detailExam}
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
       />
     </div>
   );

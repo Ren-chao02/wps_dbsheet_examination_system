@@ -57,6 +57,19 @@ wpsTokenRouter.post('/refresh', async (req: Request, res: Response) => {
       });
     }
 
+    // 关键：refresh_token 是一次性的（轮换制），WPS 返回的新 refresh_token 必须立即落库，
+    // 否则数据库里仍是已作废的旧 token，服务端定时刷新会一直 invalid_grant，token 链断裂
+    try {
+      await wpsConfigService.save({
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        expiresIn: data.expires_in,
+        refreshExpiresIn: Number(data.refresh_expires_in) || 2592000,
+      });
+    } catch (err: any) {
+      console.error('[WPS] 刷新成功但落库失败，token 链可能中断，请尽快在 Token 管理页重新保存:', err.message);
+    }
+
     res.json({
       accessToken: data.access_token,
       refreshToken: data.refresh_token,

@@ -15,7 +15,7 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime'; // ✅ 导入相对时间插件
 import api from '../../services/api';
 import * as XLSX from 'xlsx'; // Excel导出库
-import { getSocketURL } from '../../config/socket-url';
+import { createAuthedSocket } from '../../config/socket-url';
 
 // ✅ 扩展dayjs以支持fromNow方法
 dayjs.extend(relativeTime);
@@ -115,7 +115,7 @@ export function EnhancedExamMonitor() {
 
   // ✅ Socket.IO 连接（保持原有逻辑）
   useEffect(() => {
-    const socket = io(getSocketURL(), { transports: ['websocket', 'polling'] });
+    const socket = createAuthedSocket({ transports: ['websocket', 'polling'] });
     socketRef.current = socket;
 
     socket.on('connect', () => {

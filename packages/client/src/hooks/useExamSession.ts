@@ -3,7 +3,7 @@ import { message, Modal } from 'antd';
 import { io, Socket } from 'socket.io-client';
 import api from '../services/api';
 import { useAuthStore } from '../stores/auth';
-import { getSocketURL } from '../config/socket-url';
+import { createAuthedSocket } from '../config/socket-url';
 import { exitFullscreen } from '../components/exam/FullscreenGuard';
 
 function recordBehavior(
@@ -30,7 +30,7 @@ export function useExamSession({ examId, onNavigateToResult }: UseExamSessionOpt
 
   // Socket.IO connection for real-time monitoring
   useEffect(() => {
-    const socket = io(getSocketURL(), { transports: ['websocket', 'polling'] });
+    const socket = createAuthedSocket({ transports: ['websocket', 'polling'] });
     socketRef.current = socket;
 
     socket.on('connect', () => {

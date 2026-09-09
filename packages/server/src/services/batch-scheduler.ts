@@ -87,15 +87,18 @@ class BatchScheduler {
 
     const ids = examsToEnd.map(e => e.id);
 
-    await prisma.exam.updateMany({
-      where: { id: { in: ids } },
-      data: { status: 'ended' },
-    });
-
+    // ✅ 单个事务完成「考试结束 + 学生答卷收尾」，避免中途失败后
+    // exam 已 ended 不再重试、submission 永久卡"考试中"
     let totalSubmitted = 0;
-    for (const exam of examsToEnd) {
-      totalSubmitted += await finalizeExamSubmissions(exam.id, exam.endTime ?? now);
-    }
+    await prisma.$transaction(async (tx) => {
+      await tx.exam.updateMany({
+        where: { id: { in: ids } },
+        data: { status: 'ended' },
+      });
+      for (const exam of examsToEnd) {
+        totalSubmitted += await finalizeExamSubmissions(exam.id, exam.endTime ?? now, tx);
+      }
+    }, { timeout: 30_000 });
 
     console.log(`[BatchScheduler] auto-ended ${examsToEnd.length} exams, auto-submitted ${totalSubmitted} stale submissions`);
   }
@@ -124,20 +127,23 @@ class BatchScheduler {
         select: { id: true, endTime: true },
       });
 
-      if (examsToEnd.length > 0) {
-        await prisma.exam.updateMany({
-          where: { id: { in: examsToEnd.map(e => e.id) } },
-          data: { status: 'ended' },
-        });
-        for (const exam of examsToEnd) {
-          await finalizeExamSubmissions(exam.id, exam.endTime ?? now);
+      // ✅ 事务保证「结束子考试 + 收尾答卷 + 批次完成」原子生效
+      await prisma.$transaction(async (tx) => {
+        if (examsToEnd.length > 0) {
+          await tx.exam.updateMany({
+            where: { id: { in: examsToEnd.map(e => e.id) } },
+            data: { status: 'ended' },
+          });
+          for (const exam of examsToEnd) {
+            await finalizeExamSubmissions(exam.id, exam.endTime ?? now, tx);
+          }
         }
-      }
 
-      await prisma.examBatch.update({
-        where: { id: batch.id },
-        data: { status: 'completed' },
-      });
+        await tx.examBatch.update({
+          where: { id: batch.id },
+          data: { status: 'completed' },
+        });
+      }, { timeout: 30_000 });
     }
     console.log(`[BatchScheduler] auto-completed ${batches.length} batches`);
   }

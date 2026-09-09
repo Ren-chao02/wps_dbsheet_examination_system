@@ -5,19 +5,19 @@ import { Prisma } from '@prisma/client';
  * 构建学生侧考试可见性过滤条件（OR 分支）。
  * 用于学生考试列表、首页统计、成绩查询等处，保证口径一致，避免多处复制导致不同步。
  *
- * 可见条件（满足任一即可）：
- * - 无批次：直接放行
- * - 批次为 active：考试进行中
- * - 批次为 completed：考试已结束（用于查看成绩/待评分，避免批次结束后学生看不到历史考试）
- * - 该学生已有提交记录：无论批次状态如何都放行（覆盖批次被归档等情况）
+ * 可见条件（满足任一即可，均以“被分配到本场考试/已参与”为准）：
+ * - 有考场座位：assignments.students 中包含该学生（教师给学生分配座位即视为入考）
+ * - 有 WPS 表格分配：tableAssignments 中包含该学生（配表即视为入考）
+ * - 已有提交记录：submissions 中包含该学生（覆盖已参与/历史成绩查询）
  *
+ * ⚠️ 历史口径曾按“批次 active/completed 或无批次”全校放行，导致只分配给个别学生的
+ * 考试被无关学生看到（严重越权）。现改为分配/参与驱动，禁止按批次全校可见。
  * 注意：调用方需自行叠加 exam.status 过滤（通常为 published/in_progress/ended）。
  */
 export function studentExamVisibilityOR(studentId: string): Prisma.ExamWhereInput[] {
   return [
-    { batchId: null },
-    { batch: { status: 'active' } },
-    { batch: { status: 'completed' } },
+    { assignments: { some: { students: { some: { studentId } } } } },
+    { tableAssignments: { some: { studentId } } },
     { submissions: { some: { studentId } } },
   ];
 }
@@ -38,8 +38,9 @@ export function studentExamVisibilityOR(studentId: string): Prisma.ExamWhereInpu
 export async function finalizeExamSubmissions(
   examId: string,
   submittedAt: Date,
+  tx: Prisma.TransactionClient = prisma,
 ): Promise<number> {
-  const result = await prisma.studentSubmission.updateMany({
+  const result = await tx.studentSubmission.updateMany({
     where: { examId, status: 'in_progress' },
     data: {
       status: 'submitted',
@@ -74,25 +75,32 @@ export async function autoEndExpiredExams(): Promise<void> {
 
     const ids = expiredExams.map(e => e.id);
 
-    await prisma.exam.updateMany({
-      where: { id: { in: ids } },
-      data: { status: 'ended' },
-    });
+    // ✅ 单个事务完成「考试结束 + 考场收尾 + 学生答卷收尾」：
+    // 若分步写入且中途失败，exam 已是 ended 不再匹配重试条件，
+    // submission 将永久卡在 in_progress（学生端永远显示"考试中"）。
+    await prisma.$transaction(async (tx) => {
+      await tx.exam.updateMany({
+        where: { id: { in: ids } },
+        data: { status: 'ended' },
+      });
 
-    // 级联更新相关考场分配状态为已完成
-    await prisma.examRoomAssignment.updateMany({
-      where: {
-        examId: { in: ids },
-        status: 'in_progress',
-      },
-      data: { status: 'completed' },
-    });
+      // 级联更新相关考场分配状态为已完成
+      await tx.examRoomAssignment.updateMany({
+        where: {
+          examId: { in: ids },
+          status: 'in_progress',
+        },
+        data: { status: 'completed' },
+      });
 
-    // 收尾 in_progress 的学生提交（系统自动收卷），避免学生端永远显示"考试中"
-    for (const exam of expiredExams) {
-      await finalizeExamSubmissions(exam.id, exam.endTime ?? now);
-    }
-  } catch {
-    // 静默失败，不影响主流程
+      // 收尾 in_progress 的学生提交（系统自动收卷），避免学生端永远显示"考试中"
+      for (const exam of expiredExams) {
+        await finalizeExamSubmissions(exam.id, exam.endTime ?? now, tx);
+      }
+    }, { timeout: 30_000 });
+  } catch (err) {
+    // 记录日志但不向上抛：本函数多在查询链路中调用，失败不应阻塞主流程；
+    // 事务回滚后 exam 仍是 in_progress，下次调用会自动重试
+    console.error('[exam-utils] 自动结束过期考试失败（将自动重试）:', err);
   }
 }

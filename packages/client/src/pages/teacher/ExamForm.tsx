@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Form, Input, Select, InputNumber, Button, Card, message, Spin, Space, Row, Col, Switch, Table, Tag, Modal, DatePicker } from 'antd';
-import { SaveOutlined, ArrowLeftOutlined, BookOutlined, EyeOutlined, LinkOutlined } from '@ant-design/icons';
+import { Form, Input, Select, InputNumber, Button, Card, message, Spin, Space, Row, Col, Switch, Table, Tag, Modal, DatePicker, Alert, Tooltip } from 'antd';
+import { SaveOutlined, ArrowLeftOutlined, BookOutlined, EyeOutlined, LinkOutlined, LockOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { Paper, PaperQuestion } from '../../types';
 
 const { TextArea } = Input;
+
+/** 已结束/进行中考试均不允许编辑（与服务端 PUT 拦截保持一致） */
+const LOCKED_EXAM_STATUSES = ['ended', 'in_progress'];
 
 export function ExamForm() {
   const { id } = useParams<{ id: string }>();
@@ -21,6 +24,10 @@ export function ExamForm() {
   const [existingExam, setExistingExam] = useState<any>(null);
   const [batches, setBatches] = useState<any[]>([]);
   const isEdit = !!id;
+
+  // 是否处于"已结束/进行中"只读状态（服务端同样拦截 PUT，这里只做前端只读提示）
+  const isLocked = isEdit && existingExam && LOCKED_EXAM_STATUSES.includes(existingExam.status);
+  const endedReadOnly = isEdit && existingExam?.status === 'ended';
 
   useEffect(() => {
     if (isEdit) {
@@ -129,6 +136,11 @@ export function ExamForm() {
 
   if (loading) return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>;
 
+  // 已结束考试只读提示
+  const lockedMessage = endedReadOnly
+    ? '该考试已结束，不可再编辑。如需查看考试信息（考生、考场、分配的表格等），请返回考试管理列表点击「详情」。'
+    : (isEdit && existingExam?.status === 'in_progress' ? '该考试正在进行中，不可编辑。' : '');
+
   return (
     <div className="page-container" style={{ maxWidth: 1000 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -136,10 +148,27 @@ export function ExamForm() {
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/teacher/exams')} />
           <h2>{isEdit ? '编辑考试' : '创建考试'}</h2>
         </Space>
-        <Button type="primary" icon={<SaveOutlined />} onClick={() => form.submit()} loading={saving}>保存</Button>
+        {!endedReadOnly && isEdit && existingExam?.status === 'in_progress' && (
+          <Tooltip title="考试进行中，不可保存修改">
+            <Button type="primary" icon={<SaveOutlined />} disabled>保存</Button>
+          </Tooltip>
+        )}
+        {!endedReadOnly && !(isEdit && existingExam?.status === 'in_progress') && (
+          <Button type="primary" icon={<SaveOutlined />} onClick={() => form.submit()} loading={saving}>保存</Button>
+        )}
       </div>
 
-      <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ mode: 'exam' }}>
+      {lockedMessage && (
+        <Alert
+          type={endedReadOnly ? 'info' : 'warning'}
+          showIcon
+          icon={endedReadOnly ? <LockOutlined /> : undefined}
+          message={lockedMessage}
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
+      <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ mode: 'exam' }} disabled={!!isLocked}>
         <Card title="基本信息" style={{ marginBottom: 16 }}>
           <Form.Item name="title" label="考试名称" rules={[{ required: true }]}>
             <Input placeholder="如：多维表格基础操作考核" />
@@ -191,17 +220,19 @@ export function ExamForm() {
 
         <Card title="绑定试卷" style={{ marginBottom: 16 }}
           extra={
-            <Space>
-              {selectedPaper && (
-                <Button icon={<EyeOutlined />} onClick={() => navigate(`/teacher/papers/${selectedPaper.id}/edit?tab=preview`)}>查看试卷</Button>
-              )}
-              <Button type="primary" icon={<LinkOutlined />} onClick={() => { fetchPapers(); setPaperModalOpen(true); }}>
-                {selectedPaper ? '更换试卷' : '选择试卷'}
-              </Button>
-              {selectedPaper && (
-                <Button danger onClick={handleClearPaper}>清除绑定</Button>
-              )}
-            </Space>
+            endedReadOnly ? undefined : (
+              <Space>
+                {selectedPaper && (
+                  <Button icon={<EyeOutlined />} onClick={() => navigate(`/teacher/papers/${selectedPaper.id}/edit?tab=preview`)}>查看试卷</Button>
+                )}
+                <Button type="primary" icon={<LinkOutlined />} onClick={() => { fetchPapers(); setPaperModalOpen(true); }}>
+                  {selectedPaper ? '更换试卷' : '选择试卷'}
+                </Button>
+                {selectedPaper && (
+                  <Button danger onClick={handleClearPaper}>清除绑定</Button>
+                )}
+              </Space>
+            )
           }
         >
           <Form.Item name="paperId" hidden>
@@ -232,7 +263,7 @@ export function ExamForm() {
           )}
         </Card>
 
-        {isEdit && (
+        {isEdit && !endedReadOnly && (
           <Card title="发布管理" style={{ marginBottom: 16 }}>
             <Space>
               <Button onClick={async () => {

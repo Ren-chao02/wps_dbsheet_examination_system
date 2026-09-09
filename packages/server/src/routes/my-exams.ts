@@ -293,6 +293,16 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
     });
     const isResuming = existingSubmission?.status === 'in_progress';
 
+    // ✅ 已交卷/判分中的答卷不允许重新进入考试：
+    // 否则下面的续考分支会把 submitted/grading/graded 重置回 in_progress，
+    // 答卷从教师阅卷列表（按 submitted 状态查询）中消失，状态机被破坏。
+    if (
+      existingSubmission &&
+      ['submitted', 'grading', 'graded'].includes(existingSubmission.status)
+    ) {
+      return res.status(400).json({ message: '答卷已提交，无法重新进入考试' });
+    }
+
     // 考试时间校验：候考时间 + 考试结束仍拦截，迟到时间不拦截（仅前端显示）
     const batch = exam.batch;
     if (batch) {

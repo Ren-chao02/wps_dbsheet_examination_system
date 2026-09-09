@@ -148,21 +148,28 @@ body {
 /* === Spin === */
 .ant-spin-dot-item { background: var(--apple-accent) !important; }
 
-/* === Page transitions === */
+/* === Page transitions — 内容区路由切换纯淡入 === */
 .ant-layout-content {
-  animation: slideUp 0.35s var(--spring-smooth) both;
+  animation: fadeIn 0.28s var(--spring-smooth) both;
+  scrollbar-gutter: stable; /* 预留在内容区滚动条槽位，滚动条出现/消失时内容宽度不抖动 */
 }
 
-/* Stagger children in cards */
-.ant-row > .ant-col { opacity: 0; animation: slideUp 0.4s var(--spring-smooth) forwards; }
-.ant-row > .ant-col:nth-child(1) { animation-delay: 0s; }
-.ant-row > .ant-col:nth-child(2) { animation-delay: 0.04s; }
-.ant-row > .ant-col:nth-child(3) { animation-delay: 0.08s; }
-.ant-row > .ant-col:nth-child(4) { animation-delay: 0.12s; }
-.ant-row > .ant-col:nth-child(5) { animation-delay: 0.16s; }
-.ant-row > .ant-col:nth-child(6) { animation-delay: 0.20s; }
-.ant-row > .ant-col:nth-child(7) { animation-delay: 0.24s; }
-.ant-row > .ant-col:nth-child(8) { animation-delay: 0.28s; }
+/* === 整页错峰入场（恢复）===
+   body[data-route-enter] 由 App 在路由切换时短暂开启、~0.8s 后移除：
+   只在整页首次进入时播放入场动画；弹层打开/重绘/数据刷新不再触发重放，
+   避免此前“点任何弹层页面疯狂抖动”的问题。 */
+body[data-route-enter] .ant-row > .ant-col {
+  opacity: 0;
+  animation: slideUp 0.38s var(--spring-smooth) forwards;
+}
+body[data-route-enter] .ant-row > .ant-col:nth-child(1) { animation-delay: 0s; }
+body[data-route-enter] .ant-row > .ant-col:nth-child(2) { animation-delay: 0.04s; }
+body[data-route-enter] .ant-row > .ant-col:nth-child(3) { animation-delay: 0.08s; }
+body[data-route-enter] .ant-row > .ant-col:nth-child(4) { animation-delay: 0.12s; }
+body[data-route-enter] .ant-row > .ant-col:nth-child(5) { animation-delay: 0.16s; }
+body[data-route-enter] .ant-row > .ant-col:nth-child(6) { animation-delay: 0.20s; }
+body[data-route-enter] .ant-row > .ant-col:nth-child(7) { animation-delay: 0.24s; }
+body[data-route-enter] .ant-row > .ant-col:nth-child(8) { animation-delay: 0.28s; }
 
 /* ━━━ Login Page ━━━ */
 .login-container {
