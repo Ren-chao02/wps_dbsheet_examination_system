@@ -1,9 +1,20 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import compression from 'compression';
 import path from 'path';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    // dev server 启用 gzip：依赖预构建产物体积大（antd.js ~3.5MB），
+    // 经内网穿透隧道访问时未压缩传输会导致页面加载极慢/超时
+    {
+      name: 'dev-server-gzip',
+      configureServer(server) {
+        server.middlewares.use(compression() as any);
+      },
+    },
+  ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
