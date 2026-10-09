@@ -83,6 +83,75 @@ wpsTokenRouter.post('/refresh', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/wps-token/exchange-code
+ * 使用授权码换取 access_token（grant_type=authorization_code）
+ * 用于替代原先在 Postman 中手工发起的首次换取 Token 流程
+ * Body: { code: string, redirectUri: string, clientId?: string, clientSecret?: string }
+ */
+wpsTokenRouter.post('/exchange-code', async (req: Request, res: Response) => {
+  try {
+    const { code, redirectUri, clientId, clientSecret } = req.body;
+    const trimmedCode = typeof code === 'string' ? code.trim() : '';
+    if (!trimmedCode) {
+      return res.status(400).json({ message: '缺少授权码 code' });
+    }
+    if (!redirectUri) {
+      return res.status(400).json({ message: '缺少 redirect_uri' });
+    }
+    // 凭据解析：请求参数 → 数据库（前端已配置）→ 环境变量
+    const { clientId: dbClientId, clientSecret: dbClientSecret } = await wpsConfigService.getEffectiveCredentials();
+    const effectiveClientId = clientId || dbClientId || '';
+    const effectiveClientSecret = clientSecret || dbClientSecret || '';
+    if (!effectiveClientId || !effectiveClientSecret) {
+      return res.status(500).json({ message: '未配置 WPS 应用凭据，请先填写 APPID / APPKEY' });
+    }
+
+    const params = new URLSearchParams();
+    params.append('grant_type', 'authorization_code');
+    params.append('code', trimmedCode);
+    params.append('redirect_uri', redirectUri);
+    params.append('client_id', effectiveClientId);
+    params.append('client_secret', effectiveClientSecret);
+
+    const response = await fetch('https://openapi.wps.cn/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    });
+
+    const data = (await response.json()) as WpsTokenResponse & { code?: number; msg?: string };
+    if (!response.ok || data.code !== undefined && data.code !== 0) {
+      return res.status(400).json({
+        message: data.msg || '授权码换取 access_token 失败，请确认 code 未过期且 redirect_uri 与 WPS 后台配置一致',
+        code: data.code,
+      });
+    }
+
+    // 与 refresh 一致：新 token 必须立即落库，否则 refresh_token 链断裂
+    try {
+      await wpsConfigService.save({
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        expiresIn: data.expires_in,
+        refreshExpiresIn: Number(data.refresh_expires_in) || 2592000,
+      });
+    } catch (err: any) {
+      console.error('[WPS] 换取成功但落库失败，token 链可能中断，请在 Token 管理页重新保存:', err.message);
+    }
+
+    res.json({
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresIn: data.expires_in,
+      refreshExpiresIn: Number(data.refresh_expires_in),
+      tokenType: data.token_type,
+    });
+  } catch (err: any) {
+    res.status(500).json({ message: '服务器错误', detail: err.message });
+  }
+});
+
+/**
  * GET /api/wps-token/credentials
  * 获取已保存的 WPS 应用凭据（DB 优先，回退环境变量）
  */

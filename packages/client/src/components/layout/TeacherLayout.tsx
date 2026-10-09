@@ -24,6 +24,7 @@ import {
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
 import { WpsTokenAutoRefresher } from '../common/WpsTokenAutoRefresher';
+import { HelpDocsMenu } from '../common/HelpDocs';
 import { NotificationCenter } from '../NotificationCenter';
 import { NotificationManagerModal } from '../NotificationManagerModal';
 import {
@@ -238,6 +239,8 @@ export function TeacherLayout() {
         </div>
 
         <div style={APPLE_STYLE.actions}>
+          <HelpDocsMenu role="teacher" />
+
           <Tooltip title="通知" placement="bottom">
             <div style={APPLE_STYLE.iconBtn}>
               <NotificationCenter />

@@ -11,6 +11,7 @@ import {
   SettingOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
+import { HelpDocsMenu } from '../common/HelpDocs';
 import { NotificationCenter } from '../NotificationCenter';
 import { NotificationManagerModal } from '../NotificationManagerModal';
 import {
@@ -88,6 +89,7 @@ export function AdminLayout() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <HelpDocsMenu role="admin" />
           <Tooltip title="通知"><NotificationCenter /></Tooltip>
           <Tooltip title="通知管理">
             <SettingOutlined style={{ fontSize: 18, cursor: 'pointer', color: '#86868b', width: 34, height: 34, borderRadius: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', transition: springTransition }}
