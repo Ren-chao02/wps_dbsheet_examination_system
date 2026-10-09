@@ -31,7 +31,7 @@ export interface CoachingResult {
 
 export const coachingApi = {
   /**
-   * 发起一轮 AI 教练对话（SSE 流式）。
+   * 发起一轮 AI辅助出题对话（SSE 流式）。
    * @returns 所有 proposals 和 notes 的汇总（流结束后）
    * @throws 网络错误、非 2xx HTTP 错误、AbortError
    */
