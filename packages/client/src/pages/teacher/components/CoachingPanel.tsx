@@ -1,7 +1,7 @@
 /**
  * CoachingPanel — Phase 2 §5.1 AI 对话式教练侧栏
  *
- * 形态：AntD Drawer（右侧 ~480px），浮动按钮触发。
+ * 形态：AntD Drawer（右侧 ~480px），由右下角常驻悬浮按钮「AI辅助出题」触发。
  * 流程：输入 → coachingApi.chat（SSE 流式）→ 逐 delta 追加文字 → proposals 挂在 AI 消息下。
  *
  * 内部状态：
@@ -13,7 +13,7 @@
  */
 import { useState, useRef, useCallback } from 'react';
 import {
-  Drawer, Button, Input, Space, Typography, Alert, Spin, FloatButton,
+  Drawer, Button, Input, Space, Typography, Alert, Spin,
 } from 'antd';
 import {
   RobotOutlined, SendOutlined, StopOutlined, MessageOutlined,
@@ -160,19 +160,32 @@ export function CoachingPanel({ questionState, credentials, onApplyProposal }: C
 
   return (
     <>
-      <FloatButton
-        icon={<RobotOutlined />}
-        type="primary"
-        tooltip="AI 教练"
-        onClick={() => setOpen(true)}
-        style={{ right: 24, bottom: 80 }}
-      />
+      {/* 右下角常驻悬浮入口：固定定位，滚动到任意位置都可见 */}
+      <div style={{ position: 'fixed', right: 24, bottom: 80, zIndex: 900 }}>
+        <Button
+          type="primary"
+          shape="round"
+          size="large"
+          icon={<RobotOutlined />}
+          onClick={() => setOpen(true)}
+          style={{
+            height: 46,
+            paddingInline: 20,
+            fontWeight: 600,
+            background: 'linear-gradient(135deg, #722ed1, #9254de)',
+            borderColor: 'transparent',
+            boxShadow: '0 6px 16px rgba(114, 46, 209, 0.35)',
+          }}
+        >
+          AI辅助出题
+        </Button>
+      </div>
 
       <Drawer
         title={
           <Space>
             <RobotOutlined />
-            <span>AI 教练</span>
+            <span>AI辅助出题</span>
           </Space>
         }
         placement="right"
@@ -209,7 +222,7 @@ export function CoachingPanel({ questionState, credentials, onApplyProposal }: C
             <div style={{ textAlign: 'center', paddingTop: 48 }}>
               <MessageOutlined style={{ fontSize: 32, color: '#bbb' }} />
               <Paragraph type="secondary" style={{ marginTop: 12 }}>
-                和 AI 教练聊聊，打磨你的题目
+                和 AI辅助出题 聊聊，打磨你的题目
               </Paragraph>
               <Space direction="vertical" style={{ width: '100%', marginTop: 16 }}>
                 {SUGGESTED_PROMPTS.map(prompt => (
