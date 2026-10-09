@@ -25,8 +25,13 @@ import {
   KeyOutlined,
   SaveOutlined,
   UploadOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
+import {
+  WpsTokenGuideWizard,
+  type WpsTokenPayload,
+} from '../../components/wps/WpsTokenGuideWizard';
 import api from '../../services/api';
 
 const { Title, Text, Paragraph } = Typography;
@@ -51,6 +56,18 @@ export function WpsTokenManager() {
   const [credentialForm] = Form.useForm();
   const [credConfigured, setCredConfigured] = useState(false);
   const [credSaving, setCredSaving] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+
+  // 引导向导换取成功：同步到前端 store，页面状态立即刷新
+  const handleGuideSuccess = (payload: WpsTokenPayload) => {
+    setWpsToken({
+      accessToken: payload.accessToken,
+      refreshToken: payload.refreshToken,
+      expiresAt: Date.now() + payload.expiresIn * 1000,
+      refreshExpiresAt: Date.now() + (payload.refreshExpiresIn || 2592000) * 1000,
+    });
+    setRemainingSeconds(payload.expiresIn);
+  };
 
   useEffect(() => {
     setMounted(true);
@@ -290,10 +307,19 @@ export function WpsTokenManager() {
   return (
     <div className="page-container">
       <div className="page-header">
-        <Title level={2}>
-          <KeyOutlined style={{ marginRight: 12 }} />
-          WPS Token 管理
-        </Title>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <Title level={2}>
+            <KeyOutlined style={{ marginRight: 12 }} />
+            WPS Token 管理
+          </Title>
+          <Button
+            icon={<QuestionCircleOutlined />}
+            size="large"
+            onClick={() => setGuideOpen(true)}
+          >
+            新手引导：获取 Token
+          </Button>
+        </div>
         <Text type="secondary">
           管理调用 WPS 开放 API 所需的 access_token，每次从真实接口返回数据都需要有效的 access_token，有效期为 2 小时。
         </Text>
@@ -616,6 +642,12 @@ export function WpsTokenManager() {
           />
         )}
       </Space>
+
+      <WpsTokenGuideWizard
+        open={guideOpen}
+        onClose={() => setGuideOpen(false)}
+        onSuccess={handleGuideSuccess}
+      />
     </div>
   );
 }

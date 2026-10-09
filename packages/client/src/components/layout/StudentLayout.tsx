@@ -15,6 +15,7 @@ import {
   StarOutlined,
 } from '@ant-design/icons';
 import { useAuthStore } from '../../stores/auth';
+import { HelpDocsMenu } from '../common/HelpDocs';
 import { NotificationCenter } from '../NotificationCenter';
 
 const { Header, Sider, Content } = Layout;
@@ -139,6 +140,8 @@ export function StudentLayout() {
           </Text>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <HelpDocsMenu role="student" />
+
             <Tooltip title="通知" placement="bottom">
               <div style={{
                 width: 34, height: 34, borderRadius: 10,
