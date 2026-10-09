@@ -148,8 +148,10 @@ export function WpsTokenGuideWizard({
   const [exchanging, setExchanging] = useState(false);
   const [exchangeDone, setExchangeDone] = useState(false);
 
-  const clientId = Form.useWatch('clientId', form) || '';
-  const clientSecret = Form.useWatch('clientSecret', form) || '';
+  // 凭据同时存一份到组件状态：Form 只在第 1 步挂载，离开该步后 useWatch 会拿不到值，
+  // 会导致第 4 步误判「未获取到应用ID」并禁用授权按钮。
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
   const extractedCode = extractCode(codeInput);
 
   // 打开时加载已保存的凭据
@@ -159,7 +161,11 @@ export function WpsTokenGuideWizard({
       try {
         const res = await api.get('/wps-token/credentials');
         if (res.data?.apiKey || res.data?.apiSecret) {
-          form.setFieldsValue({ clientId: res.data.apiKey, clientSecret: res.data.apiSecret });
+          const savedId = res.data.apiKey || '';
+          const savedSecret = res.data.apiSecret || '';
+          form.setFieldsValue({ clientId: savedId, clientSecret: savedSecret });
+          setClientId(savedId);
+          setClientSecret(savedSecret);
         }
         setCredConfigured(!!res.data?.configured);
       } catch {
@@ -199,14 +205,17 @@ export function WpsTokenGuideWizard({
       message.warning('请先粘贴授权码');
       return;
     }
+    if (!clientId.trim() || !clientSecret.trim()) {
+      message.warning('请先在第 1 步填写并保存应用凭据');
+      return;
+    }
     try {
-      const values = await form.validateFields();
       setExchanging(true);
       const res = await api.post<WpsTokenPayload>('/wps-token/exchange-code', {
         code: extractedCode,
         redirectUri: REDIRECT_URI,
-        clientId: values.clientId,
-        clientSecret: values.clientSecret,
+        clientId: clientId.trim(),
+        clientSecret: clientSecret.trim(),
       });
       setExchangeDone(true);
       onSuccess({
@@ -258,7 +267,14 @@ export function WpsTokenGuideWizard({
             </StepSection>
             <StepSection title="② 在「应用信息 → 应用凭证」复制两个值">
               <StepFigure src={STEP_IMAGES.credentials} caption="应用ID 就是 client_id，应用密钥就是 client_secret（点击眼睛图标可显示）" />
-              <Form form={form} layout="vertical">
+              <Form
+                form={form}
+                layout="vertical"
+                onValuesChange={(_, all) => {
+                  setClientId(all.clientId || '');
+                  setClientSecret(all.clientSecret || '');
+                }}
+              >
                 <Form.Item
                   name="clientId"
                   label="应用ID（client_id）"
