@@ -297,7 +297,7 @@ export default function LlmConfigManager() {
                   <Space>
                     <Text type="danger">未配置 API Key</Text>
                     {config.provider !== 'ollama' && (
-                      <Tag color="warning">AI 教练将不可用</Tag>
+                      <Tag color="warning">AI辅助出题将不可用</Tag>
                     )}
                   </Space>
                 )}
@@ -416,7 +416,7 @@ export default function LlmConfigManager() {
                     <Form.Item
                       name="temperature"
                       label={`温度 Temperature：${form.getFieldValue('temperature') ?? 0.4}`}
-                      tooltip="0 = 严谨确定性，2 = 发散创造性。AI 教练建议 0.2~0.6。"
+                      tooltip="0 = 严谨确定性，2 = 发散创造性。AI辅助出题建议 0.2~0.6。"
                     >
                       <Slider min={0} max={2} step={0.1} />
                     </Form.Item>
