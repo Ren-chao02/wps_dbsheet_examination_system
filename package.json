@@ -13,11 +13,15 @@
     "typecheck": "npm run typecheck -w packages/server && npm run typecheck -w packages/client",
     "test": "npm run test -w packages/server && npm run test -w packages/client",
     "test:coverage": "npm run test:coverage -w packages/server",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
     "db:migrate": "npm run db:migrate -w packages/server",
     "db:seed": "npm run db:seed -w packages/server",
     "db:studio": "npm run db:studio -w packages/server",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
+    "monitoring:up": "docker compose -f docker-compose.monitoring.yml up -d",
+    "monitoring:down": "docker compose -f docker-compose.monitoring.yml down",
     "prepare": "husky"
   },
   "workspaces": [

@@ -5,6 +5,10 @@ import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import App from './App';
 import './index.css';
+import { initClientTelemetry } from './services/telemetry';
+
+// 错误上报：没配 VITE_SENTRY_DSN 时是空操作（见 services/telemetry.ts）
+initClientTelemetry();
 
 /**
  * 所有 antd 弹层统一挂到 document.body：

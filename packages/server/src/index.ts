@@ -7,6 +7,7 @@ import { initSocketIO, getIO } from './services/socket';
 import { notificationService } from './services/notification-service';
 import { wpsConfigService } from './services/wps-config-service';
 import { batchScheduler } from './services/batch-scheduler';
+import { initTelemetry } from './utils/telemetry';
 
 const app = createApp();
 const httpServer = createServer(app);
@@ -31,6 +32,8 @@ httpServer.listen(config.port, () => {
     wpsConfigService.startAutoRefresh();
     batchScheduler.start();
   }
+  // 错误上报：放在 listen 回调里（与定时任务同理）——没配 SENTRY_DSN 时什么都不做
+  initTelemetry();
 });
 
 /**

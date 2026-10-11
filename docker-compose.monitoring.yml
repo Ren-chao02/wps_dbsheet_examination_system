@@ -1,0 +1,31 @@
+# 监控栈（可选）
+#
+# 与主 docker-compose.yml **分开**，不跟着 `npm run docker:up` 一起启动：
+# 它的生命周期和考试服务不一样（考试服务要频繁重启发版，监控不该跟着断），
+# 而且没配它的时候主流程也不该受任何影响。
+#
+#   docker compose -f docker-compose.monitoring.yml up -d
+#
+# Uptime Kuma：自托管的可用性监控 + 告警（邮件 / 企业微信 / 钉钉 / Webhook）。
+# 对本项目最该加的两条监控是：
+#   1. HTTP(s) 检查 —— https://<你的域名>/api/health ，间隔 30s
+#   2. TCP 端口检查 —— postgres:5432 与 redis:6379（容器网络内可直连）
+#
+# 为什么值得装：考试当天最怕的不是"服务挂了"，而是"没有人知道它挂了"。
+# 学生不一定会打电话给老师，尤其当只有一部分人受影响时。
+
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: exam-uptime-kuma
+    # 默认只绑回环：由同机 nginx / 内网穿透暴露到外网，避免绕过代理直接触达。
+    # 想换端口改 MONITORING_PORT 即可。
+    ports:
+      - '127.0.0.1:${MONITORING_PORT:-3009}:3001'
+    volumes:
+      # 监控配置与历史数据都在这里，**必须持久化**，否则重启后要重新配一遍
+      - uptime_kuma_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  uptime_kuma_data:
