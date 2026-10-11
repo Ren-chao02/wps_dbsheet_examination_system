@@ -10,6 +10,8 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import fs from 'fs';
 import path from 'path';
+import { randomBytes } from 'crypto';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -116,20 +118,84 @@ async function seedAll(data: Record<string, any[]>) {
   }
 }
 
+/**
+ * 安全闸门：种子脚本会 TRUNCATE 全部业务表，在已有数据的库上运行 = 清库。
+ *
+ * 触发过的事故场景：运维在已上线的服务器上为了"补一下预置数据"跑 `npm run db:seed`，
+ * 全校账号、题库、成绩瞬间清空。因此默认只允许在**空库**上执行，
+ * 确实要重置时显式加 `--force`（或 SEED_FORCE=1）。
+ */
+async function assertSafeToSeed() {
+  const userCount = await prisma.user.count();
+  const force = process.argv.includes('--force') || process.env.SEED_FORCE === '1';
+  if (userCount > 0 && !force) {
+    console.error(
+      `\n❌ 数据库中已有 ${userCount} 个用户，种子脚本会清空全部业务数据，已中止。\n` +
+      '   确需重置（仅限测试/全新环境）请显式执行：npm run db:seed -- --force\n',
+    );
+    process.exit(1);
+  }
+  if (userCount > 0) {
+    console.warn(`⚠️  已确认 --force：即将清空现有 ${userCount} 个用户及其全部关联数据`);
+  }
+}
+
+/**
+ * 初始管理员口令。
+ *
+ * 历史行为是全部预置账号统一 123456 —— 迁移到校园网后，任何学生用
+ * admin/123456 就能登录后台。因此：
+ *   - 优先取环境变量 ADMIN_INITIAL_PASSWORD（部署时由运维指定）；
+ *   - 未指定则生成随机口令，并在导入完成后**打印一次**。
+ * 仅对 admin/teacher 账号生效；种子里的学生演示账号保持原样（仅供演示环境）。
+ */
+function resolveAdminPassword(): { password: string; generated: boolean } {
+  const fromEnv = (process.env.ADMIN_INITIAL_PASSWORD || '').trim();
+  if (fromEnv) return { password: fromEnv, generated: false };
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = randomBytes(10);
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) out += alphabet[bytes[i] % alphabet.length];
+  return { password: out, generated: true };
+}
+
 async function main() {
   console.log('🌱 开始填充种子数据...');
+  await assertSafeToSeed();
   const data = loadDump();
+
+  // 管理员/教师账号改用强口令（学生演示账号保持原样，部署后请自行清理）
+  const { password: adminPassword, generated } = resolveAdminPassword();
+  const staffUsernames = new Set(['admin', 'teacher1', 'teacher2', 'teacher3', 'teacher4']);
+  const hash = await bcrypt.hash(adminPassword, 10);
+  for (const u of data.user ?? []) {
+    if (staffUsernames.has(u.username)) {
+      u.passwordHash = hash;
+    }
+  }
+
   await clearDatabase();
   await seedAll(data);
 
   console.log('');
   console.log('📋 种子数据完成！');
-  console.log('  预置账号:');
+  console.log('  管理/教师账号（口令见下）:');
   for (const u of data.user ?? []) {
-    console.log(`    ${u.username} / 123456`);
+    if (staffUsernames.has(u.username)) {
+      console.log(`    ${u.username} / ${adminPassword}`);
+    }
+  }
+  const students = (data.user ?? []).filter((u: any) => !staffUsernames.has(u.username));
+  if (students.length > 0) {
+    console.log(`  学生演示账号: ${students.map((u: any) => u.username).join(', ')}（口令 123456，上线前请删除或改密）`);
   }
   console.log(`  题目: ${data.question?.length ?? 0} 道`);
   console.log(`  考试: ${data.exam?.length ?? 0} 场`);
+  if (generated) {
+    console.log('');
+    console.log('  ⚠️  以上口令为本次随机生成，系统不再显示第二次，请立即保存。');
+    console.log('     也可在下一次部署前用环境变量 ADMIN_INITIAL_PASSWORD 指定固定口令。');
+  }
 }
 
 main()

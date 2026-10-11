@@ -174,6 +174,8 @@ model User {
   teachingClasses            TeacherClass[]   @relation("TeacherClasses") // ✅ 教师负责的班级（多对多）
   exportTasks                ExportTask[]     @relation("ExportTaskOwner") // ✅ 统一导出中心任务（持久化）
 
+  @@index([role, classRoomId])
+  @@index([role, departmentId])
   @@map("users")
 }
 
@@ -255,6 +257,9 @@ model Question {
   favoriteQuestions     FavoriteQuestion[]
   questionFeedback      QuestionFeedback[]
 
+  @@index([status, primaryCategoryId])
+  @@index([status, secondaryCategoryId])
+  @@index([status, difficulty])
   @@map("questions")
 }
 
@@ -324,6 +329,8 @@ model Exam {
   tableAssignments ExamTableAssignment[] @relation("ExamTableAssignments") // ✅ 考试表格分配
 
   @@index([batchId])
+  @@index([status, endTime])
+  @@index([status, startTime])
   @@map("exams")
 }
 
@@ -457,6 +464,8 @@ model StudentSubmission {
   behaviorLogs     StudentBehaviorLog[] @relation("SubmissionBehavior") // ✅ Phase 3: 行为日志
 
   @@unique([examId, studentId])
+  @@index([studentId, status])
+  @@index([examId, status])
   @@map("student_submissions")
 }
 
@@ -468,14 +477,42 @@ model SubmissionDetail {
   score        Int?
   isCorrect    Boolean?  @map("is_correct")
   createdAt    DateTime  @default(now()) @map("created_at")
+  /// 判分时所用规则的快照：{ questionVersion, rules: [...], gradedAt, source }
+  /// 题目规则日后被修改，仍可据此复现"当时是按什么规则判的分"（申诉/复核依据）
+  gradedWith   Json?     @map("graded_with")
 
   // Relations
   submission          StudentSubmission    @relation(fields: [submissionId], references: [id], onDelete: Cascade)
   question            Question             @relation(fields: [questionId], references: [id])
   verificationResults VerificationResult[]
+  reviewLogs          GradeReviewLog[]
 
   @@unique([submissionId, questionId])
   @@map("submission_details")
+}
+
+/// 人工复核留痕：谁、何时、把哪道题从多少分改成多少分、理由是什么。
+/// 成绩存档与申诉复核的依据；只增不改（不提供删除接口）。
+model GradeReviewLog {
+  id                 String   @id @default(uuid()) @db.Uuid
+  submissionDetailId String   @map("submission_detail_id") @db.Uuid
+  submissionId       String   @map("submission_id") @db.Uuid
+  reviewerId         String?  @map("reviewer_id") @db.Uuid
+  reviewerName       String?  @map("reviewer_name") @db.VarChar(64)
+  beforeScore        Int?     @map("before_score")
+  afterScore         Int?     @map("after_score")
+  beforeCorrect      Boolean? @map("before_correct")
+  afterCorrect       Boolean? @map("after_correct")
+  /// 变更类型：rule_review（逐规则复核）/ detail_override（直接改题分）/ finalize（定分）
+  changeType         String   @map("change_type") @db.VarChar(32)
+  reason             String?  @db.Text
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  detail SubmissionDetail @relation(fields: [submissionDetailId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId, createdAt])
+  @@index([submissionDetailId])
+  @@map("grade_review_logs")
 }
 
 model VerificationResult {
@@ -496,6 +533,8 @@ model VerificationResult {
   submissionDetail SubmissionDetail @relation(fields: [submissionDetailId], references: [id], onDelete: Cascade)
   submission       StudentSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
 
+  @@index([submissionId])
+  @@index([submissionDetailId])
   @@map("verification_results")
 }
 
@@ -514,6 +553,8 @@ model ExamSession {
   student    User              @relation(fields: [studentId], references: [id])
   exam       Exam              @relation(fields: [examId], references: [id])
 
+  @@index([studentId, examId])
+  @@index([examId, lastHeartbeat])
   @@map("exam_sessions")
 }
 
