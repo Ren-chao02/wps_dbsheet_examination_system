@@ -13,16 +13,16 @@
 import { useState, useEffect } from 'react';
 import {
   Card, Table, Tag, Button, Select, Space, Row, Col,
-  Modal, Form, Input, Progress, Typography, Empty, Spin,
-  message, Tabs, Badge, Tooltip, Alert, Statistic, Divider,
-  List, Avatar, Upload, Dropdown, Menu
+  Modal, Form, Input, Progress, Typography, Empty,
+  message, Tabs, Badge, Alert, Divider,
+  List, Avatar
 } from 'antd';
 import {
   DownloadOutlined, FileExcelOutlined, FileTextOutlined,
   FilePdfOutlined, HistoryOutlined, DeleteOutlined,
   ReloadOutlined, PlusOutlined, CheckCircleOutlined,
   ClockCircleOutlined, ExclamationCircleOutlined,
-  CloudDownloadOutlined, FilterOutlined
+  CloudDownloadOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';

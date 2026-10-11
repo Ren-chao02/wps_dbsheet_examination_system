@@ -10,6 +10,7 @@ import {
   EyeOutlined, BarChartOutlined, ArrowUpOutlined, ArrowDownOutlined
 } from '@ant-design/icons';
 import api from '../../services/api';
+import { QUESTION_TYPE_LABELS } from '../../utils/questionLabels';
 import type {
   Question, QuestionCategory, Paper, PaperQuestion,
   Capability, SlotRule, SlotType, SlotPreviewResult,
@@ -18,18 +19,6 @@ import type {
 const { TextArea } = Input;
 const { TabPane } = Tabs;
 const { Text } = Typography;
-
-/** 题型中文标签（实操 5 种 + 客观 3 种，抽题条件与题位展示共用） */
-const QUESTION_TYPE_LABELS: Record<string, string> = {
-  create_table: '创建数据表',
-  add_field: '添加字段',
-  config_view: '配置视图',
-  create_form: '创建表单',
-  comprehensive: '综合实操',
-  single_choice: '单选题',
-  multiple_choice: '多选题',
-  true_false: '判断题',
-};
 
 const DIFFICULTY_LABELS: Record<string, string> = { easy: '简单', medium: '中等', hard: '困难' };
 
@@ -475,6 +464,8 @@ export function PaperEditor() {
   // 总分包含抽题题位分值（开考时抽出的题与题位分值一致，总卷面分不变）
   const totalScore = selectedQuestions.reduce((sum, pq) => sum + (pq.score || 0), 0);
   const questionCount = selectedQuestions.length;
+  const fixedCount = selectedQuestions.filter((pq) => pq.slotType !== 'rule').length;
+  const ruleCount = questionCount - fixedCount;
   const typeDistribution = selectedQuestions.reduce((acc, pq) => {
     const t = pq.slotType === 'rule' ? '抽题' : (pq.question?.type ?? '未选题');
     acc[t] = (acc[t] || 0) + 1;
@@ -499,12 +490,23 @@ export function PaperEditor() {
         </Space>
       </div>
 
+      {/* 组卷四步引导：题位/抽题/等值替换是系统自定义概念，页内常驻步骤说明降低教师上手成本 */}
+      <div className="editor-guide">
+        <span className="editor-guide__step"><b>1</b> 填写试卷信息</span>
+        <span className="editor-guide__arrow">›</span>
+        <span className="editor-guide__step"><b>2</b> 添加题位（固定题指定题目 / 抽题设置知识点、难度、题型条件）</span>
+        <span className="editor-guide__arrow">›</span>
+        <span className="editor-guide__step"><b>3</b> 确认每个题位候选池充足，并查看试卷分析</span>
+        <span className="editor-guide__arrow">›</span>
+        <span className="editor-guide__step"><b>4</b> 保存试卷</span>
+      </div>
+
       <Form form={form} layout="vertical" onFinish={onFinish}>
         <Card title="基本信息" style={{ marginBottom: 16 }}>
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="name" label="试卷名称" rules={[{ required: true }]}>
-                <Input placeholder="如：多维表格基础操作考核" />
+                <Input placeholder="如：多维表格基础操作考核" maxLength={50} showCount />
               </Form.Item>
             </Col>
             <Col span={6}>
@@ -519,7 +521,7 @@ export function PaperEditor() {
             </Col>
           </Row>
           <Form.Item name="description" label="备注">
-            <TextArea rows={3} placeholder="试卷备注" />
+            <TextArea rows={3} placeholder="试卷备注（仅教师可见）" maxLength={300} showCount />
           </Form.Item>
         </Card>
       </Form>
@@ -527,7 +529,12 @@ export function PaperEditor() {
       <Card title="已选题目" style={{ marginBottom: 16 }}
         extra={
           <Space>
-            <span style={{ color: '#666' }}>共 {questionCount} 题，总分 {totalScore} 分</span>
+            <span style={{ color: '#666' }}>
+              共 {questionCount} 题，总分 {totalScore} 分
+              {questionCount > 0 && (
+                <span style={{ color: '#999' }}>（固定题 {fixedCount} · 抽题题位 {ruleCount}）</span>
+              )}
+            </span>
             <Button icon={<PlusOutlined />} onClick={() => { setDrawerOpen(true); setDrawerTab('select'); }}>添加题目</Button>
             <Button icon={<PlusOutlined />} onClick={handleAddRuleSlot}>添加抽题题位</Button>
           </Space>

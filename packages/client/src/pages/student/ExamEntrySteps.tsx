@@ -16,6 +16,7 @@ import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import { exitFullscreen } from '../../components/exam/FullscreenGuard';
 import { computeLatestEntryTime, computeExamDeadline, serverNow, syncServerTime } from '../../utils/exam-time';
+import { groupByQuestionType } from '../../utils/questionLabels';
 
 const RULES_TEXT = `考场开放
 1. 各科考试考场开放时间（包括考场开放开始时间及考场入口关闭时间）将公布在"多维表格考试系统-首页-我的待考科目"中；
@@ -30,15 +31,6 @@ const RULES_TEXT = `考场开放
 3. 考生须在规定时间内完成答卷，考试时间结束后系统将自动提交；
 4. 考生须在指定的 WPS 多维表格中进行操作，所有作答将被系统自动记录并评分；
 5. 考生应自觉遵守考场纪律，服从监考人员管理，违者将按相关规定处理。`;
-
-/** WPS 多维表格题型中文映射 */
-const QUESTION_TYPE_LABELS: Record<string, string> = {
-  create_table: '创建表格',
-  add_field: '添加字段',
-  config_view: '配置视图',
-  create_form: '创建表单',
-  comprehensive: '综合操作',
-};
 
 function formatCountdown(ms: number) {
   if (ms <= 0) return '00分00秒';
@@ -578,22 +570,10 @@ export function ExamEntrySteps() {
                     <li>卷面总分：{exam?.totalScore || 100}分</li>
                     <li>答题总时长：{durationText}</li>
                     <li>题目数量：{questions.length} 题</li>
-                    {(() => {
-                      // 按题型分组统计
-                      const typeGroups: Record<string, { label: string; count: number; totalScore: number }> = {};
-                      for (const q of questions) {
-                        const type = q.type || 'comprehensive';
-                        const label = QUESTION_TYPE_LABELS[type] || type;
-                        if (!typeGroups[type]) {
-                          typeGroups[type] = { label, count: 0, totalScore: 0 };
-                        }
-                        typeGroups[type].count++;
-                        typeGroups[type].totalScore += q.score || q.scoreOverride || 0;
-                      }
-                      return Object.values(typeGroups).map((g, i) => (
-                        <li key={i}>{g.label}：{g.count} 题（共{g.totalScore}分）</li>
-                      ));
-                    })()}
+                    {/* 各题型题数与分值明细（与答题卡分组同源，见 utils/questionLabels） */}
+                    {groupByQuestionType(questions).map((g) => (
+                      <li key={g.type}>{g.label}：{g.questions.length} 题（共{g.totalScore}分）</li>
+                    ))}
                   </ul>
                 </div>
 

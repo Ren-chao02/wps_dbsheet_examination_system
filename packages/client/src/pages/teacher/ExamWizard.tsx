@@ -49,6 +49,8 @@ interface WizardData {
     durationMinutes: number;
     passScore?: number;
     shuffleQuestions: boolean;
+    /** 最早交卷（分钟）：开考后满 N 分钟才允许交卷，0 = 不限（防误交卷） */
+    earliestSubmitMinutes: number;
     startTime?: dayjs.Dayjs; // 独立考试时使用
     endTime?: dayjs.Dayjs;
   };
@@ -86,6 +88,7 @@ const INITIAL_DATA: WizardData = {
     mode: 'exam',
     durationMinutes: 60,
     shuffleQuestions: false,
+    earliestSubmitMinutes: 0,
   },
   paperInfo: {
     questionsCount: 0,
@@ -101,6 +104,13 @@ export function ExamWizard() {
   const wpsToken = useAuthStore(state => state.wpsToken);
   const getWpsTokenRemainingSeconds = useAuthStore(state => state.getWpsTokenRemainingSeconds);
   const [currentStep, setCurrentStep] = useState(0);
+  // 已到达过的最大步骤：步骤条允许跳到"看过的"任意一步（前进后回退再想跳回去，不必重走中间步）
+  const [maxVisitedStep, setMaxVisitedStep] = useState(0);
+  const goToStep = (step: number) => {
+    const target = Math.max(0, Math.min(step, WIZARD_STEPS.length - 1));
+    setCurrentStep(target);
+    setMaxVisitedStep((m) => Math.max(m, target));
+  };
   const [wizardData, setWizardData] = useState<WizardData>(INITIAL_DATA);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -272,7 +282,7 @@ export function ExamWizard() {
           break;
       }
 
-      setCurrentStep(prev => Math.min(prev + 1, WIZARD_STEPS.length - 1));
+      goToStep(currentStep + 1);
     } catch (err) {
       console.error('步骤验证失败:', err);
       message.error('请完成当前步骤的必填项');
@@ -282,7 +292,7 @@ export function ExamWizard() {
   };
 
   const goToPrev = () => {
-    setCurrentStep(prev => Math.max(prev - 1, 0));
+    goToStep(currentStep - 1);
   };
 
   // ✅ 提交整个向导（创建考试+关联资源）
@@ -309,6 +319,7 @@ export function ExamWizard() {
         paperId: wizardData.paperInfo.paperId || null,
         settings: {
           shuffleQuestions: wizardData.basicInfo.shuffleQuestions,
+          earliestSubmitMinutes: wizardData.basicInfo.earliestSubmitMinutes || 0,
         },
       };
 
@@ -416,13 +427,13 @@ export function ExamWizard() {
                 </Col>
                 <Col span={12}>
                   <Form.Item name="title" label="考试名称" rules={[{ required: true }]}>
-                    <Input placeholder="如：WPS多维表格基础操作考核" />
+                    <Input placeholder="如：WPS多维表格基础操作考核" maxLength={50} showCount />
                   </Form.Item>
                 </Col>
               </Row>
 
               <Form.Item name="description" label="考试说明">
-                <TextArea rows={3} placeholder="学生可见的考试说明" />
+                <TextArea rows={3} placeholder="学生可见的考试说明" maxLength={200} showCount />
               </Form.Item>
 
               <Row gutter={24}>
@@ -536,6 +547,13 @@ export function ExamWizard() {
                 <Switch checkedChildren="开启" unCheckedChildren="关闭" />
                 <Text type="secondary" style={{ marginLeft: 8 }}>
                   开启后每位学生看到不同的题目顺序
+                </Text>
+              </Form.Item>
+
+              <Form.Item name="earliestSubmitMinutes" label="最早交卷（分钟）">
+                <InputNumber min={0} max={180} style={{ width: 160 }} placeholder="0" />
+                <Text type="secondary" style={{ marginLeft: 8 }}>
+                  开考后满多少分钟才允许交卷，0 = 不限（防止学生误点交卷）
                 </Text>
               </Form.Item>
             </Form>
@@ -987,9 +1005,10 @@ export function ExamWizard() {
         <Steps
           current={currentStep}
           onChange={(step) => {
-            // 允许跳回之前的步骤，但不允许直接跳到后面的步骤
-            if (step <= currentStep) {
-              setCurrentStep(step);
+            // 允许跳到"看过的"任意一步（前进后回退再跳回，不必重走中间步）；
+            // 未看过的后续步骤不允许直达——那些步骤的校验还没有跑过
+            if (step <= maxVisitedStep) {
+              goToStep(step);
             }
           }}
           items={WIZARD_STEPS.map(step => ({

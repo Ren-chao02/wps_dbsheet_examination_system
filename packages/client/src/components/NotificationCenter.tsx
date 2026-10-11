@@ -10,8 +10,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import {
-  Badge, Dropdown, List, Avatar, Button, Space, Tag, Typography,
+import { Dropdown, List, Avatar, Button, Space, Tag, Typography,
   Empty, Spin, Modal, Switch, message,
   Tooltip
 } from 'antd';
@@ -24,7 +23,7 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import api from '../services/api';
 import { useAuthStore } from '../stores/auth';
-import { io, Socket } from 'socket.io-client';
+import { Socket } from 'socket.io-client';
 import { createAuthedSocket } from '../config/socket-url';
 
 // 扩展dayjs相对时间插件

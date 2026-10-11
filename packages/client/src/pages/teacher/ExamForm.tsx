@@ -43,6 +43,7 @@ export function ExamForm() {
           durationMinutes: e.durationMinutes,
           passScore: e.passScore,
           shuffleQuestions: settings.shuffleQuestions === true,
+          earliestSubmitMinutes: typeof settings.earliestSubmitMinutes === 'number' ? settings.earliestSubmitMinutes : 0,
           paperId: e.paperId,
           batchId: e.batchId,
           startTime: e.startTime ? dayjs(e.startTime) : undefined,
@@ -95,6 +96,7 @@ export function ExamForm() {
         settings: {
           ...(typeof existingExam?.settings === 'object' && existingExam?.settings !== null ? existingExam.settings : {}),
           shuffleQuestions: values.shuffleQuestions === true,
+          earliestSubmitMinutes: values.earliestSubmitMinutes || 0,
         },
       };
       delete payload.shuffleQuestions;
@@ -171,10 +173,10 @@ export function ExamForm() {
       <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ mode: 'exam' }} disabled={!!isLocked}>
         <Card title="基本信息" style={{ marginBottom: 16 }}>
           <Form.Item name="title" label="考试名称" rules={[{ required: true }]}>
-            <Input placeholder="如：多维表格基础操作考核" />
+            <Input placeholder="如：多维表格基础操作考核" maxLength={50} showCount />
           </Form.Item>
           <Form.Item name="description" label="考试说明">
-            <TextArea rows={4} placeholder="考试说明（学生可见）" />
+            <TextArea rows={4} placeholder="考试说明（学生可见）" maxLength={300} showCount />
           </Form.Item>
           <Row gutter={16}>
             <Col span={8}>
@@ -215,6 +217,9 @@ export function ExamForm() {
           <Form.Item name="shuffleQuestions" label="随机出卷" valuePropName="checked">
             <Switch checkedChildren="开启" unCheckedChildren="关闭" />
             <span style={{ marginLeft: 8, color: '#999' }}>开启后每位学生看到不同的题目顺序</span>
+          </Form.Item>
+          <Form.Item name="earliestSubmitMinutes" label="最早交卷（分钟）" tooltip="开考后满多少分钟才允许交卷，0 = 不限（防止学生误点交卷）">
+            <InputNumber min={0} max={180} style={{ width: 160 }} placeholder="0" />
           </Form.Item>
         </Card>
 

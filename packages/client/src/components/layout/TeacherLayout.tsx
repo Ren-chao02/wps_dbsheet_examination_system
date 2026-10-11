@@ -28,7 +28,6 @@ import { HelpDocsMenu } from '../common/HelpDocs';
 import { NotificationCenter } from '../NotificationCenter';
 import { NotificationManagerModal } from '../NotificationManagerModal';
 import {
-  MODULE_NAVIGATION_CONFIG,
   filterAccessibleModules,
   findModuleByPath,
   TopModuleItem,

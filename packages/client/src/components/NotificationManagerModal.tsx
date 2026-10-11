@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Modal, Tabs, Form, Select, Input, Button, Table, message, Tag, Space, Popconfirm, Empty } from 'antd';
+import { Modal, Tabs, Form, Select, Input, Button, Table, message, Tag, Space, Popconfirm } from 'antd';
 import { SendOutlined, HistoryOutlined, FileTextOutlined } from '@ant-design/icons';
 import api from '../services/api';
-import type { User } from '../types';
 
 interface NotificationManagerProps {
   open: boolean;

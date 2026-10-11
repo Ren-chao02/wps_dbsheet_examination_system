@@ -335,6 +335,8 @@ export interface ExamStatistics {
   totalScore: number;
   passScore: number | null;
   submissionCount: number;
+  /** 缺考人数（应参考名单中没有任何提交记录的学生） */
+  absentCount: number;
   avgScore: number;
   maxScore: number;
   minScore: number;
@@ -357,9 +359,17 @@ export interface QuestionStat {
 
 export interface StudentScoreItem {
   id: string;
+  studentId: string;
   studentName: string;
+  /** absent = 应参考但无提交记录（缺考）；其余为提交状态机上的状态 */
+  status: string;
   score: number | null;
+  /** 是否及格；未判分/缺考为 null（不能替教师下结论） */
+  passed: boolean | null;
   submittedAt: string | null;
+  roomName: string | null;
+  /** 该场考试触发的高危行为（HIGH/CRITICAL）次数，仅作复核线索 */
+  riskCount: number;
 }
 
 export interface StudentStat {

@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { applyProposal, type QuestionStateForApply } from '../applyProposal';
-import type { Proposal, AnswerRule, RuleSuggestion } from '../../../../types';
+import type { AnswerRule, RuleSuggestion } from '../../../../types';
 
 function makeState(overrides: Partial<QuestionStateForApply> = {}): QuestionStateForApply {
   return {

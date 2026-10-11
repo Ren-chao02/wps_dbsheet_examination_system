@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Button, Card, Typography, Tag, message, Spin, Alert, Progress, Space, Modal } from 'antd';
+import { Button, Card, Typography, Tag, message, Spin, Alert, Progress, Space, Modal, Tooltip } from 'antd';
 import {
   CheckOutlined,
   ClockCircleOutlined,
@@ -8,6 +8,7 @@ import {
   LeftOutlined,
   RightOutlined,
   ReloadOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import type { ObjectiveAnswerValue, StudentExamQuestion } from '../../types';
@@ -21,6 +22,7 @@ import {
 import { WpsTablePanel } from '../../components/wps/WpsTablePanel';
 import { useExamSession } from '../../hooks/useExamSession';
 import { computeExamDeadline, serverNow, syncServerTime } from '../../utils/exam-time';
+import { groupByQuestionType, toChineseIndex } from '../../utils/questionLabels';
 
 const { Text, Paragraph, Title } = Typography;
 
@@ -39,6 +41,10 @@ export function WpsExamDoingPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [deadline, setDeadline] = useState<number | null>(null);
+  // 最早交卷时刻（服务端下发，未配置为 null）：本地只负责禁用按钮与提示，校验以服务端为准
+  const [submitAllowedAt, setSubmitAllowedAt] = useState<number | null>(null);
+  // 底部帮助位弹窗：'tips' 作答提示 / 'troubleshoot' 遇到问题
+  const [helpModal, setHelpModal] = useState<'tips' | 'troubleshoot' | null>(null);
   // 倒计时用服务端时间（serverNow）：机房电脑 CMOS 漂移会导致本机 Date.now()
   // 与服务端 deadline 错位 —— 钟快 10 分钟的学生会被提前自动交卷。见 utils/exam-time。
   const [now, setNow] = useState(() => Date.now());
@@ -72,6 +78,13 @@ export function WpsExamDoingPage() {
   // （与 server 端 PUT /my-exams/:id/answers 的「自动保存、可反复调用」口径一致）。
   const questions: StudentExamQuestion[] = data?.questions || [];
   const hasObjectiveQuestions = questions.some((q) => isObjectiveQuestion(q.type));
+  // 答题卡按题型分组（顺序 = 题型在卷面中首次出现的顺序）；题号仍是全卷连续序号
+  const questionGroups = useMemo(() => groupByQuestionType(questions), [questions]);
+  const questionIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    questions.forEach((q, i) => map.set(q.id, i));
+    return map;
+  }, [questions]);
 
   // answers：各题最新作答。state 驱动 UI 回显；ref 供 debounce/卸载等时机读最新值，
   // 避免回调闭包里拿到过期值。
@@ -205,6 +218,12 @@ export function WpsExamDoingPage() {
    * 现有交卷确认（Modal.confirm + doSubmit）在 useExamSession.handleSubmit，不动它，这里只做前置检查。
    */
   const confirmSubmit = useCallback(() => {
+    // 最早交卷本地兜底：按钮已禁用，这里防御"到点瞬间的竞态点击"，以服务端返回为准
+    if (submitAllowedAt !== null && Date.now() < submitAllowedAt) {
+      const remainMin = Math.max(1, Math.ceil((submitAllowedAt - Date.now()) / 60000));
+      message.warning(`最早交卷时间未到，约 ${remainMin} 分钟后可交卷`);
+      return;
+    }
     void flushSave().finally(() => {
       const unanswered = questions
         .map((q, i) => ({ q, i }))
@@ -223,7 +242,7 @@ export function WpsExamDoingPage() {
       }
       handleSubmit();
     });
-  }, [flushSave, questions, handleSubmit]);
+  }, [flushSave, questions, handleSubmit, submitAllowedAt]);
 
   const loadExam = useCallback(() => {
     setLoading(true);
@@ -242,6 +261,7 @@ export function WpsExamDoingPage() {
       // 且不越过批次窗口），只有服务端算得准；本地推算仅作为老接口/字段缺失时的兜底。
       const dl = typeof d.deadline === 'number' ? d.deadline : computeExamDeadline(d.exam);
       if (dl !== null) setDeadline(dl);
+      setSubmitAllowedAt(typeof d.submitAllowedAt === 'number' ? d.submitAllowedAt : null);
     }).catch((err) => {
       setLoadError(err.response?.data?.message || '网络异常，请稍后重试');
     }).finally(() => setLoading(false));
@@ -266,6 +286,10 @@ export function WpsExamDoingPage() {
   const pad = (n: number) => String(n).padStart(2, '0');
   const timeStr = `${pad(remHours)}:${pad(remMinutes)}:${pad(remSeconds)}`;
   const isTimeLow = deadline ? remainingMs < 5 * 60 * 1000 : false;
+  // 最早交卷：未到时刻禁用交卷按钮并给出剩余分钟（配置值用于提示文案「开考 N 分钟内不可交卷」）
+  const submitBlocked = submitAllowedAt !== null && now < submitAllowedAt;
+  const submitBlockedMinutes = submitBlocked ? Math.max(1, Math.ceil((submitAllowedAt! - now) / 60000)) : 0;
+  const earliestSubmitMinutes = Number(data?.exam?.settings?.earliestSubmitMinutes || 0);
 
   useEffect(() => {
     // 到点判定同样用服务端时间：本机钟快了也不提前收卷，钟慢了也不拖延收卷
@@ -389,9 +413,22 @@ export function WpsExamDoingPage() {
               </div>
             )}
 
-            <Button type="primary" danger icon={<CheckOutlined />} onClick={confirmSubmit} loading={submitting}>
-              交卷
-            </Button>
+            {/* 最早交卷未到：按钮禁用 + 悬停说明（disabled 的 antd 按钮不触发 Tooltip，需外层 span 承接） */}
+            <Tooltip
+              title={
+                submitBlocked
+                  ? earliestSubmitMinutes > 0
+                    ? `开考 ${earliestSubmitMinutes} 分钟内不可交卷（约 ${submitBlockedMinutes} 分钟后可交卷）`
+                    : `最早交卷时间未到（约 ${submitBlockedMinutes} 分钟后可交卷）`
+                  : undefined
+              }
+            >
+              <span>
+                <Button type="primary" danger icon={<CheckOutlined />} onClick={confirmSubmit} loading={submitting} disabled={submitBlocked}>
+                  交卷
+                </Button>
+              </span>
+            </Tooltip>
           </Space>
         </div>
 
@@ -512,40 +549,48 @@ export function WpsExamDoingPage() {
                 <div style={{ textAlign: 'center', padding: 60, color: '#999' }}>暂无题目</div>
               )}
 
-              {/* Answer Sheet */}
+              {/* Answer Sheet：按题型分组（组标题带题数与分值合计），题号保持全卷连续序号 */}
               <Card title="答题卡" size="small">
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {questions.map((q, i) => {
-                    const isCurrent = i === currentStep;
-                    const isObj = isObjectiveQuestion(q.type);
-                    // 客观题区分「已作答/未作答」；实操题保持原样式，不强行判断
-                    const answered = isObj && hasObjectiveAnswer(answers[q.id]);
-                    return (
-                      <Button
-                        key={q.id}
-                        type={isCurrent ? 'primary' : 'default'}
-                        shape="round"
-                        size="small"
-                        onClick={() => switchToStep(i)}
-                        style={{
-                          minWidth: 36,
-                          // 客观题已作答：绿色实线 + 对勾；未作答：灰色虚线
-                          ...(isObj && !isCurrent && answered
-                            ? { color: '#52c41a', borderColor: '#b7eb8f', background: '#f6ffed' }
-                            : {}),
-                          ...(isObj && !isCurrent && !answered
-                            ? { borderStyle: 'dashed' as const, color: '#bfbfbf' }
-                            : {}),
-                        }}
-                      >
-                        {i + 1}
-                        {isObj && answered && !isCurrent ? (
-                          <CheckOutlined style={{ fontSize: 10, marginLeft: 2 }} />
-                        ) : null}
-                      </Button>
-                    );
-                  })}
-                </div>
+                {questionGroups.map((group, gi) => (
+                  <div className="answer-sheet-group" key={group.type}>
+                    <div className="answer-sheet-group__title">
+                      {toChineseIndex(gi + 1)}、{group.label}（共{group.questions.length}题，共{group.totalScore}分）
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {group.questions.map((q) => {
+                        const i = questionIndexById.get(q.id) ?? 0;
+                        const isCurrent = i === currentStep;
+                        const isObj = isObjectiveQuestion(q.type);
+                        // 客观题区分「已作答/未作答」；实操题保持原样式，不强行判断
+                        const answered = isObj && hasObjectiveAnswer(answers[q.id]);
+                        return (
+                          <Button
+                            key={q.id}
+                            type={isCurrent ? 'primary' : 'default'}
+                            shape="round"
+                            size="small"
+                            onClick={() => switchToStep(i)}
+                            style={{
+                              minWidth: 36,
+                              // 客观题已作答：绿色实线 + 对勾；未作答：灰色虚线
+                              ...(isObj && !isCurrent && answered
+                                ? { color: '#52c41a', borderColor: '#b7eb8f', background: '#f6ffed' }
+                                : {}),
+                              ...(isObj && !isCurrent && !answered
+                                ? { borderStyle: 'dashed' as const, color: '#bfbfbf' }
+                                : {}),
+                            }}
+                          >
+                            {i + 1}
+                            {isObj && answered && !isCurrent ? (
+                              <CheckOutlined style={{ fontSize: 10, marginLeft: 2 }} />
+                            ) : null}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
                 {/* 图例：客观题小题的状态编码，避免学生把绿色/虚线当样式装饰 */}
                 {hasObjectiveQuestions && (
                   <div style={{ marginTop: 8, display: 'flex', gap: 16 }}>
@@ -590,12 +635,30 @@ export function WpsExamDoingPage() {
                   size="large"
                   onClick={confirmSubmit}
                   loading={submitting}
+                  disabled={submitBlocked}
                   icon={<CheckOutlined />}
                   style={{ flex: 1, height: 44 }}
                 >
                   提交答卷
                 </Button>
               )}
+            </div>
+
+            {/* 帮助位：考试中两个高频求助入口。必须页内弹窗——跳去帮助文档会离开本页，
+                被切屏统计记一次违规（参考产品的帮助位也是页内/客户端内呈现） */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0,
+              padding: '6px 20px', background: '#fff', borderTop: '1px solid #f0f0f0',
+            }}>
+              <a style={{ fontSize: 12, color: '#666' }} onClick={() => setHelpModal('tips')}>
+                <QuestionCircleOutlined style={{ marginRight: 4 }} />作答提示
+              </a>
+              <a style={{ fontSize: 12, color: '#666' }} onClick={() => setHelpModal('troubleshoot')}>
+                <QuestionCircleOutlined style={{ marginRight: 4 }} />遇到问题？
+              </a>
+              <span style={{ marginLeft: 'auto', fontSize: 12, color: '#aeaeb2' }}>
+                作答自动保存，网络波动无需刷新
+              </span>
             </div>
           </div>
 
@@ -610,6 +673,36 @@ export function WpsExamDoingPage() {
           )}
         </div>
       </div>
+
+      {/* 帮助弹窗：内容都是本系统的真实兜底能力（独立窗口/自动保存重试/教师续考），不是通用 FAQ */}
+      <Modal
+        title="作答提示"
+        open={helpModal === 'tips'}
+        onCancel={() => setHelpModal(null)}
+        footer={null}
+        width={540}
+      >
+        <ol style={{ paddingLeft: 20, lineHeight: 2 }}>
+          <li>所有操作在右侧的 WPS 多维表格中完成，不需要手动保存——系统会自动读取表格数据判分。</li>
+          <li>表格显示不开时，点击表格面板右上角切换到「独立窗口工作台」；切到表格窗口不会计入切屏。</li>
+          <li>客观题选择后自动保存（页面会显示「已保存」时间），保存失败会给出重试入口，作答不会丢失。</li>
+          <li>考试时间结束后系统自动交卷，请合理分配作答时间。</li>
+        </ol>
+      </Modal>
+      <Modal
+        title="遇到问题？"
+        open={helpModal === 'troubleshoot'}
+        onCancel={() => setHelpModal(null)}
+        footer={null}
+        width={580}
+      >
+        <ul style={{ paddingLeft: 20, lineHeight: 2 }}>
+          <li><b>表格打不开 / 显示空白：</b>切换到「独立窗口工作台」打开表格；右侧「实时数据」面板可确认表格当前状态。</li>
+          <li><b>网络波动：</b>客观题作答自动保存在本机并持续重试上传，网络恢复后自动同步，<b>不需要刷新页面</b>。</li>
+          <li><b>误交卷 / 需要继续作答：</b>举手联系监考老师，教师可以为你「允许续考」。</li>
+          <li><b>页面卡顿：</b>不要重复刷新或关闭页面，举手联系监考老师处理。</li>
+        </ul>
+      </Modal>
     </FullscreenGuard>
   );
 }

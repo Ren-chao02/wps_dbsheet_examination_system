@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Button, Spin, message, Steps, Tag, Result, Space, Typography } from 'antd';
+import { Card, Button, Spin, message, Steps, Tag, Space, Typography } from 'antd';
 import {
   DesktopOutlined,
   WifiOutlined,

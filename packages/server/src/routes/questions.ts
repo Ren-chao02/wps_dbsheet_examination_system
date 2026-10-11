@@ -171,6 +171,8 @@ questionRouter.get('/', async (req: Request, res: Response) => {
           primaryCategory: { select: { id: true, name: true } },
           secondaryCategory: { select: { id: true, name: true } },
           creator: { select: { id: true, realName: true } },
+          // 引用次数（列表页展示"被试卷/考试引用几次"；被引用的题目按现有规则不可删除）
+          _count: { select: { paperQuestions: true, examQuestions: true } },
         },
       }),
       prisma.question.count({ where }),

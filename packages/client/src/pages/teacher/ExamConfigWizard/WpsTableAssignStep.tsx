@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import {
-  Button, Card, Input, Table, message, Space, Typography, Alert, Spin, Tabs
+  Button, Card, Input, Table, message, Typography, Alert, Spin, Tabs
 } from 'antd';
 import { SaveOutlined, ImportOutlined, LinkOutlined } from '@ant-design/icons';
 import api from '../../../services/api';

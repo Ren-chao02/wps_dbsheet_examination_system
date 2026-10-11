@@ -4,10 +4,15 @@
  */
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Table, Button, Tag, Space, message, Card, Input } from 'antd';
+import { Table, Button, Tag, message, Card, Input } from 'antd';
 import { EyeOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import type { Exam, PaginatedResponse } from '../../types';
+
+/** 后端 /exams 列表为监考场景附加的四数统计（应参考/到考/交卷/缺考） */
+interface ExamWithStats extends Exam {
+  submissionStats?: { assigned: number; attended: number; submitted: number; absent: number };
+}
 
 const statusLabels: Record<string, { color: string; text: string }> = {
   draft: { color: 'default', text: '草稿' },
@@ -38,15 +43,37 @@ export function MonitoringList() {
   const columns = [
     { title: '考试名称', dataIndex: 'title', key: 'title' },
     {
-      title: '状态', dataIndex: 'status', key: 'status',
+      title: '状态', dataIndex: 'status', key: 'status', width: 100,
       render: (v: string) => {
         const s = statusLabels[v] || { color: 'default', text: v };
         return <Tag color={s.color}>{s.text}</Tag>;
       },
     },
-    { title: '提交数', key: 'submissions', render: (_: any, r: Exam) => r._count?.submissions ?? 0 },
+    // 四数并排：监考者一眼掌握考场规模与进度（缺考 = 应参考 - 到考，由后端统一口径）
     {
-      title: '操作', key: 'actions', width: 150,
+      title: '应参考', key: 'assigned', width: 90, align: 'center' as const,
+      render: (_: any, r: ExamWithStats) => r.submissionStats?.assigned ?? '-',
+    },
+    {
+      title: '到考', key: 'attended', width: 90, align: 'center' as const,
+      render: (_: any, r: ExamWithStats) => {
+        const v = r.submissionStats?.attended;
+        return v === undefined ? '-' : <span style={{ color: v > 0 ? '#22a06b' : undefined }}>{v}</span>;
+      },
+    },
+    {
+      title: '交卷', key: 'submitted', width: 90, align: 'center' as const,
+      render: (_: any, r: ExamWithStats) => r.submissionStats?.submitted ?? '-',
+    },
+    {
+      title: '缺考', key: 'absent', width: 90, align: 'center' as const,
+      render: (_: any, r: ExamWithStats) => {
+        const v = r.submissionStats?.absent;
+        return v === undefined ? '-' : v > 0 ? <Tag color="error">{v}</Tag> : <span style={{ color: '#999' }}>0</span>;
+      },
+    },
+    {
+      title: '操作', key: 'actions', width: 130,
       render: (_: any, r: Exam) => (
         <Button
           size="small"
@@ -54,7 +81,7 @@ export function MonitoringList() {
           icon={<EyeOutlined />}
           onClick={() => navigate(`/teacher/exams/${r.id}/monitor`)}
         >
-          进入监控
+          考试监控
         </Button>
       ),
     },
@@ -62,8 +89,8 @@ export function MonitoringList() {
 
   return (
     <div className="page-container">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h2>实时监控中心</h2>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ margin: 0 }}>实时监控中心</h2>
         <Input
           placeholder="搜索考试名称"
           prefix={<SearchOutlined />}

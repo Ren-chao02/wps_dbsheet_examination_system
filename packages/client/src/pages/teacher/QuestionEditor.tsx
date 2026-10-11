@@ -333,7 +333,7 @@ export function QuestionEditor() {
       <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ type: 'comprehensive', difficulty: 'medium', score: 10, tags: [] }}>
         <Card title="基本信息" style={{ marginBottom: 16 }}>
           <Form.Item name="title" label="题目标题" rules={[{ required: true, message: '请输入标题' }]}>
-            <Input placeholder="如：创建学生档案表" />
+            <Input placeholder="如：创建学生档案表" maxLength={64} showCount />
           </Form.Item>
           <Row gutter={16}>
             <Col span={8}>
@@ -439,10 +439,10 @@ export function QuestionEditor() {
 
         <Card title="题目内容" style={{ marginBottom: 16 }}>
           <Form.Item name="description" label="题目描述" rules={[{ required: true, message: '请输入题目描述' }]}>
-            <TextArea rows={5} placeholder="详细描述题目要求，如：请创建一个名为「学生档案」的数据表，并添加以下字段..." />
+            <TextArea rows={5} placeholder="详细描述题目要求，如：请创建一个名为「学生档案」的数据表，并添加以下字段..." maxLength={1000} showCount />
           </Form.Item>
           <Form.Item name="hints" label="提示（选填）">
-            <TextArea rows={2} placeholder="给学生的操作提示" />
+            <TextArea rows={2} placeholder="给学生的操作提示" maxLength={200} showCount />
           </Form.Item>
         </Card>
 

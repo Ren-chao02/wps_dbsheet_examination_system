@@ -322,3 +322,167 @@ body[data-route-enter] .ant-row > .ant-col:nth-child(8) { animation-delay: 0.28s
 
 /* === Message === */
 .ant-message-notice-content { border-radius: var(--apple-radius-md) !important; font-family: var(--apple-font) !important; }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* 借鉴 WPS 教学平台：KPI 彩色卡 / 空状态 / 通知卡  */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* === StatCard：柔和色底 + 大数字 + 右侧同色系图标 ===
+   颜色只用于底色和图标（区分指标类别），数字保持近黑，保证扫读时数字最醒目 */
+.stat-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: var(--apple-radius-lg);
+  border: 0.5px solid var(--apple-border-light);
+  box-shadow: var(--apple-shadow-card);
+  transition: box-shadow 0.2s var(--spring-smooth), transform 0.2s var(--spring-smooth);
+}
+.stat-card--clickable { cursor: pointer; }
+.stat-card--clickable:hover { transform: translateY(-2px); box-shadow: var(--apple-shadow-md); }
+.stat-card--clickable:active { transform: translateY(0); }
+/* body flex:1 + 标签 nowrap：窄卡片（一行 6 个时）下标签保持单行，不被右侧图标挤到换行 */
+.stat-card__body { flex: 1; min-width: 0; }
+.stat-card__label {
+  font-size: 13px; font-weight: 500; color: #6b6b70; margin-bottom: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.stat-card__value {
+  font-size: 26px; font-weight: 700; line-height: 1.1;
+  color: var(--apple-text-h1);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stat-card__suffix { font-size: 13px; font-weight: 500; color: var(--apple-text-secondary); margin-left: 4px; }
+.stat-card__icon {
+  flex-shrink: 0;
+  width: 40px; height: 40px; border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.9);
+}
+
+.stat-card--blue   { background: linear-gradient(135deg, #eef4ff 0%, #e2ecff 100%); }
+.stat-card--blue .stat-card__icon   { color: #3b82f6; }
+.stat-card--purple { background: linear-gradient(135deg, #f4f1ff 0%, #eae3ff 100%); }
+.stat-card--purple .stat-card__icon { color: #8b5cf6; }
+.stat-card--cyan   { background: linear-gradient(135deg, #e9f9ff 0%, #dcf2fb 100%); }
+.stat-card--cyan .stat-card__icon   { color: #0891b2; }
+.stat-card--green  { background: linear-gradient(135deg, #ecfbf1 0%, #dcf5e6 100%); }
+.stat-card--green .stat-card__icon  { color: #22a06b; }
+.stat-card--orange { background: linear-gradient(135deg, #fff7e8 0%, #ffefd2 100%); }
+.stat-card--orange .stat-card__icon { color: #e8890c; }
+.stat-card--pink   { background: linear-gradient(135deg, #fef0f7 0%, #fce3f0 100%); }
+.stat-card--pink .stat-card__icon   { color: #db2777; }
+
+/* === EmptyState === */
+.empty-state { text-align: center; padding: 32px 16px; }
+.empty-state__illustration { margin-bottom: 12px; }
+.empty-state__title { font-size: 14px; font-weight: 500; color: var(--apple-text-body); }
+.empty-state__description { margin-top: 4px; font-size: 13px; color: var(--apple-text-secondary); }
+
+/* === 通知公告卡条目 === */
+.notice-item {
+  padding: 10px 8px;
+  border-radius: var(--apple-radius-md);
+  border-bottom: 0.5px solid var(--apple-border-light);
+  transition: background 0.15s var(--spring-smooth);
+}
+.notice-item:last-child { border-bottom: none; }
+.notice-item--clickable { cursor: pointer; }
+.notice-item--clickable:hover { background: var(--apple-accent-bg); }
+.notice-item__head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.notice-item__dot {
+  flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--apple-accent);
+}
+.notice-item__title {
+  flex: 1; min-width: 0;
+  font-size: 13px; color: var(--apple-text-body);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.notice-item__meta { margin-top: 4px; padding-left: 15px; }
+
+/* === 学生首页：待办考试卡（淡蓝渐变 + 状态与时间信息） === */
+.todo-exam {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: var(--apple-radius-md);
+  background: linear-gradient(135deg, #eef4ff 0%, #e6f0ff 100%);
+  border: 0.5px solid #dbe7ff;
+  margin-bottom: 10px;
+}
+.todo-exam:last-child { margin-bottom: 0; }
+.todo-exam__info { min-width: 0; flex: 1; }
+.todo-exam__title {
+  font-size: 14px; font-weight: 600; color: var(--apple-text-h1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+.todo-exam__meta { font-size: 12px; color: var(--apple-text-secondary); display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* === 快捷入口小格（图标 + 文案，悬停上浮） === */
+.quick-action {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--apple-radius-md);
+  border: 0.5px solid var(--apple-border-light);
+  background: #fbfbfd;
+  cursor: pointer;
+  transition: all 0.18s var(--spring-smooth);
+}
+.quick-action:hover {
+  border-color: var(--apple-accent);
+  background: var(--apple-accent-bg);
+  transform: translateY(-1px);
+}
+.quick-action__icon { font-size: 17px; color: var(--apple-accent); flex-shrink: 0; }
+.quick-action__label { font-size: 13px; font-weight: 500; color: var(--apple-text-body); }
+
+/* === 答题卡分组标题 === */
+.answer-sheet-group { margin-bottom: 10px; }
+.answer-sheet-group:last-of-type { margin-bottom: 0; }
+.answer-sheet-group__title {
+  font-size: 12px; font-weight: 600; color: var(--apple-text-secondary);
+  margin-bottom: 6px;
+}
+
+/* === 组卷页：四步引导条（题位/抽题是自定义概念，页内常驻说明降低上手成本） === */
+.editor-guide {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: var(--apple-accent-bg);
+  border-radius: var(--apple-radius-md);
+  font-size: 12px; color: var(--apple-text-body);
+}
+.editor-guide__step { display: inline-flex; align-items: center; gap: 6px; }
+.editor-guide__step b {
+  width: 16px; height: 16px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--apple-accent); color: #fff;
+  font-size: 10px; font-weight: 700;
+}
+.editor-guide__arrow { color: var(--apple-text-label); }
+
+/* === 监考：考场概况 2×2 与考生动态流 === */
+.monitor-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.monitor-stat { background: #f7f8fa; border-radius: var(--apple-radius-md); padding: 12px 8px; text-align: center; }
+.monitor-stat__value { font-size: 22px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.monitor-stat__label { font-size: 12px; color: var(--apple-text-secondary); margin-top: 2px; }
+
+.monitor-feed { max-height: 420px; overflow: auto; }
+.monitor-feed__item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  border-bottom: 0.5px solid var(--apple-border-light);
+}
+.monitor-feed__item:last-child { border-bottom: none; }
+.monitor-feed__time { flex-shrink: 0; font-size: 12px; color: var(--apple-text-label); font-variant-numeric: tabular-nums; }
+.monitor-feed__name {
+  flex: 1; min-width: 0; font-size: 13px; color: var(--apple-text-body);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}

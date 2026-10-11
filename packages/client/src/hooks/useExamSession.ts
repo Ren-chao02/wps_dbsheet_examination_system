@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { message, Modal } from 'antd';
-import { io, Socket } from 'socket.io-client';
+import { Socket } from 'socket.io-client';
 import api from '../services/api';
 import { useAuthStore } from '../stores/auth';
 import { createAuthedSocket } from '../config/socket-url';
@@ -106,13 +106,38 @@ export function useExamSession({ examId, onNavigateToResult }: UseExamSessionOpt
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [examId, user?.id, setTabSwitchCount]);
 
+  /**
+   * 心跳回传的「强制交卷」感知：监考老师强制交卷后，服务端在 HTTP 心跳响应里回传
+   * 答卷状态；学生端必须立即停止作答并前往成绩页，否则学生会以为自己还在考试、
+   * 继续白做（这与「已提交，无法重复提交」的交卷兜底是两个入口，都要能走到成绩页）。
+   * 回调用 ref 持有：避免父组件每次重渲染（回调每次新建）导致心跳定时器被重建。
+   */
+  const onNavigateToResultRef = useRef(onNavigateToResult);
+  useEffect(() => {
+    onNavigateToResultRef.current = onNavigateToResult;
+  }, [onNavigateToResult]);
+
+  const checkForcedSubmit = useCallback(
+    (status?: string | null) => {
+      if (!status || status === 'in_progress') return;
+      if (submittedRef.current) return; // 已在提交/已跳转：避免二次跳转
+      submittedRef.current = true;
+      message.warning('监考老师已为你交卷，本次考试已结束');
+      exitFullscreen();
+      onNavigateToResultRef.current(examId!);
+    },
+    [examId],
+  );
+
   // Heartbeat every 30s（HTTP 兜底；同样用 ref 读最新值，避免每次切屏重启定时器）
   useEffect(() => {
     const interval = setInterval(() => {
-      api.post(`/my-exams/${examId}/heartbeat`, { tabSwitchCount: tabSwitchCountRef.current }).catch(() => {});
+      api.post(`/my-exams/${examId}/heartbeat`, { tabSwitchCount: tabSwitchCountRef.current })
+        .then((res) => checkForcedSubmit(res.data?.submissionStatus))
+        .catch(() => {});
     }, 30000);
     return () => clearInterval(interval);
-  }, [examId]);
+  }, [examId, checkForcedSubmit]);
 
   const doSubmit = useCallback(
     async (auto = false) => {

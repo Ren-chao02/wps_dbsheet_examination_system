@@ -67,6 +67,29 @@ export function computeStudentDeadline(
 }
 
 /**
+ * 计算「最早可交卷时刻」（毫秒时间戳）—— 服务端唯一口径。
+ * 学生端按钮禁用（GET /my-exams/:id 下发 submitAllowedAt）与交卷接口校验共用本函数，
+ * 避免"按钮说可以交、接口却拒绝"的两端漂移。
+ *
+ * 语义对齐参考产品「开考 N 分钟后可交卷」（防误点交卷/秒交）：
+ * - unified（集中统一）：基准 = 考试开始时间（缺失时退化用本人 startedAt）
+ * - flexible（随到随考）：基准 = 本人本次作答开始时间（每人自己的时钟）
+ *
+ * 未配置（settings.earliestSubmitMinutes 缺失或 <= 0）或算不出基准时返回 null（= 不限）。
+ */
+export function computeEarliestSubmitAt(
+  exam: { settings?: unknown; startTime?: Date | null; batch?: { examMode?: string | null } | null },
+  submission: { startedAt?: Date | null } | null,
+): number | null {
+  const minutes = Number((exam.settings as any)?.earliestSubmitMinutes || 0);
+  if (!Number.isFinite(minutes) || minutes <= 0) return null;
+  const flexible = exam.batch?.examMode === 'flexible';
+  const base = flexible ? submission?.startedAt : (exam.startTime ?? submission?.startedAt);
+  if (!base) return null;
+  return new Date(base).getTime() + minutes * 60 * 1000;
+}
+
+/**
  * 全局状态兜底：考试结束时强制回收所有"考试中"的提交。
  *
  * 设计约束：任何把 exam.status 变为 'ended' 的代码路径（scheduler 自动结束、
