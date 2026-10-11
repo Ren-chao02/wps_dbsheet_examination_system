@@ -486,3 +486,88 @@ body[data-route-enter] .ant-row > .ant-col:nth-child(8) { animation-delay: 0.28s
   flex: 1; min-width: 0; font-size: 13px; color: var(--apple-text-body);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+
+/* === 题库题干流（题库管理 + 试卷选题共用，对齐参考产品「校本题库」列表） === */
+.qflow-item { padding: 14px 0 10px; }
+.qflow-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.qflow-sep { width: 1px; height: 12px; background: var(--apple-border-subtle); }
+.qflow-plain { font-size: 13px; color: var(--apple-text-body); }
+.qflow-title { font-size: 14px; font-weight: 600; color: var(--apple-text-h1); margin-bottom: 4px; }
+.qflow-stem { font-size: 14px; line-height: 1.8; color: var(--apple-text-body); white-space: pre-wrap; }
+.qflow-options { margin-top: 6px; font-size: 14px; line-height: 1.9; color: var(--apple-text-body); }
+.qflow-hint { margin-top: 6px; font-size: 12px; color: var(--apple-text-secondary); }
+.qflow-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+.qflow-meta-left { display: inline-flex; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--apple-text-secondary); }
+.qflow-meta-left > span { white-space: nowrap; }
+.qflow-meta-left i { font-style: normal; margin: 0 6px; color: var(--apple-border-subtle); }
+.qflow-actions { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.qflow-divider { height: 1px; background: var(--apple-border-light); }
+
+/* === 客观题选项（详情抽屉；正确项绿色高亮） === */
+.objective-option { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px; margin-bottom: 6px; background: #f7f8fa; font-size: 14px; }
+.objective-option--correct { background: #f6ffed; border: 1px solid #b7eb8f; }
+.objective-option__key { font-weight: 700; width: 18px; }
+
+/* === 试卷库行式列表（封面缩略块 + 标题行 + 元信息 + 行右操作） === */
+.paper-row { display: flex; gap: 14px; padding: 14px 0; align-items: flex-start; }
+.paper-cover {
+  width: 64px; height: 64px; flex-shrink: 0; border-radius: 8px;
+  background: linear-gradient(135deg, #e8eafd 0%, #dfe6fd 100%);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: #5b6ee0; font-weight: 600; text-align: center; line-height: 1.3; padding: 4px;
+}
+.paper-cover--official { background: linear-gradient(135deg, #fff3e0 0%, #ffe7c7 100%); color: #b26a00; }
+.paper-row__main { flex: 1; min-width: 0; }
+.paper-row__title-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.paper-row__name { font-size: 15px; font-weight: 600; color: var(--apple-text-h1); }
+.paper-row__meta { display: flex; align-items: center; flex-wrap: wrap; margin-top: 6px; font-size: 12px; color: var(--apple-text-secondary); }
+.paper-row__meta > span { white-space: nowrap; }
+.paper-row__meta i { font-style: normal; margin: 0 6px; color: var(--apple-border-subtle); }
+.paper-row__remark { margin-top: 4px; font-size: 12px; color: var(--apple-text-secondary); }
+.paper-row__actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+
+/* === 试卷选题页（整页模式，对齐参考产品「选题」） === */
+.picker__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.picker__header-right { display: inline-flex; align-items: center; gap: 8px; }
+.picker__body { display: flex; gap: 16px; align-items: flex-start; }
+.picker__tree {
+  width: 260px; flex-shrink: 0; background: var(--apple-bg-card); border-radius: var(--apple-radius-lg);
+  padding: 12px; box-shadow: var(--apple-shadow-card);
+}
+.picker__tree-title { font-weight: 600; margin-bottom: 8px; }
+.picker__main { flex: 1; min-width: 0; }
+.picker__filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+@media (max-width: 900px) { .picker__body { flex-direction: column; } .picker__tree { width: 100%; } }
+
+/* === 组卷：试卷题目区区块头（题量/总分/及格分，对齐参考产品） === */
+.paper-section-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 12px; }
+.paper-section-bar__title { font-size: 16px; font-weight: 600; }
+.paper-section-bar__sum { display: inline-flex; align-items: center; gap: 16px; font-size: 14px; color: var(--apple-text-body); }
+.paper-section-bar__pass { font-size: 14px; color: var(--apple-text-body); }
+
+/* === 组卷：固定题行 === */
+.paper-item-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--apple-border-light); }
+.paper-item-row:last-child { border-bottom: none; }
+.paper-item-row__idx { width: 24px; flex-shrink: 0; text-align: center; font-weight: 600; color: var(--apple-text-secondary); padding-top: 2px; }
+.paper-item-row__info { flex: 1; min-width: 0; }
+.paper-item-row__title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; }
+.paper-item-row__desc {
+  margin-top: 4px; font-size: 12px; color: var(--apple-text-secondary);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.paper-item-row__score { flex-shrink: 0; font-size: 13px; color: var(--apple-text-body); padding-top: 2px; }
+.paper-item-row__ops { flex-shrink: 0; display: inline-flex; align-items: center; }
+
+/* === 组卷：抽题规则行（字段对齐参考产品「组卷方案」的规则表） === */
+.rule-strip {
+  display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; margin: 8px 0; border-radius: 10px;
+  background: #f7f5ff; border: 1px solid #e6e0ff;
+}
+.rule-strip__idx { font-weight: 600; color: #6b5bd2; padding-bottom: 4px; }
+.rule-field { display: flex; flex-direction: column; gap: 2px; }
+.rule-field > label { font-size: 12px; color: var(--apple-text-secondary); }
+.rule-avail { font-size: 12px; color: var(--apple-text-secondary); }
+.rule-avail--over { color: var(--apple-red); }
+.rule-total { font-size: 14px; font-weight: 600; padding-bottom: 2px; }
+.rule-strip__ops { display: inline-flex; align-items: center; padding-bottom: 2px; margin-left: auto; }

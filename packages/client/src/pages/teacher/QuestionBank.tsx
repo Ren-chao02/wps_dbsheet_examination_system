@@ -1,37 +1,37 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  Table,
   Button,
   Input,
   Select,
   Space,
-  Tag,
   Popconfirm,
   message,
   Card,
   DatePicker,
   Row,
   Col,
-  Switch,
   Tooltip,
   Tree,
+  Empty,
+  Pagination,
+  Spin,
+  Segmented,
 } from 'antd';
 import {
   PlusOutlined,
-  EditOutlined,
-  DeleteOutlined,
   SearchOutlined,
-  EyeOutlined,
   ReloadOutlined,
   SettingOutlined,
+  DownOutlined,
 } from '@ant-design/icons';
-import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { Question, PaginatedResponse, QuestionCategory } from '../../types';
 import { QuestionDetailDrawer } from './QuestionDetailDrawer';
+import { QuestionListItem } from './components/QuestionListItem';
 import { CategoryManagerModal } from '../../components/CategoryManagerModal';
 import { useAuthStore } from '../../stores/auth';
+import { QUESTION_TYPE_LABELS } from '../../utils/questionLabels';
 
 const { RangePicker } = DatePicker;
 
@@ -47,6 +47,9 @@ const statusOptions = [
   { value: 'published', label: '已启用' },
   { value: 'draft', label: '已禁用' },
 ];
+
+// 题型多选（单选/多选/判断/实操 5 种，文案以 questionLabels 为唯一来源）
+const typeOptions = Object.entries(QUESTION_TYPE_LABELS).map(([value, label]) => ({ value, label }));
 
 export function QuestionBank() {
   const navigate = useNavigate();
@@ -69,12 +72,16 @@ export function QuestionBank() {
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const [teachers, setTeachers] = useState<{ id: string; realName: string }[]>([]);
+  // 次要筛选（出题老师/分类/时间）默认收起，点「展开」才显示 —— 对齐参考产品的筛选区形态
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
 
-  // ✨ 扩展筛选条件状态
+  // ✨ 扩展筛选条件状态（type 为多选数组，请求时拼成逗号分隔）
   const [filters, setFilters] = useState<{
     search?: string;
+    type?: string[];
     difficulty?: string;
     status?: string;
+    source?: string;
     teacherName?: string;
     primaryCategory?: string;
     secondaryCategory?: string;
@@ -101,14 +108,11 @@ export function QuestionBank() {
     async (page = 1, pageSize = 20) => {
       setLoading(true);
       try {
-        const params = new URLSearchParams({
-          page: String(page),
-          pageSize: String(pageSize),
-          // 只添加非空的筛选条件
-          ...Object.fromEntries(
-            Object.entries(activeFilters).filter(([_, v]) => v !== undefined && v !== '')
-          ),
-        });
+        const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+        for (const [key, v] of Object.entries(activeFilters)) {
+          if (v === undefined || v === '' || (Array.isArray(v) && v.length === 0)) continue;
+          params.set(key, Array.isArray(v) ? v.join(',') : String(v));
+        }
 
         const res = await api.get(`/questions?${params}`);
         setData(res.data);
@@ -286,199 +290,70 @@ export function QuestionBank() {
     message.success('已重置筛选条件');
   };
 
-  // 表格列定义
-  const columns = [
-    {
-      title: '题目标题',
-      dataIndex: 'title',
-      key: 'title',
-      width: 250,
-      render: (text: string, record: Question) => (
-        <a
-          onClick={() => handleViewDetail(record)}
-          style={{ color: '#000000', textDecoration: 'none' }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.textDecoration = 'underline';
-            e.currentTarget.style.color = '#1890ff';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.textDecoration = 'none';
-            e.currentTarget.style.color = '#000000';
-          }}
-        >
-          {text}
-        </a>
-      ),
-    },
-    {
-      title: '难度',
-      dataIndex: 'difficulty',
-      key: 'difficulty',
-      width: 80,
-      render: (v: string) => (
-        <Tag
-          color={
-            v === 'easy'
-              ? 'green'
-              : v === 'medium'
-              ? 'orange'
-              : 'red'
-          }
-        >
-          {v === 'easy' ? '简单' : v === 'medium' ? '中等' : '困难'}
-        </Tag>
-      ),
-    },
-    {
-      title: '分值',
-      dataIndex: 'score',
-      key: 'score',
-      width: 60,
-      render: (v: number) => <span style={{ fontWeight: 500 }}>{v}</span>,
-    },
-    {
-      // 引用次数：被引用的题目不能删除（与服务端删除校验同一口径），列表直接展示避免误删操作
-      title: '引用',
-      key: 'usage',
-      width: 120,
-      render: (_: any, r: Question) => {
-        const counts = (r as any)._count as { paperQuestions?: number; examQuestions?: number } | undefined;
-        const inPapers = counts?.paperQuestions ?? 0;
-        const inExams = counts?.examQuestions ?? 0;
-        if (inPapers === 0 && inExams === 0) {
-          return <span style={{ color: '#999' }}>未引用</span>;
-        }
-        return (
-          <Tooltip title="被试卷/考试引用的次数，被引用的题目无法删除">
-            <Space size={4}>
-              {inPapers > 0 && <Tag color="purple">试卷 {inPapers}</Tag>}
-              {inExams > 0 && <Tag color="geekblue">考试 {inExams}</Tag>}
-            </Space>
-          </Tooltip>
-        );
-      },
-    },
-    {
-      title: '一级分类',
-      key: 'primaryCategory',
-      width: 100,
-      render: (_: any, r: Question) =>
-        r.primaryCategory ? (
-          <Tag color="blue">{r.primaryCategory.name}</Tag>
-        ) : (
-          <span style={{ color: '#999' }}>—</span>
-        ),
-    },
-    {
-      title: '二级分类',
-      key: 'secondaryCategory',
-      width: 100,
-      render: (_: any, r: Question) =>
-        r.secondaryCategory ? (
-          <Tag color="cyan">{r.secondaryCategory.name}</Tag>
-        ) : (
-          <span style={{ color: '#999' }}>—</span>
-        ),
-    },
-    {
-      title: '出题老师',
-      dataIndex: 'teacherName',
-      key: 'teacherName',
-      width: 90,
-      render: (v: string | null) => v || <span style={{ color: '#999' }}>—</span>,
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      width: 100,
-      render: (v: string, record: Question) => {
-        const owner = isOwner(record);
-        return (
+  /**
+   * 行内操作（对齐参考产品的 详情/编辑/删除 + 本系统的启用/禁用）：
+   * 禁用走二次确认（被引用的题禁用后试卷会抽不到题），启用直接生效。
+   */
+  const renderActions = (record: Question) => {
+    const owner = isOwner(record);
+    const ownerTip = owner
+      ? undefined
+      : record.source === 'official'
+        ? '官方题库题目由平台统一维护，教师端不可修改'
+        : '仅支持本人创建的题目';
+    return (
+      <>
+        <Button type="link" size="small" onClick={() => handleViewDetail(record)}>详情</Button>
+        <Tooltip title={ownerTip}>
+          <Button
+            type="link"
+            size="small"
+            disabled={!owner}
+            onClick={() => navigate(`/teacher/questions/${record.id}/edit`)}
+          >
+            编辑
+          </Button>
+        </Tooltip>
+        {record.status === 'published' ? (
           <Popconfirm
             title="确认禁用"
             description="试题禁用后不能被引用到试卷中，确认禁用吗？"
-            onConfirm={() => handleToggleStatus(record.id, v)}
             okText="确认禁用"
             cancelText="取消"
-            disabled={v !== 'published' || !owner}  // 只有启用状态下点击才需要确认
+            disabled={!owner}
+            onConfirm={() => handleToggleStatus(record.id, record.status)}
           >
-            <Switch
-              checked={v === 'published'}
-              checkedChildren="启用"
-              unCheckedChildren="禁用"
-              disabled={!owner}
-              onChange={(checked) => {
-                // 如果是启用操作（从禁用切换到启用），直接执行不需要确认
-                if (checked) {
-                  handleToggleStatus(record.id, v);
-                }
-                // 如果是禁用操作（从启用切换到禁用），由 Popconfirm 处理
-              }}
-            />
+            <Tooltip title={ownerTip}>
+              <Button type="link" size="small" disabled={!owner}>禁用</Button>
+            </Tooltip>
           </Popconfirm>
-        );
-      },
-    },
-    {
-      title: '更新时间',
-      dataIndex: 'updatedAt',
-      key: 'updatedAt',
-      width: 150,
-      render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm'),
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      width: 160,
-      fixed: 'right' as const,
-      render: (_: any, record: Question) => {
-        const owner = isOwner(record);
-        return (
-          <Space size="small">
+        ) : (
+          <Tooltip title={ownerTip}>
             <Button
               type="link"
               size="small"
-              icon={<EyeOutlined />}
-              onClick={() => handleViewDetail(record)}
-              title="查看详情"
-            />
-            <Tooltip title={owner ? undefined : '仅支持本人创建的题目'}>
-              <Button
-                type="link"
-                size="small"
-                icon={<EditOutlined />}
-                disabled={!owner}
-                onClick={() =>
-                  navigate(`/teacher/questions/${record.id}/edit`)
-                }
-                title="编辑"
-              />
-            </Tooltip>
-            <Popconfirm
-              title="确定删除该题目？"
-              description="删除后无法恢复"
-              onConfirm={() => handleDelete(record.id)}
-              okText="确定"
-              cancelText="取消"
               disabled={!owner}
+              onClick={() => handleToggleStatus(record.id, record.status)}
             >
-              <Tooltip title={owner ? undefined : '仅支持本人创建的题目'}>
-                <Button
-                  type="link"
-                  size="small"
-                  danger
-                  icon={<DeleteOutlined />}
-                  disabled={!owner}
-                  title="删除"
-                />
-              </Tooltip>
-            </Popconfirm>
-          </Space>
-        );
-      },
-    },
-  ];
+              启用
+            </Button>
+          </Tooltip>
+        )}
+        <Popconfirm
+          title="确定删除该题目？"
+          description="删除后无法恢复"
+          okText="确定"
+          cancelText="取消"
+          disabled={!owner}
+          onConfirm={() => handleDelete(record.id)}
+        >
+          <Tooltip title={ownerTip}>
+            <Button type="link" size="small" danger disabled={!owner}>删除</Button>
+          </Tooltip>
+        </Popconfirm>
+      </>
+    );
+  };
 
   return (
     <div className="page-container">
@@ -549,13 +424,26 @@ export function QuestionBank() {
         </Col>
 
         <Col xs={24} md={17} lg={18} xl={19}>
+          {/* 来源页签：官方题库（平台维护）/ 校本题库（教师自建）——对应参考产品的双库结构 */}
+          <div style={{ marginBottom: 12 }}>
+            <Segmented
+              value={filters.source ?? 'all'}
+              onChange={(v) => setFilters((f) => ({ ...f, source: v === 'all' ? undefined : String(v) }))}
+              options={[
+                { label: '全部', value: 'all' },
+                { label: '官方题库', value: 'official' },
+                { label: '校本题库', value: 'school' },
+              ]}
+            />
+          </div>
+
           {/* ✨ 高级筛选区域 */}
           <Card size="small" style={{ marginBottom: 16 }}>
             {/* 第一行：基础筛选 */}
             <Row gutter={[12, 12]} align="middle" style={{ marginBottom: 12 }}>
-              <Col span={6}>
+              <Col span={7}>
                 <Input
-                  placeholder="搜索标题或描述"
+                  placeholder="搜索题目"
                   prefix={<SearchOutlined />}
                   allowClear
                   value={filters.search}
@@ -568,7 +456,22 @@ export function QuestionBank() {
                 />
               </Col>
 
-              <Col span={7}>
+              <Col span={5}>
+                <Select
+                  mode="multiple"
+                  maxTagCount="responsive"
+                  placeholder="题型"
+                  allowClear
+                  value={filters.type}
+                  style={{ width: '100%' }}
+                  onChange={(v) =>
+                    setFilters((f) => ({ ...f, type: v && v.length > 0 ? v : undefined }))
+                  }
+                  options={typeOptions}
+                />
+              </Col>
+
+              <Col span={4}>
                 <Select
                   placeholder="难度"
                   allowClear
@@ -581,7 +484,7 @@ export function QuestionBank() {
                 />
               </Col>
 
-              <Col span={5}>
+              <Col span={4}>
                 <Select
                   placeholder="状态"
                   allowClear
@@ -594,7 +497,22 @@ export function QuestionBank() {
                 />
               </Col>
 
-              <Col span={6}>
+              <Col span={2}>
+                <Button onClick={handleResetFilters} style={{ width: '100%' }}>重置</Button>
+              </Col>
+
+              <Col span={2}>
+                <Button type="link" onClick={() => setFiltersExpanded(v => !v)} style={{ padding: 0 }}>
+                  {filtersExpanded ? '收起' : '展开'}
+                  <DownOutlined style={{ fontSize: 10, marginLeft: 2, transform: filtersExpanded ? 'rotate(180deg)' : undefined }} />
+                </Button>
+              </Col>
+            </Row>
+
+            {/* 第二行（展开后）：出题老师、分类和时间筛选 */}
+            {filtersExpanded && (
+            <Row gutter={[12, 12]} align="middle">
+              <Col span={5}>
                 <Select
                   placeholder="出题老师"
                   allowClear
@@ -618,10 +536,7 @@ export function QuestionBank() {
                   }))}
                 />
               </Col>
-            </Row>
 
-            {/* 第二行：分类和时间筛选 */}
-            <Row gutter={[12, 12]} align="middle">
               <Col span={4}>
                 <Select
                   placeholder="一级分类"
@@ -676,7 +591,7 @@ export function QuestionBank() {
                 />
               </Col>
 
-              <Col span={7}>
+              <Col span={6}>
                 <RangePicker
                   placeholder={['创建开始', '创建结束']}
                   style={{ width: '100%' }}
@@ -700,7 +615,7 @@ export function QuestionBank() {
                 />
               </Col>
 
-              <Col span={7}>
+              <Col span={5}>
                 <RangePicker
                   placeholder={['更新开始', '更新结束']}
                   style={{ width: '100%' }}
@@ -723,47 +638,43 @@ export function QuestionBank() {
                   }}
                 />
               </Col>
-
-              <Col span={2}>
-                <Button onClick={handleResetFilters}>重置</Button>
-              </Col>
             </Row>
+            )}
           </Card>
 
-          {/* 数据表格 */}
-          <Table
-            dataSource={data.data}
-            columns={columns}
-            rowKey="id"
-            loading={loading}
-            scroll={{ x: 1200 }}
-            expandable={{
-              // 行内展开题干全文：表格只显示标题时，出题老师核对内容要点开详情抽屉，多一步；
-              // 展开行让"浏览题干"像看列表一样直接（参考产品的题库列表就是题干流）
-              expandedRowRender: (record: Question) => (
-                <div style={{ padding: '4px 12px', fontSize: 13, lineHeight: 1.8 }}>
-                  <div style={{ whiteSpace: 'pre-wrap', color: '#3a3a3c' }}>
-                    {record.description || '（无题干描述）'}
+          {/* 题干流列表：借鉴参考产品「校本题库」——不叠列表面板，直接把题干、选项、元信息铺开 */}
+          <Spin spinning={loading}>
+            {data.data.length === 0 && !loading ? (
+              <Card size="small">
+                <Empty description="没有符合条件的题目">
+                  <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/teacher/questions/new')}>
+                    新建题目
+                  </Button>
+                </Empty>
+              </Card>
+            ) : (
+              <Card size="small" styles={{ body: { padding: '4px 16px' } }}>
+                {data.data.map((q, index) => (
+                  <div key={q.id}>
+                    <QuestionListItem question={q} actions={renderActions(q)} />
+                    {index < data.data.length - 1 && <div className="qflow-divider" />}
                   </div>
-                  {record.hints ? (
-                    <div style={{ marginTop: 6, color: '#86868b', fontSize: 12 }}>提示：{record.hints}</div>
-                  ) : null}
-                </div>
-              ),
-              rowExpandable: (record: Question) => Boolean(record.description),
-            }}
-            pagination={{
-              current: data.page,
-              total: data.total,
-              pageSize: data.pageSize,
-              showSizeChanger: true,
-              showQuickJumper: true,
-              showTotal: (total) => `共 ${total} 条记录`,
-              onChange: (page, pageSize) => {
-                fetchQuestions(page, pageSize);
-              },
-            }}
-          />
+                ))}
+              </Card>
+            )}
+          </Spin>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+            <Pagination
+              current={data.page}
+              total={data.total}
+              pageSize={data.pageSize}
+              showSizeChanger
+              showQuickJumper
+              showTotal={(total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`}
+              onChange={(page, pageSize) => fetchQuestions(page, pageSize)}
+            />
+          </div>
         </Col>
       </Row>
 
