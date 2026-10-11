@@ -157,8 +157,25 @@ export default function AccountManagement() {
 
   const handleResetPassword = async (id: string, username: string) => {
     try {
-      await api.put(`/accounts/reset-password/${id}`);
-      message.success(`已重置 ${username} 的密码为默认密码`);
+      const res = await api.put(`/accounts/reset-password/${id}`);
+      // 服务端已不再使用固定弱口令 123456（谁都能猜到），改为随机口令并只返回一次
+      const pwd: string | undefined = res.data?.password;
+      if (pwd) {
+        Modal.info({
+          title: `已重置 ${username} 的密码`,
+          content: (
+            <div>
+              <p style={{ marginBottom: 8 }}>请把下面的新密码<strong>转告使用者</strong>，关闭后系统不再显示：</p>
+              <Typography.Paragraph copyable style={{ fontSize: 18, fontWeight: 600, marginBottom: 0 }}>
+                {pwd}
+              </Typography.Paragraph>
+            </div>
+          ),
+          okText: '我已记录',
+        });
+      } else {
+        message.success(`已重置 ${username} 的密码`);
+      }
     } catch (err: any) {
       message.error(err.response?.data?.message || '重置失败');
     }

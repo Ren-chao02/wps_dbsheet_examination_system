@@ -78,6 +78,67 @@ export function EnhancedExamMonitor() {
   const [roomAssignments, setRoomAssignments] = useState<Map<string, { roomId: string; roomCode: string; roomName: string; seatNumber: number }>>(new Map());
   const socketRef = useRef<Socket | null>(null);
 
+  // ===== 事件节流缓冲区 =====
+  // 3000 人考场下 monitor:update 心跳约 300 次/秒。若每事件都 setLiveStudents（整张 Map 重建）
+  // 并触发整表重渲染，教师浏览器会直接冻结。因此把事件先按「学生 → 最新补丁」合并进 ref 缓冲区，
+  // 由定时器在固定窗口结束时一次性 flush，把渲染频率压到约 1 次/秒。
+  // 窗口内同一学生的多次事件做字段级合并（后到字段覆盖先到字段），最终状态仍以最新事件为准。
+  const pendingLivePatchesRef = useRef<Map<string, Partial<LiveStudent> & { studentId: string }>>(new Map());
+  // 交卷事件单独缓冲：flush 时只对 submissions 数组做该学生的行级局部更新，不整表重拉
+  const pendingSubmitsRef = useRef<Map<string, { submittedAt: string }>>(new Map());
+  const flushTimerRef = useRef<number | null>(null);
+
+  // 节流窗口：1000ms。监控页对心跳数据的秒级延迟不敏感，
+  // 1s 窗口能把 300 次/秒的事件流压成最多 1 次/秒的 setState；
+  // 窗口结束由定时器保证必然 flush，不存在「事件到了但状态永远不更新」的问题。
+  const FLUSH_INTERVAL_MS = 1000;
+
+  const flushBufferedEvents = () => {
+    // 先「摘走」旧缓冲区再 setState：flush 期间新到事件写入新缓冲区，不会遗漏
+    const livePatches = pendingLivePatchesRef.current;
+    const submits = pendingSubmitsRef.current;
+    pendingLivePatchesRef.current = new Map();
+    pendingSubmitsRef.current = new Map();
+
+    if (livePatches.size > 0) {
+      setLiveStudents(prev => {
+        const next = new Map(prev);
+        livePatches.forEach((patch, studentId) => {
+          const existing = next.get(studentId) || {
+            studentId, studentName: '', currentQuestion: 0,
+            tabSwitchCount: 0, lastHeartbeat: '', online: true
+          };
+          next.set(studentId, { ...existing, ...patch });
+        });
+        return next;
+      });
+    }
+    if (submits.size > 0) {
+      // 交卷只做行级局部更新：不再为每个 monitor:submit 全量拉取数千行列表。
+      // 交卷风暴时若不取消，会对服务端发起数百次全量查询（每行还带 _count.details 子查询）。
+      setSubmissions(prev => prev.map(sub => {
+        const submitted = submits.get(sub.studentId);
+        return submitted ? { ...sub, status: 'submitted', submittedAt: submitted.submittedAt } : sub;
+      }));
+    }
+  };
+
+  const scheduleFlush = () => {
+    // 已有定时器说明当前窗口尚未结束，继续累积即可
+    if (flushTimerRef.current !== null) return;
+    flushTimerRef.current = window.setTimeout(() => {
+      flushTimerRef.current = null;
+      flushBufferedEvents();
+    }, FLUSH_INTERVAL_MS);
+  };
+
+  // 把一条学生状态补丁合并进缓冲区（同窗口内同一学生的多次事件合并为最新字段集合）
+  const enqueueLivePatch = (patch: Partial<LiveStudent> & { studentId: string }) => {
+    const current = pendingLivePatchesRef.current.get(patch.studentId);
+    pendingLivePatchesRef.current.set(patch.studentId, { ...(current || {}), ...patch });
+    scheduleFlush();
+  };
+
   // ✅ 加载考场与座位分配信息
   useEffect(() => {
     if (id) {
@@ -133,42 +194,35 @@ export function EnhancedExamMonitor() {
       setLiveStudents(map);
     });
 
+    // 学生上线：考试开始时数千人集中上线，同样走缓冲区合并，避免上线风暴
     socket.on('monitor:join', (data: { studentId: string; studentName: string }) => {
-      setLiveStudents(prev => {
-        const next = new Map(prev);
-        next.set(data.studentId, {
-          ...data,
-          currentQuestion: 0,
-          tabSwitchCount: 0,
-          lastHeartbeat: new Date().toISOString(),
-          online: true,
-        });
-        return next;
+      enqueueLivePatch({
+        studentId: data.studentId,
+        studentName: data.studentName,
+        currentQuestion: 0,
+        tabSwitchCount: 0,
+        lastHeartbeat: new Date().toISOString(),
+        online: true,
       });
     });
 
+    // 心跳更新（高频：3000 人 × 1 次/10s ≈ 300 次/秒）→ 进缓冲区合并
     socket.on('monitor:update', (data: Partial<LiveStudent> & { studentId: string }) => {
-      setLiveStudents(prev => {
-        const next = new Map(prev);
-        const existing = next.get(data.studentId) || {
-          studentId: data.studentId, studentName: '', currentQuestion: 0,
-          tabSwitchCount: 0, lastHeartbeat: '', online: true
-        };
-        next.set(data.studentId, { ...existing, ...data });
-        return next;
-      });
+      enqueueLivePatch(data);
     });
 
+    // 交卷：只更新该行状态（liveStudents + submissions 行级局部更新），
+    // 不再触发全量列表重拉；提交状态与评分进度的最终一致性由 30s 轮询兜底
     socket.on('monitor:submit', (data: { studentId: string; studentName: string; submittedAt: string }) => {
-      setLiveStudents(prev => {
-        const next = new Map(prev);
-        const existing = next.get(data.studentId);
-        if (existing) {
-          next.set(data.studentId, { ...existing, ...data, online: true });
-        }
-        return next;
+      enqueueLivePatch({
+        studentId: data.studentId,
+        studentName: data.studentName,
+        submittedAt: data.submittedAt,
+        status: 'submitted',
+        online: true,
       });
-      fetchData();
+      pendingSubmitsRef.current.set(data.studentId, { submittedAt: data.submittedAt });
+      scheduleFlush();
     });
 
     socket.on('monitor:fullscreen-exit', (data: { studentId: string; studentName: string; occurredAt: string }) => {
@@ -176,12 +230,22 @@ export function EnhancedExamMonitor() {
     });
 
     return () => {
+      // 组件卸载时清掉 flush 定时器即可：组件已不存在，缓冲区数据无需再 flush
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
       socket.disconnect();
     };
   }, [id]);
 
+  // 兜底轮询（30s）：交卷事件不再触发全量重拉后，submissions 列表需靠轮询补齐
+  // 评分进度等数据；该接口返回全部行且每行带 _count.details 子查询，
+  // 30s 间隔（较常见 15s 减半）可显著降低对服务端的压力，且丢失事件最多 30s 内自愈
   useEffect(() => {
     fetchData();
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
   }, [id]);
 
   // ✅ 合并考场/座位信息
@@ -509,7 +573,9 @@ export function EnhancedExamMonitor() {
                       dataSource={roomStudents}
                       rowKey="studentId"
                       columns={columns}
-                      pagination={false}
+                      // 每间考场可能有上百人：3000 人 × 多考场若全部渲染进 DOM 会卡死，
+                      // 分页只渲染当前页；hideOnSinglePage 保证小考场观感与原来一致
+                      pagination={{ pageSize: 10, hideOnSinglePage: true }}
                       size="small"
                       scroll={{ x: 800 }}
                     />
@@ -568,7 +634,8 @@ export function EnhancedExamMonitor() {
                   },
                 },
               ]}
-              pagination={false}
+              // 极端情况下（如考试结束全员离线）异常列表可能上千行，分页避免一次性进 DOM
+              pagination={{ pageSize: 10, hideOnSinglePage: true }}
               size="small"
             />
           ) : (

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
-  Table, Button, Modal, Form, Input, Select, Tag, Space, Popconfirm, message, Row, Col, Radio,
+  Table, Button, Modal, Form, Input, Select, Tag, Space, Popconfirm, message, Row, Col, Radio, Typography,
 } from 'antd';
 import {
   PlusOutlined, EditOutlined, ExportOutlined, ImportOutlined, LinkOutlined, ReloadOutlined, DeleteOutlined,
@@ -200,10 +200,28 @@ export default function StudentManagement() {
   };
 
   // ---------- Reset password ----------
+  // 服务端不再使用「学号后 6 位」这类可推算的默认密码（同学之间学号是公开信息，
+  // 等于谁都能推算出别人的初始密码并冒用登录），改为随机口令并只在这里返回一次。
   const handleResetPassword = async (id: string) => {
     try {
-      await api.put(`/students/${id}/reset-password`);
-      message.success('密码已重置为默认密码');
+      const res = await api.put(`/students/${id}/reset-password`);
+      const pwd: string | undefined = res.data?.password;
+      if (pwd) {
+        Modal.info({
+          title: '密码已重置',
+          content: (
+            <div>
+              <p style={{ marginBottom: 8 }}>请把下面的新密码<strong>当面转告学生</strong>，关闭后系统不再显示：</p>
+              <Typography.Paragraph copyable style={{ fontSize: 18, fontWeight: 600, marginBottom: 0 }}>
+                {pwd}
+              </Typography.Paragraph>
+            </div>
+          ),
+          okText: '我已记录',
+        });
+      } else {
+        message.success('密码已重置');
+      }
     } catch (err: any) {
       message.error(err.response?.data?.message || '重置密码失败');
     }

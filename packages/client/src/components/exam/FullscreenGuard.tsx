@@ -5,6 +5,19 @@ interface FullscreenGuardProps {
   active: boolean;
   children?: React.ReactNode;
   onExit?: () => void;
+  /**
+   * 挂起守护：学生按系统指引切到「表格独立窗口」期间不弹全屏提示、不上报退出违规。
+   * 窗口关闭（或被切回内嵌模式）后恢复检测 —— 若此时已退出全屏，仍会正常提示重新进入。
+   */
+  suspended?: boolean;
+  /**
+   * 「无法全屏，继续考试（会记录）」回调：requestFullscreen 被浏览器策略拒绝
+   * （企业 GPO、电子教室软件、退全屏后约 1.2 秒的冷却期）时学生无法重新全屏，
+   * 不能永远卡在弹窗里。调用方在此把异常记一笔 behavior（FULLSCREEN_EXIT,
+   * metadata.reason: 'unsupported'）；随后守护挂起，考试继续。留痕可查。
+   * 不传则该按钮不显示（保持单按钮行为）。
+   */
+  onForceContinue?: () => void;
 }
 
 /**
@@ -19,14 +32,25 @@ interface FullscreenGuardProps {
  * onExit 语义：每次「从全屏 → 非全屏」只触发一次（由 exitReportedRef 守护），
  * 重新进入全屏后守卫重置，下次退出再触发。用于上报违规。
  */
-export function FullscreenGuard({ active, children, onExit }: FullscreenGuardProps) {
+export function FullscreenGuard({ active, children, onExit, suspended = false, onForceContinue }: FullscreenGuardProps) {
   const [visible, setVisible] = useState(false);
   const exitReportedRef = useRef(false);
+  /**
+   * 学生确认无法全屏后手动挂起守护（异常已通过 onForceContinue 记录）。
+   * 与外部 suspended 叠加：任一为真都不再检测/弹窗，考试不因此卡死。
+   */
+  const [forceSuspended, setForceSuspended] = useState(false);
+  const guardSuspended = suspended || forceSuspended;
   // 保持 onExit 最新引用，避免因回调身份变化导致 effect 反复重注册（也避免闭包陈旧）
   const onExitRef = useRef(onExit);
   useEffect(() => {
     onExitRef.current = onExit;
   }, [onExit]);
+  // 同上：onForceContinue 保持最新引用
+  const onForceContinueRef = useRef(onForceContinue);
+  useEffect(() => {
+    onForceContinueRef.current = onForceContinue;
+  }, [onForceContinue]);
 
   const isFullscreen = useCallback(() => {
     const doc: any = document;
@@ -66,7 +90,11 @@ export function FullscreenGuard({ active, children, onExit }: FullscreenGuardPro
   }, [isFullscreen]);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || guardSuspended) {
+      // 挂起期间收回弹窗；恢复时下面的逻辑会重新请求全屏并复核
+      setVisible(false);
+      return;
+    }
     enterFullscreen();
     exitReportedRef.current = false;
 
@@ -96,7 +124,7 @@ export function FullscreenGuard({ active, children, onExit }: FullscreenGuardPro
       document.removeEventListener('keydown', handleKeyDown);
       clearInterval(pollTimer);
     };
-  }, [active, enterFullscreen, checkFullscreen]);
+  }, [active, guardSuspended, enterFullscreen, checkFullscreen]);
 
   /**
    * 重新进入全屏：不立即关闭弹窗。
@@ -107,6 +135,17 @@ export function FullscreenGuard({ active, children, onExit }: FullscreenGuardPro
     enterFullscreen();
     // 短延时后立即复核一次，成功则尽快关弹窗，不必干等下一个轮询周期
     setTimeout(checkFullscreen, 300);
+  };
+
+  /**
+   * 「无法全屏，继续考试（会记录）」：
+   * 先让调用方把异常记入 behavior（reason: unsupported，事后可查），
+   * 再挂起守护（forceSuspended）让考试继续 —— 弹窗由上方 effect 收回。
+   * 学生被企业策略/电子教室软件卡死时这是唯一出路，不能让他永远点「重新进入」。
+   */
+  const handleForceContinue = () => {
+    onForceContinueRef.current?.();
+    setForceSuspended(true);
   };
 
   return (
@@ -121,10 +160,15 @@ export function FullscreenGuard({ active, children, onExit }: FullscreenGuardPro
         maskClosable={false}
       >
         <p>检测到您已退出全屏。请点击下方按钮重新进入全屏，否则无法继续考试。</p>
-        <div style={{ textAlign: 'center' }}>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
           <Button type="primary" size="large" onClick={handleReenter}>
             重新进入全屏
           </Button>
+          {onForceContinue && (
+            <Button size="large" onClick={handleForceContinue}>
+              无法全屏，继续考试（会记录）
+            </Button>
+          )}
         </div>
       </Modal>
     </>

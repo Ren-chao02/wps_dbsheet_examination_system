@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Button, Checkbox, Spin, message, Modal, Steps, Avatar } from 'antd';
+import { Button, Checkbox, Spin, message, Modal, Steps, Avatar, Alert, Space } from 'antd';
 import {
   UserOutlined,
   LogoutOutlined,
@@ -9,12 +9,13 @@ import {
   QuestionCircleOutlined,
   FileTextOutlined,
   MessageOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import { exitFullscreen } from '../../components/exam/FullscreenGuard';
-import { computeLatestEntryTime, computeExamDeadline } from '../../utils/exam-time';
+import { computeLatestEntryTime, computeExamDeadline, serverNow, syncServerTime } from '../../utils/exam-time';
 
 const RULES_TEXT = `考场开放
 1. 各科考试考场开放时间（包括考场开放开始时间及考场入口关闭时间）将公布在"多维表格考试系统-首页-我的待考科目"中；
@@ -60,11 +61,17 @@ export function ExamEntrySteps() {
   const [questions, setQuestions] = useState<any[]>([]);
   const [profile, setProfile] = useState<any>(null);
   const [submission, setSubmission] = useState<any>(null);
+  /** 服务端计算的本人截止时间（毫秒）；null 表示未拿到，退回本地推算 */
+  const [serverDeadline, setServerDeadline] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  // 加载失败进入错误态（重试 + 求助），而不是渲染「时间 —、开始作答可点」的残缺页
+  const [loadError, setLoadError] = useState(false);
   const [step, setStep] = useState(0);
   const [agreed, setAgreed] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [now, setNow] = useState(Date.now());
+  // 倒计时/入场判定用服务端时间（serverNow）：机房电脑 CMOS 漂移时本机 Date.now()
+  // 与服务端时间戳错位，会导致候考/迟到/剩余时间全部算错。见 utils/exam-time。
+  const [now, setNow] = useState(() => Date.now());
   const [readRemaining, setReadRemaining] = useState(0);
 
   // 是否跳过规则阅读（继续答题场景：已有进行中的答题记录）
@@ -74,7 +81,8 @@ export function ExamEntrySteps() {
   const rulesReadSeconds = exam?.batch?.rulesReadSeconds ?? 15;
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    void syncServerTime();
+    const timer = setInterval(() => setNow(serverNow()), 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -95,26 +103,40 @@ export function ExamEntrySteps() {
     }
   }, [step, rulesReadSeconds]);
 
-  useEffect(() => {
+  const loadAll = useCallback(() => {
+    setLoading(true);
+    setLoadError(false);
     Promise.all([
       api.get(`/my-exams/${id}`).then((res) => {
         setExam(res.data.exam);
         setSubmission(res.data.submission);
         setQuestions(res.data.questions || []);
+        // 服务端下发的每人截止时间（随到随考每人不同），优先于本地推算
+        if (typeof res.data.deadline === 'number') setServerDeadline(res.data.deadline);
       }),
       api.get('/student-profile/me').then((res) => setProfile(res.data)),
     ])
-      .catch(() => message.error('加载考试信息失败'))
+      .catch(() => {
+        // 进入错误态（见下方渲染）：继续渲染残缺页只会让学生对着「—」和
+        // 一个必然失败的「开始作答」按钮干等
+        setLoadError(true);
+      })
       .finally(() => setLoading(false));
   }, [id]);
 
-  // 校验是否通过了环境检测，防止直接 URL 跳过
   useEffect(() => {
-    if (!loading && !sessionStorage.getItem(`env_check_passed_${id}`)) {
+    loadAll();
+  }, [loadAll]);
+
+  // 校验是否通过了环境检测，防止直接 URL 跳过。
+  // 注意：考试信息加载失败时不跳检测页（检测页同样加载不了，只会来回转圈），
+  // 由错误态直接给出重试与求助入口。
+  useEffect(() => {
+    if (!loading && !loadError && exam && !sessionStorage.getItem(`env_check_passed_${id}`)) {
       message.warning('请先完成考前环境检测');
       navigate(`/student/exam/${id}/check`, { replace: true });
     }
-  }, [loading, id, navigate]);
+  }, [loading, loadError, exam, id, navigate]);
 
   // 考试模式信息
   const examMode = exam?.batch?.examMode || 'unified';
@@ -124,12 +146,13 @@ export function ExamEntrySteps() {
     return exam?.startTime ? new Date(exam.startTime).getTime() : null;
   }, [exam]);
 
-  // 考试截止时间：与 WpsExamDoing 共用 computeExamDeadline，保证入场界面与
-  // 答题界面剩余时间口径完全一致（基于 exam.endTime，而非学生 startedAt）。
+  // 考试截止时间：优先用服务端下发的 deadline（随到随考按每人开考时刻计算），
+  // 老接口/字段缺失时退回本地 computeExamDeadline，保证入场页与答题页口径一致。
   const deadline = useMemo(() => {
+    if (serverDeadline !== null) return serverDeadline;
     if (!exam) return null;
     return computeExamDeadline(exam);
-  }, [exam]);
+  }, [serverDeadline, exam]);
 
   const remaining = useMemo(() => {
     if (!deadline) return null;
@@ -233,6 +256,45 @@ export function ExamEntrySteps() {
     return (
       <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f5f5' }}>
         <Spin size="large" />
+      </div>
+    );
+  }
+
+  // 加载失败错误态：不渲染残缺页（时间显示「—」、开始作答可点但必然失败），
+  // 给出重试与求助出口。
+  if (loadError) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#f5f5f5', display: 'flex', flexDirection: 'column' }}>
+        <header
+          style={{
+            height: 64,
+            background: '#fff',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ fontSize: 16, fontWeight: 700 }}>WPS教学平台 · 考试系统</div>
+        </header>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ maxWidth: 560, width: '100%' }}>
+            <Alert
+              type="error"
+              showIcon
+              message="考试信息加载失败"
+              description="请点击「重新加载」重试；若多次失败，请举手联系监考老师处理，不要刷新或离开本页。"
+              style={{ marginBottom: 16 }}
+            />
+            <Space>
+              <Button type="primary" icon={<ReloadOutlined />} onClick={loadAll}>
+                重新加载
+              </Button>
+              <Button onClick={() => navigate('/student/dashboard')}>返回我的考试</Button>
+            </Space>
+          </div>
+        </div>
       </div>
     );
   }

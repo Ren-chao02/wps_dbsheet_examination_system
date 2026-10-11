@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Table, Button, Drawer, InputNumber, Tag, message, Space, Card, Descriptions, Divider, Alert, Spin, Tooltip, Collapse } from 'antd';
+import { Table, Button, Drawer, InputNumber, Tag, message, Space, Card, Descriptions, Divider, Alert, Spin, Tooltip, Collapse, Modal } from 'antd';
 import { CheckOutlined, CloseOutlined, ThunderboltOutlined, EyeOutlined, ExclamationCircleOutlined, CodeOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
@@ -93,6 +93,35 @@ export function GradingPage() {
       await openGrading(submission);
       fetchData();
     } catch (err: any) {
+      // 重新判分会重置题目分数并覆盖人工复核结果：服务端要求显式确认后才执行
+      if (err.response?.data?.code === 'REGRADE_CONFIRM_REQUIRED') {
+        setAutoGrading(false);
+        Modal.confirm({
+          title: '确认重新判分？',
+          content: err.response.data.message,
+          okText: '确认重判',
+          okButtonProps: { danger: true },
+          cancelText: '取消',
+          onOk: async () => {
+            setAutoGrading(true);
+            try {
+              const res = await api.post(`/grading/${submission.id}`, {
+                accessToken: wpsToken?.accessToken,
+                confirmRegrade: true,
+              });
+              setGradingResult(res.data);
+              message.success(res.data.message || '自动判分完成');
+              await openGrading(submission);
+              fetchData();
+            } catch (e: any) {
+              message.error(e.response?.data?.message || '自动判分失败');
+            } finally {
+              setAutoGrading(false);
+            }
+          },
+        });
+        return;
+      }
       const detail = err.response?.data?.detail;
       message.error(detail
         ? `${err.response?.data?.message}: ${detail}`

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Statistic, Row, Col, Collapse, Tag, Spin, Empty, message, Result, Tooltip, Button, Typography } from 'antd';
-import { TrophyOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { Card, Statistic, Row, Col, Collapse, Tag, Spin, Empty, message, Result, Tooltip, Button, Typography, Space } from 'antd';
+import { TrophyOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import type { StudentSubmission } from '../../types';
 
@@ -34,13 +34,72 @@ export function ExamResultPage() {
   const navigate = useNavigate();
   const [submission, setSubmission] = useState<StudentSubmission | null>(null);
   const [loading, setLoading] = useState(true);
+  // 加载失败不再是死路：给「重试」与「返回我的考试」出口
+  const [loadError, setLoadError] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
-    api.get(`/my-exams/${id}/result`).then(res => setSubmission(res.data)).catch(() => message.error('加载失败')).finally(() => setLoading(false));
-  }, [id]);
+    setLoading(true);
+    setLoadError(false);
+    api
+      .get(`/my-exams/${id}/result`)
+      .then((res) => setSubmission(res.data))
+      .catch(() => {
+        setLoadError(true);
+        message.error('成绩加载失败，请重试');
+      })
+      .finally(() => setLoading(false));
+  }, [id, reloadTick]);
 
   if (loading) return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>;
-  if (!submission) return <Empty description="未找到成绩" />;
+
+  // 加载失败：错误态 + 重试 + 返回我的考试（此前是只有一行「未找到成绩」的死路）
+  if (loadError) {
+    return (
+      <div className="page-container" style={{ maxWidth: 900 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/student/dashboard')}>
+            返回我的考试
+          </Button>
+          <Title level={5} style={{ margin: 0 }}>成绩详情</Title>
+        </div>
+        <Result
+          status="error"
+          title="成绩加载失败"
+          subTitle="可能是网络异常，请重试；若多次失败请联系任课老师"
+          extra={[
+            <Button type="primary" key="retry" icon={<ReloadOutlined />} onClick={() => setReloadTick((t) => t + 1)}>
+              重试
+            </Button>,
+            <Button key="back" onClick={() => navigate('/student/dashboard')}>
+              返回我的考试
+            </Button>,
+          ]}
+        />
+      </div>
+    );
+  }
+
+  if (!submission) {
+    return (
+      <div className="page-container" style={{ maxWidth: 900 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/student/dashboard')}>
+            返回我的考试
+          </Button>
+          <Title level={5} style={{ margin: 0 }}>成绩详情</Title>
+        </div>
+        <Card>
+          <Empty description="未找到成绩">
+            <Space>
+              <Button type="primary" onClick={() => setReloadTick((t) => t + 1)}>重试</Button>
+              <Button onClick={() => navigate('/student/dashboard')}>返回我的考试</Button>
+            </Space>
+          </Empty>
+        </Card>
+      </div>
+    );
+  }
 
   // 成绩查询详情页（/student/exam/:id/result）的返回按钮：
   // 已出分 -> 回到「成绩查询」列表；刚交卷未出分 -> 回到「我的考试」（可看到"已提交"状态）
