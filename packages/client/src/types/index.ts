@@ -42,7 +42,9 @@ export interface QuestionCategory {
   _childrenCount?: number;
 }
 
-export type QuestionType = 'create_table' | 'add_field' | 'config_view' | 'create_form' | 'comprehensive';
+export type QuestionType = 'create_table' | 'add_field' | 'config_view' | 'create_form' | 'comprehensive' | 'single_choice' | 'multiple_choice' | 'true_false';
+/** 客观题题型（单选/多选/判断）：配 objectiveAnswer，不走判分规则编辑器 */
+export type ObjectiveQuestionType = 'single_choice' | 'multiple_choice' | 'true_false';
 export type Difficulty = 'easy' | 'medium' | 'hard';
 export type QuestionStatus = 'draft' | 'published' | 'archived';
 
@@ -51,6 +53,53 @@ export interface AnswerRule {
   action: string;
   params: Record<string, any>;
   score: number;
+}
+
+// ========== 客观题与抽题组卷类型 ==========
+
+/** 客观题选项（key 自动分配 A/B/C…，与服务端一致最多 26 个） */
+export interface ObjectiveOption {
+  key: string;
+  text: string;
+}
+
+/** 客观题答案（POST/PUT /api/questions 的 objectiveAnswer 字段；实操题为 null） */
+export interface ObjectiveAnswer {
+  options: ObjectiveOption[];
+  /** 正确选项 key：单选/判断恰好 1 个，多选 ≥1 */
+  correct: string[];
+}
+
+/** 实操题引用的表名/字段名声明：抽题组卷按它做等值校验（同题位候选题引用必须一致） */
+export interface SchemaRefs {
+  tables?: string[];
+  fields?: string[];
+}
+
+/** 试卷题位类型：fixed = 固定题；rule = 按知识点抽题 */
+export type SlotType = 'fixed' | 'rule';
+
+/** 抽题题位条件（PUT /api/papers/:id/questions 的 rule 字段，与 server slotRuleSchema 对齐） */
+export interface SlotRule {
+  /** 知识点（能力点 id）：候选池 = 同时命中这些知识点的已发布题目 */
+  capabilityIds?: string[];
+  difficulty?: Difficulty;
+  type?: QuestionType;
+  schemaRefs?: SchemaRefs;
+}
+
+/** POST /api/papers/slot-preview 响应：抽题题位候选池预览 */
+export interface SlotPreviewResult {
+  /** 真正可用于抽题的候选数（同题位候选要求分值一致、引用声明一致） */
+  candidateCount: number;
+  /** 因分值不匹配被排除的数量（教师常见配置错误） */
+  excludedByScore: number;
+  /** 候选池内引用声明不一致：混抽会导致部分学生做不了题 */
+  schemaRefsConflict: boolean;
+  /** 最多 20 条候选题 */
+  candidates: Array<{ id: string; title: string; type: string; difficulty: string; score: number }>;
+  /** 0 道候选 = 开考抽不出题；1 道 = 全员同题 */
+  warning: string | null;
 }
 
 export interface Question {
@@ -71,6 +120,12 @@ export interface Question {
   difficulty: Difficulty;
   score: number;
   answerRules: AnswerRule[];
+  /** 知识点打标（能力点 id）：抽题组卷按它做同知识点等值替换，不打标无法被抽中 */
+  capabilityIds?: string[];
+  /** 客观题答案（仅客观题有值，实操题为 null） */
+  objectiveAnswer?: ObjectiveAnswer | null;
+  /** 实操题引用的表/字段声明（抽题等值校验依据，选填） */
+  schemaRefs?: SchemaRefs | null;
   hints: string | null;
   tags: string[];
   status: QuestionStatus;
@@ -87,6 +142,33 @@ export interface Question {
 
   // 保留现有关联
   creator?: { id: string; realName: string } | null;
+}
+
+// ========== 客观题学生端类型（教师端出题类型见上方「客观题与抽题组卷类型」） ==========
+
+/** 客观题作答值：单选/判断为选项 key 字符串，多选为 key 数组；null 表示未作答/取消作答 */
+export type ObjectiveAnswerValue = string | string[] | null;
+
+/** 学生端下发的题目（GET /api/my-exams/:id）：服务端已剥离 answerRules 等判分敏感字段 */
+export interface StudentExamQuestion {
+  id: string;
+  title: string;
+  description: string | null;
+  type: QuestionType;
+  difficulty: Difficulty;
+  score: number;
+  hints: string | null;
+  tags: string[];
+  primaryCategoryId: string | null;
+  secondaryCategoryId: string | null;
+  options?: ObjectiveOption[]; // 仅客观题下发，不含正确答案（见 server toStudentQuestion）
+  scoreOverride: number | null;
+  sortOrder: number;
+}
+
+/** 保存客观题作答请求体（PUT /api/my-exams/:id/answers，自动保存可反复调用） */
+export interface SaveObjectiveAnswersRequest {
+  answers: Array<{ questionId: string; answer: ObjectiveAnswerValue }>;
 }
 
 export type ExamMode = 'practice' | 'quiz' | 'exam';
@@ -112,10 +194,16 @@ export interface Paper {
 export interface PaperQuestion {
   id: string;
   paperId: string;
-  questionId: string;
+  /** fixed 题位必填；rule 题位为 null（候选池在开考时决定） */
+  questionId: string | null;
   sortOrder: number;
   score: number;
-  question: Question;
+  /** fixed = 固定题；rule = 按知识点抽题 */
+  slotType: SlotType;
+  /** rule 题位的抽取条件（fixed 题位无） */
+  rule?: SlotRule | null;
+  /** rule 题位没有固定关联题目 */
+  question: Question | null;
 }
 
 export interface Exam {

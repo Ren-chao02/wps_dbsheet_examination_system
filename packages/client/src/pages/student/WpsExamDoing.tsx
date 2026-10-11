@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Button, Card, Typography, Tag, message, Spin, Alert, Progress, Space } from 'antd';
+import { Button, Card, Typography, Tag, message, Spin, Alert, Progress, Space, Modal } from 'antd';
 import {
   CheckOutlined,
   ClockCircleOutlined,
@@ -10,8 +10,14 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
-import type { Question } from '../../types';
+import type { ObjectiveAnswerValue, StudentExamQuestion } from '../../types';
 import { FullscreenGuard } from '../../components/exam/FullscreenGuard';
+import {
+  ObjectiveAnswer,
+  hasObjectiveAnswer,
+  isObjectiveQuestion,
+  restoreObjectiveAnswers,
+} from '../../components/exam/ObjectiveAnswer';
 import { WpsTablePanel } from '../../components/wps/WpsTablePanel';
 import { useExamSession } from '../../hooks/useExamSession';
 import { computeExamDeadline, serverNow, syncServerTime } from '../../utils/exam-time';
@@ -61,12 +67,177 @@ export function WpsExamDoingPage() {
     [setTabSwitchExempt],
   );
 
+  // ── 客观题作答与自动保存 ────────────────────────────────────────────
+  // 客观题在页面内直接作答，必须随时落库：机房断电、浏览器崩溃、误刷新都不该丢答案
+  // （与 server 端 PUT /my-exams/:id/answers 的「自动保存、可反复调用」口径一致）。
+  const questions: StudentExamQuestion[] = data?.questions || [];
+  const hasObjectiveQuestions = questions.some((q) => isObjectiveQuestion(q.type));
+
+  // answers：各题最新作答。state 驱动 UI 回显；ref 供 debounce/卸载等时机读最新值，
+  // 避免回调闭包里拿到过期值。
+  const [answers, setAnswers] = useState<Record<string, ObjectiveAnswerValue>>({});
+  const answersRef = useRef<Record<string, ObjectiveAnswerValue>>({});
+  // dirty：改过但还没确认落库的题。保存成功后只清掉「发出后没再被改动」的题。
+  const dirtyRef = useRef<Set<string>>(new Set());
+  // 串行保存队列：所有 PUT 按序排队，避免并发请求乱序、旧值覆盖新值。
+  const chainRef = useRef<Promise<void>>(Promise.resolve());
+  // 800ms debounce：连续改选只在停手后发一次请求，不每点一下打一次接口。
+  const debounceTimerRef = useRef<number | null>(null);
+  // 到点自动交卷前的兜底 flush 节流（3 秒一次）：网络故障时不每秒刷一次失败请求。
+  const lastAutoFlushAtRef = useRef(0);
+  // 保存状态：驱动题内轻量提示（已保存 HH:mm / 保存中 / 失败）与顶部失败横幅。
+  const [saveStatus, setSaveStatus] = useState<{
+    state: 'idle' | 'saving' | 'saved' | 'error';
+    savedAt?: string;
+    error?: string;
+  }>({ state: 'idle' });
+
+  /** 实际发出一次保存请求：取当时的 dirty 快照，成功后只清掉值没再变的题 */
+  const runFlush = useCallback(async () => {
+    const dirtyIds = Array.from(dirtyRef.current);
+    if (dirtyIds.length === 0) return;
+    setSaveStatus({ state: 'saving' });
+    const payload = dirtyIds.map((qid) => ({ questionId: qid, answer: answersRef.current[qid] ?? null }));
+    // 记录本次发出的值：请求飞行期间学生又改了某题时，成功后不能把新改动误清掉
+    const sent = new Map(dirtyIds.map((qid, i) => [qid, payload[i].answer]));
+    try {
+      const res = await api.put(`/my-exams/${id}/answers`, { answers: payload });
+      dirtyIds.forEach((qid) => {
+        if (Object.is(answersRef.current[qid] ?? null, sent.get(qid))) dirtyRef.current.delete(qid);
+      });
+      setSaveStatus({ state: 'saved', savedAt: res.data?.savedAt ?? new Date().toISOString() });
+    } catch (err: any) {
+      // 失败不清 dirty：作答仍留在页面与待保存队列里，横幅 + 重试按钮可再次保存，不会静默丢失
+      setSaveStatus({ state: 'error', error: err.response?.data?.message || '网络异常，请稍后重试' });
+    }
+  }, [id]);
+
+  /**
+   * 把待保存的作答立即落库（改选 debounce 到期 / 切题 / 切后台 / 卸载 / 交卷前都会调用）。
+   * keepalive 模式只用于 beforeunload：页面马上销毁，axios 来不及完成，
+   * 改用 fetch keepalive 尽力发出最新作答（此时 dirty 是否清掉已无意义）。
+   */
+  const flushSave = useCallback(
+    (opts?: { keepalive?: boolean }): Promise<void> => {
+      // flush 就是 debounce 定时器的「到期」行为：先把未触发的定时器清掉
+      if (debounceTimerRef.current !== null) {
+        window.clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      if (opts?.keepalive) {
+        const dirtyIds = Array.from(dirtyRef.current);
+        if (dirtyIds.length === 0) return Promise.resolve();
+        const payload = dirtyIds.map((qid) => ({ questionId: qid, answer: answersRef.current[qid] ?? null }));
+        const token = localStorage.getItem('token');
+        try {
+          // keepalive 请求走原生 fetch（axios 拦截器带不了 keepalive），手动带上 token
+          fetch(`/api/my-exams/${id}/answers`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ answers: payload }),
+            keepalive: true,
+          }).catch(() => { /* 页面即将卸载，失败也无法提示；常规保存链已兜底过大部分作答 */ });
+        } catch {
+          // 浏览器不支持 keepalive 时忽略：debounce / 切题 flush 已兜底
+        }
+        return Promise.resolve();
+      }
+      if (dirtyRef.current.size === 0) {
+        // 没有待保存的：等已有队列收尾，保证调用方（交卷前检查）等到最终保存结果
+        return chainRef.current;
+      }
+      // 串行排队：执行时再读 dirtyRef，拿到的永远是当时的最新值
+      const next = chainRef.current.then(() => {
+        if (dirtyRef.current.size > 0) return runFlush();
+      });
+      chainRef.current = next.catch(() => { /* runFlush 内部已捕获错误；兜底不让队列断链 */ });
+      return next;
+    },
+    [id, runFlush],
+  );
+
+  /** 学生改选客观题：更新本地作答 → 800ms debounce 后自动保存 */
+  const handleObjectiveChange = useCallback(
+    (questionId: string) => (value: ObjectiveAnswerValue) => {
+      // 多选清空（取消选择）按服务端契约归一成 null；单选/判断/多选正常值原样保存
+      const normalized: ObjectiveAnswerValue = Array.isArray(value) && value.length === 0 ? null : value;
+      answersRef.current = { ...answersRef.current, [questionId]: normalized };
+      setAnswers((prev) => ({ ...prev, [questionId]: normalized }));
+      dirtyRef.current.add(questionId);
+      if (debounceTimerRef.current !== null) window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = window.setTimeout(() => {
+        void flushSave();
+      }, 800);
+    },
+    [flushSave],
+  );
+
+  // 切后台 / 关页 / 组件卸载时立即 flush：学生刚改完就切走时，改动还在 800ms debounce 里，
+  // 不 flush 就会丢 —— 这是「作答不能静默丢失」的最后防线。
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.hidden) void flushSave();
+    };
+    const onBeforeUnload = () => {
+      void flushSave({ keepalive: true });
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      void flushSave(); // 页面内跳走（卸载）时最后兜底一次
+    };
+  }, [flushSave]);
+
+  /** 切题前先把仍在 debounce 里的作答 flush 落库，不丢刚选的选项 */
+  const switchToStep = useCallback(
+    (next: number) => {
+      void flushSave();
+      setCurrentStep(next);
+    },
+    [flushSave],
+  );
+
+  /**
+   * 交卷前置检查：先把最后一笔作答 flush 落库（等保存链完成），再检查客观题未作答情况。
+   * 客观题在页面内作答、最容易漏，交卷前明确列出未作答题号让学生确认；
+   * 现有交卷确认（Modal.confirm + doSubmit）在 useExamSession.handleSubmit，不动它，这里只做前置检查。
+   */
+  const confirmSubmit = useCallback(() => {
+    void flushSave().finally(() => {
+      const unanswered = questions
+        .map((q, i) => ({ q, i }))
+        .filter(({ q }) => isObjectiveQuestion(q.type) && !hasObjectiveAnswer(answersRef.current[q.id]))
+        .map(({ i }) => i + 1);
+      if (unanswered.length > 0) {
+        Modal.confirm({
+          title: `还有 ${unanswered.length} 道客观题未作答`,
+          content: `第 ${unanswered.join('、')} 题尚未作答。客观题提交后无法修改，确定要提交吗？`,
+          okText: '仍要提交',
+          okButtonProps: { danger: true },
+          cancelText: '返回检查',
+          onOk: () => handleSubmit(),
+        });
+        return;
+      }
+      handleSubmit();
+    });
+  }, [flushSave, questions, handleSubmit]);
+
   const loadExam = useCallback(() => {
     setLoading(true);
     setLoadError(null);
     api.get(`/my-exams/${id}`).then(res => {
       const d = res.data;
       setData(d);
+      // 恢复客观题已保存的作答（刷新/断线重进不丢答案）：
+      // 服务端存于 submission.details[].answerJson.answer（单选/判断为 string，多选为 string[]）。
+      // 本地还有未保存成功（dirty）的作答时优先保留本地值，避免重新拉卷把刚选的答案冲掉。
+      const restored = restoreObjectiveAnswers(d.submission?.details);
+      const merged = { ...restored, ...answersRef.current };
+      answersRef.current = merged;
+      setAnswers(merged);
       // 优先用服务端下发的时间戳：随到随考模式下每人截止时间不同（开考时刻 + 时长，
       // 且不越过批次窗口），只有服务端算得准；本地推算仅作为老接口/字段缺失时的兜底。
       const dl = typeof d.deadline === 'number' ? d.deadline : computeExamDeadline(d.exam);
@@ -99,9 +270,16 @@ export function WpsExamDoingPage() {
   useEffect(() => {
     // 到点判定同样用服务端时间：本机钟快了也不提前收卷，钟慢了也不拖延收卷
     if (deadline && serverNow() >= deadline) {
-      handleTimerFinish();
+      // 到点自动交卷前，先把仍在 debounce 里的作答落库（与手动交卷同一口径）。
+      // 有待保存内容时最多每 3 秒重试一次，网络故障时不与自动交卷抢着刷失败请求。
+      if (dirtyRef.current.size > 0 && Date.now() - lastAutoFlushAtRef.current > 3000) {
+        lastAutoFlushAtRef.current = Date.now();
+        void flushSave().finally(() => handleTimerFinish());
+      } else {
+        handleTimerFinish();
+      }
     }
-  }, [now, deadline, handleTimerFinish]);
+  }, [now, deadline, handleTimerFinish, flushSave]);
 
   const wpsTable = data?.wpsTable || null;
   const hasWpsTable = !!wpsTable?.shareUrl;
@@ -146,10 +324,15 @@ export function WpsExamDoingPage() {
     );
   }
 
-  const questions: Question[] = data.questions || [];
   const currentQuestion = questions[currentStep];
   const totalQuestions = questions.length;
   const progressPercent = totalQuestions > 0 ? Math.round(((currentStep + 1) / totalQuestions) * 100) : 0;
+
+  // 保存成功只显示 HH:mm：轻量反馈，不把 ISO 时间串怼到学生脸上
+  const formatSavedTime = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  };
 
   const leftWidth = hasWpsTable ? 420 : '100%';
 
@@ -206,7 +389,7 @@ export function WpsExamDoingPage() {
               </div>
             )}
 
-            <Button type="primary" danger icon={<CheckOutlined />} onClick={handleSubmit} loading={submitting}>
+            <Button type="primary" danger icon={<CheckOutlined />} onClick={confirmSubmit} loading={submitting}>
               交卷
             </Button>
           </Space>
@@ -247,6 +430,23 @@ export function WpsExamDoingPage() {
           }}>
             {/* Question area */}
             <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+              {/* 客观题作答保存失败：顶部横幅 + 重试入口（作答保留在页面与待保存队列里，不丢） */}
+              {saveStatus.state === 'error' && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="客观题作答保存失败"
+                  description={
+                    <div>
+                      你的作答已保留在本页面，不会丢失。网络恢复后请点击重试。
+                      <Button size="small" type="primary" style={{ marginLeft: 8 }} onClick={() => void flushSave()}>
+                        重试保存
+                      </Button>
+                    </div>
+                  }
+                />
+              )}
               {currentQuestion ? (
                 <>
                   <div style={{ marginBottom: 20 }}>
@@ -277,6 +477,36 @@ export function WpsExamDoingPage() {
                   {currentQuestion.hints && (
                     <Alert type="info" showIcon message="操作提示" description={currentQuestion.hints} style={{ marginBottom: 16 }} />
                   )}
+
+                  {/* 客观题作答区：单选/多选/判断在页面内作答并自动保存；实操题保持原展示（去右侧表格操作） */}
+                  {isObjectiveQuestion(currentQuestion.type) ? (
+                    <Card size="small" style={{ marginBottom: 16 }}>
+                      <ObjectiveAnswer
+                        question={currentQuestion}
+                        value={answers[currentQuestion.id] ?? null}
+                        onChange={handleObjectiveChange(currentQuestion.id)}
+                        disabled={submitting}
+                      />
+                      {/* 轻量保存状态：成功只有一行小字（不弹 message 打扰考试），失败在横幅有重试入口 */}
+                      <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px solid #f0f0f0', minHeight: 22 }}>
+                        {saveStatus.state === 'saving' && (
+                          <Text type="secondary" style={{ fontSize: 12 }}>保存中…</Text>
+                        )}
+                        {saveStatus.state === 'saved' && saveStatus.savedAt && (
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            <CheckOutlined style={{ color: '#52c41a', marginRight: 4 }} />
+                            已保存 {formatSavedTime(saveStatus.savedAt)}
+                          </Text>
+                        )}
+                        {saveStatus.state === 'error' && (
+                          <Text type="danger" style={{ fontSize: 12 }}>
+                            <WarningOutlined style={{ marginRight: 4 }} />
+                            保存失败：{saveStatus.error}
+                          </Text>
+                        )}
+                      </div>
+                    </Card>
+                  ) : null}
                 </>
               ) : (
                 <div style={{ textAlign: 'center', padding: 60, color: '#999' }}>暂无题目</div>
@@ -285,19 +515,48 @@ export function WpsExamDoingPage() {
               {/* Answer Sheet */}
               <Card title="答题卡" size="small">
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {questions.map((q, i) => (
-                    <Button
-                      key={q.id}
-                      type={i === currentStep ? 'primary' : 'default'}
-                      shape="round"
-                      size="small"
-                      onClick={() => setCurrentStep(i)}
-                      style={{ minWidth: 36 }}
-                    >
-                      {i + 1}
-                    </Button>
-                  ))}
+                  {questions.map((q, i) => {
+                    const isCurrent = i === currentStep;
+                    const isObj = isObjectiveQuestion(q.type);
+                    // 客观题区分「已作答/未作答」；实操题保持原样式，不强行判断
+                    const answered = isObj && hasObjectiveAnswer(answers[q.id]);
+                    return (
+                      <Button
+                        key={q.id}
+                        type={isCurrent ? 'primary' : 'default'}
+                        shape="round"
+                        size="small"
+                        onClick={() => switchToStep(i)}
+                        style={{
+                          minWidth: 36,
+                          // 客观题已作答：绿色实线 + 对勾；未作答：灰色虚线
+                          ...(isObj && !isCurrent && answered
+                            ? { color: '#52c41a', borderColor: '#b7eb8f', background: '#f6ffed' }
+                            : {}),
+                          ...(isObj && !isCurrent && !answered
+                            ? { borderStyle: 'dashed' as const, color: '#bfbfbf' }
+                            : {}),
+                        }}
+                      >
+                        {i + 1}
+                        {isObj && answered && !isCurrent ? (
+                          <CheckOutlined style={{ fontSize: 10, marginLeft: 2 }} />
+                        ) : null}
+                      </Button>
+                    );
+                  })}
                 </div>
+                {/* 图例：客观题小题的状态编码，避免学生把绿色/虚线当样式装饰 */}
+                {hasObjectiveQuestions && (
+                  <div style={{ marginTop: 8, display: 'flex', gap: 16 }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      <span style={{ color: '#52c41a' }}>●</span> 客观题已作答
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      <span style={{ color: '#d9d9d9' }}>◌</span> 客观题未作答
+                    </Text>
+                  </div>
+                )}
               </Card>
             </div>
 
@@ -309,7 +568,7 @@ export function WpsExamDoingPage() {
               <Button
                 size="large"
                 disabled={currentStep === 0}
-                onClick={() => setCurrentStep(s => s - 1)}
+                onClick={() => switchToStep(currentStep - 1)}
                 icon={<LeftOutlined />}
                 style={{ flex: 1, height: 44 }}
               >
@@ -319,7 +578,7 @@ export function WpsExamDoingPage() {
                 <Button
                   type="primary"
                   size="large"
-                  onClick={() => setCurrentStep(s => s + 1)}
+                  onClick={() => switchToStep(currentStep + 1)}
                   icon={<RightOutlined />}
                   style={{ flex: 1, height: 44 }}
                 >
@@ -329,7 +588,7 @@ export function WpsExamDoingPage() {
                 <Button
                   type="primary"
                   size="large"
-                  onClick={handleSubmit}
+                  onClick={confirmSubmit}
                   loading={submitting}
                   icon={<CheckOutlined />}
                   style={{ flex: 1, height: 44 }}
