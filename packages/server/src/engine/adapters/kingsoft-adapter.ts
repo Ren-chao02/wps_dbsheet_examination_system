@@ -49,7 +49,8 @@ async function fetchWithTimeout(
   } catch (err: any) {
     // 超时中止时，把 Node 原生的 TimeoutError 转成可读的中文错误，便于路由层提示与日志排查
     if (timeoutSignal.aborted && (err?.name === 'TimeoutError' || err?.name === 'AbortError')) {
-      throw new Error(`WPS API 请求超时（${timeoutMs / 1000}s）: ${String(input)}`);
+      // 带上 cause，排障时还能看到 Node 原生错误与原始堆栈
+      throw new Error(`WPS API 请求超时（${timeoutMs / 1000}s）: ${String(input)}`, { cause: err });
     }
     throw err;
   }
@@ -714,7 +715,10 @@ export function createAdapterFromSpaceId(tableSpaceId: string | null | undefined
 
   if (parts.length < 2) return null;
 
-  let [fileId, accessToken, apiSecret, version] = parts;
+  // accessToken 单独取出来是因为下面要回退到环境变量（需要 let），
+  // 其余三段都是只读，声明成 const 免得读者以为它们会被改
+  const [fileId, storedAccessToken, apiSecret, version] = parts;
+  let accessToken = storedAccessToken;
   if (!fileId) return null;
 
   // accessToken 为空时回退到环境变量

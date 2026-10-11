@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Card, Button, Tag, Typography, Select, Segmented, Progress, Spin,
-  List, Collapse, Descriptions, Empty, Divider, message, Space, Badge, Tooltip,
+  List, Collapse, Divider, message, Space, Badge,
 } from 'antd';
 import {
   CheckCircleOutlined, CloseCircleOutlined, QuestionCircleOutlined,
@@ -11,7 +11,6 @@ import {
 import api from '../../services/api';
 
 const { Title, Text, Paragraph } = Typography;
-const { Panel } = Collapse;
 
 // ============================================================
 // 类型定义

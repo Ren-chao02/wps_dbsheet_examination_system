@@ -62,7 +62,8 @@ export const coachingApi = {
     const allNotes: string[] = [];
 
     const handleEvent = (evt: { event: string; data: string }) => {
-      let data: any = {};
+      // 不设初值：JSON 解析失败会直接 return，能走到下面的路径必然已赋值
+      let data: any;
       try {
         data = evt.data ? JSON.parse(evt.data) : {};
       } catch {

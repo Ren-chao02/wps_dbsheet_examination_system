@@ -140,7 +140,6 @@ export default function StudentManagement() {
 
     // Populate cascading selects based on student's current department/major
     let fmajors: Major[] = [];
-    let fclassRooms: ClassRoom[] = [];
 
     if (student.departmentId) {
       const dept = departments.find(d => d.id === student.departmentId);
@@ -150,7 +149,7 @@ export default function StudentManagement() {
 
     if (student.majorId) {
       const major = fmajors.find(m => m.id === student.majorId);
-      fclassRooms = major?.classRooms || [];
+      const fclassRooms = major?.classRooms || [];
       setFormClassRooms(fclassRooms);
     }
 

@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { runCoachingChat, type CoachingStreamEvent } from '../coaching-service';
-import type { LLMClient, ChatChunk, ChatMessage } from '../../llm/llm-client';
+import type { LLMClient, ChatChunk } from '../../llm/llm-client';
 import type { ToolContext } from '../../coaching/tools';
 import type { QuestionState } from '../../llm/prompt-templates';
 import { AnswerReverser } from '../../engine/answer-reverser';

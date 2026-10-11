@@ -830,7 +830,7 @@ interface ImportResult {
 export async function processImport(
   taskId: string,
   filePath: string,
-  userId: string,
+  _userId: string,
 ): Promise<ImportResult> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(filePath);

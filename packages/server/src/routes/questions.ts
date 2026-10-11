@@ -427,7 +427,8 @@ questionRouter.post('/reverse-rules', authorize('teacher', 'admin'), async (req:
       return res.status(400).json({ message: '参数错误', errors: parsed.error.flatten() });
     }
     // accessToken 缺省时从服务端缓存读取（WpsTokenManager 持久化的 token）
-    let { accessToken, apiSecret } = parsed.data;
+    let { accessToken } = parsed.data;
+    const { apiSecret } = parsed.data;
     if (!accessToken) {
       const cached = await wpsConfigService.get();
       if (!cached?.accessToken) {

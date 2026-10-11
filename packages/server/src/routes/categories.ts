@@ -322,7 +322,7 @@ categoryRouter.put('/:id', authorize('teacher', 'admin'), async (req: Request, r
     const data = categoryBaseSchema.parse(req.body);
 
     // 如果修改了父分类，需要重新计算层级和路径
-    let updateData: any = { ...data };
+    const updateData: any = { ...data };
     
     if (data.parentId !== undefined && data.parentId !== existing.parentId) {
       // 验证新的父分类
@@ -515,7 +515,9 @@ categoryRouter.post('/batch', authorize('teacher', 'admin'), async (req: Request
         });
         break;
 
-      case 'deactivate':
+      // 花括号是必需的：case 里直接声明 const 会让变量泄漏到同一 switch 的其他
+      // case 中（TDZ 报错，且后面 case 里同名变量会互相干扰）
+      case 'deactivate': {
         // 检查是否有关联的活跃题目
         const activeQuestions = await prisma.question.count({
           where: {
@@ -539,6 +541,7 @@ categoryRouter.post('/batch', authorize('teacher', 'admin'), async (req: Request
           data: { status: 'INACTIVE' },
         });
         break;
+      }
 
       case 'delete':
         // 批量删除前检查每个分类

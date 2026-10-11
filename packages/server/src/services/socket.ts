@@ -29,6 +29,10 @@ interface StudentState {
   tabSwitchCount: number;
   lastHeartbeat: Date;
   online: boolean;
+  // 可选：答卷状态（监考页展示"答题中/已提交"）。学生端加入时不一定带上，
+  // 由服务端在强制交卷/续考等管理动作后经 emitStudentUpdate 补推。
+  status?: string;
+  submittedAt?: Date | string | null;
 }
 
 /** monitor:update 单条事件载荷（与旧协议完全一致，保证老教师页无需改动即可兼容） */
@@ -164,8 +168,15 @@ export function initSocketIO(httpServer: HttpServer): SocketServer {
       }
       const { examId, studentId, studentName } = data;
 
-      socket.join(`exam:${examId}`);
-      socket.join(`student:${studentId}`);
+      // 加入房间失败只影响监考可见性（学生照常答题），但必须留痕——
+      // 否则「学生说自己在考、教师端却看不到这个人」根本无从排查。
+      // 用 void + catch 而非 await：不让学生入场卡在房间加入上。
+      void Promise.resolve(socket.join(`exam:${examId}`)).catch((err) => {
+        console.error(`[Socket] 学生加入考试房间失败 exam=${examId} student=${studentId}:`, err);
+      });
+      void Promise.resolve(socket.join(`student:${studentId}`)).catch((err) => {
+        console.error(`[Socket] 学生加入个人房间失败 student=${studentId}:`, err);
+      });
 
       if (!examStudents.has(examId)) {
         examStudents.set(examId, new Map());
@@ -200,7 +211,10 @@ export function initSocketIO(httpServer: HttpServer): SocketServer {
         socket.emit('monitor:error', { message: '无权限查看考场监控' });
         return;
       }
-      socket.join(`monitor:${data.examId}`);
+      // 教师订阅失败意味着整场监控空白，必须留痕（理由同上）
+      void Promise.resolve(socket.join(`monitor:${data.examId}`)).catch((err) => {
+        console.error(`[Socket] 教师加入监控房间失败 exam=${data.examId}:`, err);
+      });
 
       // 发送当前所有学生状态
       const students = examStudents.get(data.examId);
@@ -247,6 +261,11 @@ export function initSocketIO(httpServer: HttpServer): SocketServer {
             data: { lastHeartbeat: new Date(), wsConnected: true },
           }).catch(() => {});
         }
+      }).catch(err => {
+        // 这个 catch 不能省：Node 20 默认把「未处理的 Promise 拒绝」当致命错误
+        // 直接终止进程。心跳是最频繁的写库路径（3000 人 × 每 30 秒一次），
+        // 数据库打一次嗝就会把整场考试的服务打掉。
+        console.error(`[Socket] 心跳写库失败 exam=${data.examId} student=${data.studentId}:`, err);
       });
     });
 

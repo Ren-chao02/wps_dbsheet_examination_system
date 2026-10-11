@@ -1576,8 +1576,9 @@ const ruleHandlers: Record<string, RuleHandler> = {
     const expectedCount = params.count;
     const operator = params.operator || 'gte';
 
-    let passed = false;
-    let operatorLabel = '>=';
+    // 不设初值：三个分支都会赋值，初值只是误导读者以为存在"默认判负"路径
+    let passed: boolean;
+    let operatorLabel: string;
     if (operator === 'eq') { passed = actualCount === expectedCount; operatorLabel = '='; }
     else if (operator === 'lte') { passed = actualCount <= expectedCount; operatorLabel = '<='; }
     else { passed = actualCount >= expectedCount; operatorLabel = '>='; }

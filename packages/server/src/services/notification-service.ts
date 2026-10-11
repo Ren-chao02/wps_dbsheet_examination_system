@@ -15,7 +15,6 @@
 
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { PrismaClient, NotificationType, NotificationPriority } from '@prisma/client';
-import dayjs from 'dayjs';
 
 const prisma = new PrismaClient();
 
@@ -30,13 +29,6 @@ export interface NotificationPayload {
   entityId?: string;        // 关联实体ID
   actionUrl?: string;       // 点击跳转链接
   senderId?: string;        // 发送者ID（可选）
-}
-
-// ✅ 用户连接信息
-interface UserConnection {
-  userId: string;
-  socketId: string;
-  connectedAt: Date;
 }
 
 class NotificationService {
@@ -77,7 +69,12 @@ class NotificationService {
    */
   private handleUserAuth(socket: Socket, userId: string): void {
     socket.data.userId = userId;
-    socket.join(`user:${userId}`); // 加入个人房间
+    // 加入个人房间。socket.join 在异步适配器下返回 Promise——失败意味着该用户
+    // 再也收不到实时通知，必须留痕，否则「在线但没通知」根本无从排查。
+    // 用 void + catch 而不是 await：连接建立不该卡在房间加入上。
+    void Promise.resolve(socket.join(`user:${userId}`)).catch((err) => {
+      console.error(`[NotificationService] 用户 ${userId} 加入通知房间失败:`, err);
+    });
 
     // 记录在线状态
     if (!this.onlineUsers.has(userId)) {
@@ -87,8 +84,10 @@ class NotificationService {
 
     console.log(`[WebSocket] 用户 ${userId} 已认证，当前在线: ${this.onlineUsers.size} 人`);
 
-    // 推送未读计数
-    this.pushUnreadCount(userId);
+    // 推送未读计数：失败只影响角标数字，不该阻断连接建立，但必须留痕
+    this.pushUnreadCount(userId).catch((err) => {
+      console.error(`[NotificationService] 推送未读计数失败 userId=${userId}:`, err);
+    });
 
     // 发送欢迎消息
     socket.emit('notification:system', {
@@ -257,8 +256,8 @@ class NotificationService {
   async broadcast(payload: Omit<NotificationPayload, 'userId'> & { targetRoles?: string[] }): Promise<void> {
     if (!this.io) return;
 
-    // 获取目标用户列表
-    let targetUsers: string[] = [];
+    // 获取目标用户列表（下面 if/else 必然赋值）
+    let targetUsers: string[];
 
     if (payload.targetRoles && payload.targetRoles.length > 0) {
       // 按角色筛选
@@ -345,9 +344,16 @@ class NotificationService {
    * 获取用户偏好设置
    */
   private async getUserPreferences(userId: string): Promise<any> {
-    return prisma.notificationPreference.findUnique({
+    // 注意这里必须 await 后再判空。
+    // 原写法 `return prisma.x.findUnique(...) || {默认值}` 中，Promise 对象恒为真，
+    // 默认值分支永远不会执行——没有偏好记录的用户会拿到 null，调用方写的是
+    // `prefs?.enableWebPush`，于是「实时推送」被静默关掉。
+    // 而本文件另一处（按用户批量推送）用的是 `pref?.enableWebPush ?? true`，
+    // 与数据库默认值一致，两处行为原本是矛盾的。
+    const prefs = await prisma.notificationPreference.findUnique({
       where: { userId },
-    }) || {
+    });
+    return prefs ?? {
       enableWebPush: true,
       enableEmail: false,
       emailFrequency: 'realtime',

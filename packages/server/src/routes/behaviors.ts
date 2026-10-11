@@ -406,8 +406,8 @@ async function updateAnalysisReport(examId: string, studentId: string) {
   suspiciousScore += criticalCount * 20; // 严重违规每个+20分
   suspiciousScore = Math.min(suspiciousScore, 100); // 上限100
 
-  // 自动生成初步结论
-  let conclusion: string | null = null;
+  // 自动生成初步结论（三个分支都会赋值，无需初值）
+  let conclusion: string;
   if (suspiciousScore >= 80) conclusion = '疑似作弊';
   else if (suspiciousScore >= 50) conclusion = '需人工复核';
   else conclusion = '正常';

@@ -159,7 +159,8 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
 
   // 2. 获取 Schema
   let schema: SchemaResponse;
-  let autoGraded = false;
+  // 不设初值：下面 if/else 两个分支必然赋值（实操题读 WPS schema、纯客观题填空 schema）
+  let autoGraded: boolean;
   let recordData: RecordData | undefined;
 
   // 回退：tableSpaceId 为空时，从 ExamTableAssignment 获取
@@ -329,7 +330,7 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
     const rules = detail.question.answerRules as unknown as AnswerRule[];
     if (!rules || rules.length === 0) continue;
 
-    const { totalScore: qScore, maxScore: qMaxScore, results } = evaluateRules(schema, rules, recordData);
+    const { maxScore: qMaxScore, results } = evaluateRules(schema, rules, recordData);
 
     const needsReviewCount = results.filter(r => r.needsReview).length;
     totalNeedsReview += needsReviewCount;
