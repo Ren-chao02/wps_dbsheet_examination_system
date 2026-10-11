@@ -2,35 +2,98 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Table, Tag, Card, Statistic, Row, Col, Spin, message, Badge,
-  Button, Space, Select, Tabs, Modal, Drawer, Alert, Progress,
-  Tooltip, Typography, Divider, Empty, Switch, InputNumber, Form
+  Button, Space, Tabs, Modal, Drawer, Alert, Progress,
+  Tooltip, Typography, Divider, Empty, Switch, InputNumber, Form, Popconfirm
 } from 'antd';
-import {
-  UserOutlined, CheckCircleOutlined, ClockCircleOutlined, WarningOutlined,
+import { CheckCircleOutlined, ClockCircleOutlined, WarningOutlined,
   ExportOutlined, EyeOutlined, SettingOutlined, HomeOutlined,
-  TeamOutlined, DownloadOutlined, FilterOutlined, ReloadOutlined, ArrowLeftOutlined
+  TeamOutlined, DownloadOutlined, ReloadOutlined, ArrowLeftOutlined,
+  PercentageOutlined
 } from '@ant-design/icons';
-import { io, Socket } from 'socket.io-client';
+import { Socket } from 'socket.io-client';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime'; // ✅ 导入相对时间插件
 import api from '../../services/api';
 import * as XLSX from 'xlsx'; // Excel导出库
 import { createAuthedSocket } from '../../config/socket-url';
+import { StatCard } from '../../components/common/StatCard';
 
 // ✅ 扩展dayjs以支持fromNow方法
 dayjs.extend(relativeTime);
 
 const { Title, Text } = Typography;
-const { TabPane } = Tabs;
 
-// ✅ 状态配置
+// ✅ 状态配置（absent：在应参考名单里但从未进入作答——没有提交记录也没有实时状态）
 const statusMap: Record<string, { color: string; text: string }> = {
+  absent: { color: 'error', text: '缺考' },
   pending: { color: 'default', text: '未开始' },
   in_progress: { color: 'processing', text: '答题中' },
   submitted: { color: 'warning', text: '已提交' },
   grading: { color: 'processing', text: '评分中' },
   graded: { color: 'success', text: '已评分' },
 };
+
+// ✅ 行为类型中文标签（与 server BehaviorType 枚举一致；考生动态与时间线共用）
+const BEHAVIOR_LABELS: Record<string, { text: string; color: string }> = {
+  TAB_SWITCH: { text: '切屏', color: 'orange' },
+  COPY_PASTE: { text: '复制粘贴', color: 'orange' },
+  WINDOW_BLUR: { text: '窗口失焦', color: 'default' },
+  FULLSCREEN_EXIT: { text: '退出全屏', color: 'red' },
+  KEYBOARD_SHORTCUT: { text: '可疑快捷键', color: 'red' },
+  MOUSE_SUSPICIOUS: { text: '异常鼠标', color: 'volcano' },
+  QUESTION_NAVIGATE: { text: '跳转题目', color: 'blue' },
+  ANSWER_SUBMIT: { text: '提交答案', color: 'blue' },
+  EXAM_START: { text: '开始考试', color: 'green' },
+  EXAM_END: { text: '结束考试', color: 'green' },
+};
+
+/** 监考动态/时间线里的一条事件 */
+interface MonitorEvent {
+  key: string;
+  studentId: string;
+  studentName: string;
+  text: string;
+  color: string;
+  at: string;
+}
+
+/** 合并两批事件（按 key 去重、按时间倒序、截断到上限）——动态流同时有轮询与 socket 两个来源 */
+function mergeMonitorEvents(prev: MonitorEvent[], incoming: MonitorEvent[], cap = 30): MonitorEvent[] {
+  const map = new Map<string, MonitorEvent>();
+  [...prev, ...incoming].forEach((e) => map.set(e.key, e));
+  return Array.from(map.values())
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+    .slice(0, cap);
+}
+
+/** 行为日志 → 动态事件 */
+function behaviorToEvent(log: any): MonitorEvent {
+  const cfg = BEHAVIOR_LABELS[log.behaviorType];
+  return {
+    key: `b-${log.id}`,
+    studentId: log.studentId,
+    studentName: log.student?.realName || log.student?.username || log.studentId,
+    text: cfg?.text || log.behaviorType,
+    color: cfg?.color || 'default',
+    at: log.occurredAt,
+  };
+}
+
+/**
+ * 是否触发预警（KPI 统计与「异常预警」列表共用同一判定，避免两处口径漂移）：
+ * - 切屏超限：所有状态都算（已交卷学生的违规记录仍要留待复核）
+ * - 掉线：只对「答题中」的学生有意义 —— 已交卷/缺考的学生不在线是正常状态，
+ *   否则每场考试结束后都会看到一片虚假的"离线预警"
+ */
+function isAlertStudent(s: LiveStudent, rules: AlertRule): boolean {
+  if (!rules.enableAlert) return false;
+  if (s.tabSwitchCount > rules.maxTabSwitches) return true;
+  return (
+    s.status === 'in_progress' &&
+    !s.online &&
+    dayjs().diff(dayjs(s.lastHeartbeat), 'second') > rules.offlineThreshold
+  );
+}
 
 // ✅ 预警规则接口
 interface AlertRule {
@@ -51,7 +114,8 @@ interface LiveStudent {
   studentName: string;
   currentQuestion: number;
   tabSwitchCount: number;
-  lastHeartbeat: string;
+  // 应参考名单里的缺考学生没有心跳，此处必须可选
+  lastHeartbeat?: string;
   online: boolean;
   status?: string;
   startedAt?: string;
@@ -59,6 +123,7 @@ interface LiveStudent {
   totalScore?: number | null;
   roomId?: string; // ✅ 新增：所属考场ID
   roomCode?: string; // ✅ 新增：考场编码
+  roomName?: string; // ✅ 新增：考场名称（应参考名单里有，缺考学生也带着）
   seatNumber?: number; // ✅ 新增：座位号
 }
 
@@ -75,7 +140,14 @@ export function EnhancedExamMonitor() {
   const [selectedStudent, setSelectedStudent] = useState<LiveStudent | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [rooms, setRooms] = useState<any[]>([]); // ✅ 考场列表
-  const [roomAssignments, setRoomAssignments] = useState<Map<string, { roomId: string; roomCode: string; roomName: string; seatNumber: number }>>(new Map());
+  // 应参考名单（考场分配）+ 座位信息：监考名册以此为准，缺考学生没有实时记录，姓名只能从这里来
+  const [roomAssignments, setRoomAssignments] = useState<Map<string, { studentName: string; roomId: string; roomCode: string; roomName: string; seatNumber: number }>>(new Map());
+  // 右栏「考生动态」：行为日志轮询 + socket 实时事件合并后的最近事件流
+  const [recentEvents, setRecentEvents] = useState<MonitorEvent[]>([]);
+  // 抽屉「考生时间线」与该考生的干预动作状态
+  const [studentTimeline, setStudentTimeline] = useState<MonitorEvent[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState<'force-submit' | 'resume' | null>(null);
   const socketRef = useRef<Socket | null>(null);
 
   // ===== 事件节流缓冲区 =====
@@ -151,6 +223,7 @@ export function EnhancedExamMonitor() {
           const map = new Map();
           (res.data || []).forEach((a: any) => {
             map.set(a.studentId, {
+              studentName: a.studentName,
               roomId: a.roomId,
               roomCode: a.roomCode,
               roomName: a.roomName,
@@ -223,10 +296,29 @@ export function EnhancedExamMonitor() {
       });
       pendingSubmitsRef.current.set(data.studentId, { submittedAt: data.submittedAt });
       scheduleFlush();
+      // 动态流：交卷是低频高价值事件（每人一次），直接插入；
+      // 「进入考场」不插入 —— 开考瞬间数千人集中进入会造成更新风暴，且名册状态已能体现
+      setRecentEvents((prev) => mergeMonitorEvents(prev, [{
+        key: `s-submit-${data.studentId}-${data.submittedAt}`,
+        studentId: data.studentId,
+        studentName: data.studentName,
+        text: '交卷',
+        color: 'blue',
+        at: data.submittedAt,
+      }]));
     });
 
     socket.on('monitor:fullscreen-exit', (data: { studentId: string; studentName: string; occurredAt: string }) => {
       message.warning(`${data.studentName || data.studentId} 退出全屏`, 3);
+      // 瞬时 message 之外还要留痕：教师低头看一眼别处就会错过，动态流里可回看
+      setRecentEvents((prev) => mergeMonitorEvents(prev, [{
+        key: `s-fullscreen-${data.studentId}-${data.occurredAt}`,
+        studentId: data.studentId,
+        studentName: data.studentName,
+        text: '退出全屏',
+        color: 'red',
+        at: data.occurredAt,
+      }]));
     });
 
     return () => {
@@ -248,28 +340,143 @@ export function EnhancedExamMonitor() {
     return () => clearInterval(interval);
   }, [id]);
 
-  // ✅ 合并考场/座位信息
-  const enrichedStudents = useMemo(() => {
-    return Array.from(liveStudents.values()).map(s => ({
-      ...s,
-      ...roomAssignments.get(s.studentId),
-    }));
-  }, [liveStudents, roomAssignments]);
+  // ✅ 考生动态：行为日志 30s 轮询（切屏/粘贴/失焦等只有日志里有），socket 事件另行插入
+  useEffect(() => {
+    if (!id) return;
+    const load = () => {
+      api.get(`/behaviors?examId=${id}&pageSize=20`)
+        .then((res) => {
+          const events = (res.data?.data || []).map(behaviorToEvent);
+          if (events.length > 0) setRecentEvents((prev) => mergeMonitorEvents(prev, events));
+        })
+        .catch(() => { /* 动态流拉取失败不打断监考主流程 */ });
+    };
+    load();
+    const interval = setInterval(load, 30000);
+    return () => clearInterval(interval);
+  }, [id]);
 
-  // ✅ 计算统计数据
+  /** 打开考生抽屉：同时拉取该考生的行为时间线 */
+  const openStudentDrawer = (record: LiveStudent) => {
+    setSelectedStudent(record);
+    setDrawerOpen(true);
+    setStudentTimeline([]);
+    setTimelineLoading(true);
+    api.get(`/behaviors?examId=${id}&studentId=${record.studentId}&pageSize=50`)
+      .then((res) => {
+        const events = (res.data?.data || []).map(behaviorToEvent);
+        // 行为日志没有「开始考试/交卷」记录（客户端不上报这两个事件），
+        // 用提交记录合成这两个关键节点，保证时间线首尾完整
+        const synthesized: MonitorEvent[] = [];
+        if (record.startedAt) {
+          synthesized.push({ key: 'syn-start', studentId: record.studentId, studentName: record.studentName, text: '开始作答', color: 'green', at: record.startedAt });
+        }
+        if (record.submittedAt) {
+          synthesized.push({ key: 'syn-submit', studentId: record.studentId, studentName: record.studentName, text: '交卷', color: 'blue', at: record.submittedAt });
+        }
+        setStudentTimeline(
+          [...events, ...synthesized].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime()),
+        );
+      })
+      .catch(() => {})
+      .finally(() => setTimelineLoading(false));
+  };
+
+  /** 强制交卷：让学生立即结束作答（服务端只允许 in_progress → submitted，与学生自交卷同一状态机） */
+  const handleForceSubmit = async (studentId: string) => {
+    if (!id) return;
+    setActionLoading('force-submit');
+    try {
+      await api.post(`/exams/${id}/submissions/${studentId}/force-submit`);
+      message.success('已强制交卷');
+      const submittedAt = new Date().toISOString();
+      setSelectedStudent((s) => (s && s.studentId === studentId ? { ...s, status: 'submitted', submittedAt } : s));
+      fetchData();
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '强制交卷失败');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  /** 允许续考：把误交/中断的答卷退回作答中（已进入判分的答卷会被服务端拒绝） */
+  const handleResume = async (studentId: string) => {
+    if (!id) return;
+    setActionLoading('resume');
+    try {
+      await api.post(`/exams/${id}/submissions/${studentId}/resume`);
+      message.success('已允许续考，考生可重新进入继续作答');
+      setSelectedStudent((s) => (s && s.studentId === studentId ? { ...s, status: 'in_progress', submittedAt: undefined } : s));
+      fetchData();
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '续考操作失败');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // ✅ 监考名册：应参考名单 × 实时状态 × 提交记录 三源并集。
+  // 只看实时状态（旧实现）会漏掉「从未进入作答」的缺考学生——他们既没有 socket 事件
+  // 也没有提交记录，却必须出现在监考表里（缺考 = 应参考 - 到考 的口径也依赖完整名册）。
+  const submissionsByStudent = useMemo(() => {
+    const map = new Map<string, any>();
+    submissions.forEach((s: any) => map.set(s.studentId, s));
+    return map;
+  }, [submissions]);
+
+  const enrichedStudents = useMemo(() => {
+    const ids = new Set<string>([
+      ...roomAssignments.keys(),
+      ...liveStudents.keys(),
+      ...submissionsByStudent.keys(),
+    ]);
+    const roster = Array.from(ids).map((studentId): LiveStudent => {
+      const live = liveStudents.get(studentId);
+      const sub = submissionsByStudent.get(studentId);
+      const room = roomAssignments.get(studentId);
+      // 有提交记录以其状态为准；仅实时在线无提交按答题中；两者皆无 = 缺考
+      const status = sub?.status ?? live?.status ?? (live ? 'in_progress' : 'absent');
+      return {
+        studentId,
+        studentName:
+          live?.studentName || room?.studentName || sub?.student?.realName || sub?.student?.username || studentId,
+        currentQuestion: live?.currentQuestion ?? -1, // -1 = 尚未进入作答
+        tabSwitchCount: live?.tabSwitchCount ?? 0,
+        lastHeartbeat: live?.lastHeartbeat,
+        online: live?.online ?? false,
+        status,
+        startedAt: sub?.startedAt ?? live?.startedAt,
+        submittedAt: sub?.submittedAt ?? live?.submittedAt,
+        totalScore: sub?.totalScore ?? live?.totalScore,
+        roomId: room?.roomId,
+        roomCode: room?.roomCode,
+        roomName: room?.roomName,
+        seatNumber: room?.seatNumber,
+      };
+    });
+    // 按考场 + 座位号排序：实时状态更新不会让行序跳动，考场维度下人工核对座位更容易
+    roster.sort(
+      (a, b) =>
+        (a.roomCode || '').localeCompare(b.roomCode || '') ||
+        (a.seatNumber ?? Number.MAX_SAFE_INTEGER) - (b.seatNumber ?? Number.MAX_SAFE_INTEGER),
+    );
+    return roster;
+  }, [liveStudents, roomAssignments, submissionsByStudent]);
+
+  // ✅ 计算统计数据（考场概况的四数：应参考/到考/交卷/缺考 + 在线/答题中/预警）
   const stats = useMemo(() => {
+    const assigned = enrichedStudents.length;
+    const absent = enrichedStudents.filter(s => s.status === 'absent').length;
+    const submitted = enrichedStudents.filter(s =>
+      s.status === 'submitted' || s.status === 'grading' || s.status === 'graded').length;
     return {
-      total: enrichedStudents.length,
+      assigned,
+      attended: assigned - absent,
+      submitted,
+      absent,
       online: enrichedStudents.filter(s => s.online).length,
       inProgress: enrichedStudents.filter(s => s.status === 'in_progress').length,
-      submitted: enrichedStudents.filter(s => s.status === 'submitted' || s.status === 'graded').length,
-      alerts: enrichedStudents.filter(s =>
-        alertRules.enableAlert && (
-          s.tabSwitchCount > alertRules.maxTabSwitches ||
-          (s.online === false &&
-            dayjs().diff(dayjs(s.lastHeartbeat), 'second') > alertRules.offlineThreshold)
-        )
-      ).length,
+      alerts: enrichedStudents.filter((s) => isAlertStudent(s, alertRules)).length,
     };
   }, [enrichedStudents, alertRules]);
 
@@ -338,7 +545,7 @@ export function EnhancedExamMonitor() {
       render: (_: any, record: LiveStudent) => (
         <Space>
           <Badge status={record.online ? 'success' : 'error'} />
-          <a onClick={() => { setSelectedStudent(record); setDrawerOpen(true); }}>
+          <a onClick={() => { openStudentDrawer(record); }}>
             {record.studentName}
           </a>
         </Space>
@@ -358,15 +565,18 @@ export function EnhancedExamMonitor() {
       title: '当前进度',
       key: 'progress',
       width: 150,
-      render: (_: any, record: LiveStudent) => (
-        <Tooltip title={`第 ${record.currentQuestion + 1} 题`}>
-          <Progress
-            percent={Math.min((record.currentQuestion / 20) * 100, 100)}
-            size="small"
-            status={record.status === 'submitted' ? 'success' : 'active'}
-          />
-        </Tooltip>
-      ),
+      render: (_: any, record: LiveStudent) =>
+        record.currentQuestion < 0 ? (
+          <span style={{ color: '#999' }}>—</span>
+        ) : (
+          <Tooltip title={`第 ${record.currentQuestion + 1} 题`}>
+            <Progress
+              percent={Math.min((record.currentQuestion / 20) * 100, 100)}
+              size="small"
+              status={record.status === 'submitted' ? 'success' : 'active'}
+            />
+          </Tooltip>
+        ),
     },
     {
       title: '切屏次数',
@@ -395,7 +605,7 @@ export function EnhancedExamMonitor() {
           type="link"
           size="small"
           icon={<EyeOutlined />}
-          onClick={() => { setSelectedStudent(record); setDrawerOpen(true); }}
+          onClick={() => { openStudentDrawer(record); }}
         >
           详情
         </Button>
@@ -460,194 +670,191 @@ export function EnhancedExamMonitor() {
         </Space>
       </div>
 
-      {/* ✅ 统计仪表板 */}
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={4}>
-          <Card>
-            <Statistic
-              title="总人数"
-              value={stats.total}
-              prefix={<TeamOutlined />}
-            />
-          </Card>
+      {/* 主区（左）+ 监考侧栏（右）：左侧 KPI 与各维度视图，右侧是考场概况四数与考生动态 */}
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={17}>
+          <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+            <Col xs={12} sm={6}>
+              <StatCard title="在线" value={stats.online} icon={<CheckCircleOutlined />} tone="green" />
+            </Col>
+            <Col xs={12} sm={6}>
+              <StatCard title="答题中" value={stats.inProgress} icon={<ClockCircleOutlined />} tone="blue" />
+            </Col>
+            <Col xs={12} sm={6}>
+              <StatCard title="异常预警" value={stats.alerts} icon={<WarningOutlined />} tone="orange" />
+            </Col>
+            <Col xs={12} sm={6}>
+              <StatCard
+                title="完成率"
+                value={stats.assigned > 0 ? Math.round((stats.submitted / stats.assigned) * 100) : 0}
+                suffix="%"
+                icon={<PercentageOutlined />}
+                tone="purple"
+              />
+            </Col>
+          </Row>
+
+          {/* ✅ Tab切换：总览 / 考场维度 / 异常列表 */}
+          <Tabs activeKey={activeTab} onChange={setActiveTab}>
+            <Tabs.TabPane tab="总览" key="overview">
+              <Table
+                dataSource={enrichedStudents}
+                rowKey="studentId"
+                columns={columns}
+                pagination={{ pageSize: 20 }}
+                size="middle"
+                scroll={{ x: 900 }}
+              />
+            </Tabs.TabPane>
+
+            <Tabs.TabPane tab={
+              <span>
+                <HomeOutlined /> 考场维度 ({rooms.length})
+              </span>
+            } key="rooms">
+              {rooms.length > 0 ? (
+                rooms.map(room => {
+                  const roomStudents = roomGroupedData[room.id] || [];
+                  const onlineCount = roomStudents.filter(s => s.online).length;
+                  const alertCount = roomStudents.filter(s =>
+                    s.tabSwitchCount > alertRules.maxTabSwitches ||
+                    !s.online
+                  ).length;
+
+                  return (
+                    <Card
+                      key={room.id}
+                      size="small"
+                      style={{ marginBottom: 12 }}
+                      title={
+                        <Space>
+                          <strong>{room.code} - {room.name}</strong>
+                          <Tag color="blue">容量:{room.capacity}</Tag>
+                          <Tag color={onlineCount > 0 ? 'green' : 'default'}>
+                            在线:{onlineCount}/{roomStudents.length}
+                          </Tag>
+                          {alertCount > 0 && (
+                            <Tag color="error">{alertCount}个异常</Tag>
+                          )}
+                        </Space>
+                      }
+                    >
+                      {roomStudents.length > 0 ? (
+                        <Table
+                          dataSource={roomStudents}
+                          rowKey="studentId"
+                          columns={columns}
+                          // 每间考场可能有上百人：3000 人 × 多考场若全部渲染进 DOM 会卡死，
+                          // 分页只渲染当前页；hideOnSinglePage 保证小考场观感与原来一致
+                          pagination={{ pageSize: 10, hideOnSinglePage: true }}
+                          size="small"
+                          scroll={{ x: 800 }}
+                        />
+                      ) : (
+                        <Empty description="该考场暂无学生" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                      )}
+                    </Card>
+                  );
+                })
+              ) : (
+                <Alert
+                  type="info"
+                  message="暂无考场数据"
+                  description="请先在考场管理中为此考试分配考场"
+                />
+              )}
+            </Tabs.TabPane>
+
+            <Tabs.TabPane tab={
+              <span>
+                <WarningOutlined /> 异常预警 ({stats.alerts})
+              </span>
+            } key="alerts">
+              {stats.alerts > 0 ? (
+                <Table
+                  dataSource={enrichedStudents.filter((student) => isAlertStudent(student, alertRules))}
+                  rowKey="studentId"
+                  columns={[
+                    ...columns,
+                    {
+                      title: '异常原因',
+                      key: 'reason',
+                      width: 200,
+                      render: (_: any, record: LiveStudent) => {
+                        const reasons: string[] = [];
+                        if (record.tabSwitchCount > alertRules.maxTabSwitches) {
+                          reasons.push(`切屏超限(${record.tabSwitchCount}次)`);
+                        }
+                        // 与 isAlertStudent 同口径：只有答题中的学生掉线才是异常
+                        if (record.status === 'in_progress' && !record.online) {
+                          const offlineSeconds = dayjs().diff(dayjs(record.lastHeartbeat), 'second');
+                          reasons.push(`离线${offlineSeconds}秒`);
+                        }
+                        return reasons.length > 0 ? (
+                          <Space direction="vertical" size={0}>
+                            {reasons.map((r, i) => (
+                              <Tag key={i} color="error">{r}</Tag>
+                            ))}
+                          </Space>
+                        ) : '-';
+                      },
+                    },
+                  ]}
+                  // 极端情况下（如考试结束全员离线）异常列表可能上千行，分页避免一次性进 DOM
+                  pagination={{ pageSize: 10, hideOnSinglePage: true }}
+                  size="small"
+                />
+              ) : (
+                <Alert
+                  type="success"
+                  showIcon
+                  message="一切正常"
+                  description="当前没有触发生警规则的学生"
+                />
+              )}
+            </Tabs.TabPane>
+          </Tabs>
         </Col>
-        <Col span={4}>
-          <Card>
-            <Statistic
-              title="在线"
-              value={stats.online}
-              valueStyle={{ color: '#52c41a' }}
-              prefix={<CheckCircleOutlined />}
-            />
+
+        {/* 监考侧栏：考场概况四数（应参考/到考/交卷/缺考）+ 考生动态流 */}
+        <Col xs={24} lg={7}>
+          <Card title="考场概况" size="small" style={{ marginBottom: 16 }}>
+            <div className="monitor-stat-grid">
+              <div className="monitor-stat">
+                <div className="monitor-stat__value" style={{ color: '#3b82f6' }}>{stats.assigned}</div>
+                <div className="monitor-stat__label">应参考</div>
+              </div>
+              <div className="monitor-stat">
+                <div className="monitor-stat__value" style={{ color: '#22a06b' }}>{stats.attended}</div>
+                <div className="monitor-stat__label">到考</div>
+              </div>
+              <div className="monitor-stat">
+                <div className="monitor-stat__value" style={{ color: '#0891b2' }}>{stats.submitted}</div>
+                <div className="monitor-stat__label">交卷</div>
+              </div>
+              <div className="monitor-stat">
+                <div className="monitor-stat__value" style={{ color: '#ff3b30' }}>{stats.absent}</div>
+                <div className="monitor-stat__label">缺考</div>
+              </div>
+            </div>
           </Card>
-        </Col>
-        <Col span={4}>
-          <Card>
-            <Statistic
-              title="答题中"
-              value={stats.inProgress}
-              valueStyle={{ color: '#1890ff' }}
-              prefix={<ClockCircleOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card>
-            <Statistic
-              title="已提交"
-              value={stats.submitted}
-              valueStyle={{ color: '#1677ff' }}
-              prefix={<CheckCircleOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card>
-            <Statistic
-              title="异常预警"
-              value={stats.alerts}
-              valueStyle={{ color: stats.alerts > 0 ? '#ff4d4f' : '#999' }}
-              prefix={<WarningOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card>
-            <Statistic
-              title="完成率"
-              value={stats.total > 0 ? Math.round((stats.submitted / stats.total) * 100) : 0}
-              suffix="%"
-              valueStyle={{ color: '#1890ff' }}
-            />
+          <Card title="考生动态" size="small">
+            {recentEvents.length === 0 ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无动态" />
+            ) : (
+              <div className="monitor-feed">
+                {recentEvents.map((e) => (
+                  <div className="monitor-feed__item" key={e.key}>
+                    <span className="monitor-feed__time">{dayjs(e.at).format('HH:mm:ss')}</span>
+                    <Tag color={e.color} style={{ margin: 0 }}>{e.text}</Tag>
+                    <span className="monitor-feed__name" title={e.studentName}>{e.studentName}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
         </Col>
       </Row>
-
-      {/* ✅ Tab切换：总览 / 考场维度 / 异常列表 */}
-      <Tabs activeKey={activeTab} onChange={setActiveTab}>
-        <Tabs.TabPane tab="总览" key="overview">
-          <Table
-            dataSource={enrichedStudents}
-            rowKey="studentId"
-            columns={columns}
-            pagination={{ pageSize: 20 }}
-            size="middle"
-            scroll={{ x: 900 }}
-          />
-        </Tabs.TabPane>
-
-        <Tabs.TabPane tab={
-          <span>
-            <HomeOutlined /> 考场维度 ({rooms.length})
-          </span>
-        } key="rooms">
-          {rooms.length > 0 ? (
-            rooms.map(room => {
-              const roomStudents = roomGroupedData[room.id] || [];
-              const onlineCount = roomStudents.filter(s => s.online).length;
-              const alertCount = roomStudents.filter(s =>
-                s.tabSwitchCount > alertRules.maxTabSwitches ||
-                !s.online
-              ).length;
-
-              return (
-                <Card
-                  key={room.id}
-                  size="small"
-                  style={{ marginBottom: 12 }}
-                  title={
-                    <Space>
-                      <strong>{room.code} - {room.name}</strong>
-                      <Tag color="blue">容量:{room.capacity}</Tag>
-                      <Tag color={onlineCount > 0 ? 'green' : 'default'}>
-                        在线:{onlineCount}/{roomStudents.length}
-                      </Tag>
-                      {alertCount > 0 && (
-                        <Tag color="error">{alertCount}个异常</Tag>
-                      )}
-                    </Space>
-                  }
-                >
-                  {roomStudents.length > 0 ? (
-                    <Table
-                      dataSource={roomStudents}
-                      rowKey="studentId"
-                      columns={columns}
-                      // 每间考场可能有上百人：3000 人 × 多考场若全部渲染进 DOM 会卡死，
-                      // 分页只渲染当前页；hideOnSinglePage 保证小考场观感与原来一致
-                      pagination={{ pageSize: 10, hideOnSinglePage: true }}
-                      size="small"
-                      scroll={{ x: 800 }}
-                    />
-                  ) : (
-                    <Empty description="该考场暂无学生" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                  )}
-                </Card>
-              );
-            })
-          ) : (
-            <Alert
-              type="info"
-              message="暂无考场数据"
-              description="请先在考场管理中为此考试分配考场"
-            />
-          )}
-        </Tabs.TabPane>
-
-        <Tabs.TabPane tab={
-          <span>
-            <WarningOutlined /> 异常预警 ({stats.alerts})
-          </span>
-        } key="alerts">
-          {stats.alerts > 0 ? (
-            <Table
-              dataSource={enrichedStudents.filter(student =>
-                alertRules.enableAlert && (
-                  student.tabSwitchCount > alertRules.maxTabSwitches ||
-                  (student.online === false &&
-                    dayjs().diff(dayjs(student.lastHeartbeat), 'second') > alertRules.offlineThreshold)
-                )
-              )}
-              rowKey="studentId"
-              columns={[
-                ...columns,
-                {
-                  title: '异常原因',
-                  key: 'reason',
-                  width: 200,
-                  render: (_: any, record: LiveStudent) => {
-                    const reasons: string[] = [];
-                    if (record.tabSwitchCount > alertRules.maxTabSwitches) {
-                      reasons.push(`切屏超限(${record.tabSwitchCount}次)`);
-                    }
-                    if (!record.online) {
-                      const offlineSeconds = dayjs().diff(dayjs(record.lastHeartbeat), 'second');
-                      reasons.push(`离线${offlineSeconds}秒`);
-                    }
-                    return reasons.length > 0 ? (
-                      <Space direction="vertical" size={0}>
-                        {reasons.map((r, i) => (
-                          <Tag key={i} color="error">{r}</Tag>
-                        ))}
-                      </Space>
-                    ) : '-';
-                  },
-                },
-              ]}
-              // 极端情况下（如考试结束全员离线）异常列表可能上千行，分页避免一次性进 DOM
-              pagination={{ pageSize: 10, hideOnSinglePage: true }}
-              size="small"
-            />
-          ) : (
-            <Alert
-              type="success"
-              showIcon
-              message="一切正常"
-              description="当前没有触发生警规则的学生"
-            />
-          )}
-        </Tabs.TabPane>
-      </Tabs>
 
       {/* ✅ 学生详情抽屉 */}
       <Drawer
@@ -660,35 +867,73 @@ export function EnhancedExamMonitor() {
           <div>
             <Row gutter={[16, 16]}>
               <Col span={12}>
-                <Card size="small"><Statistic title="当前题目" value={selectedStudent.currentQuestion + 1} suffix="/ 20" /></Card>
+                <Card size="small"><Statistic title="当前题目" value={selectedStudent.currentQuestion >= 0 ? selectedStudent.currentQuestion + 1 : '—'} suffix={selectedStudent.currentQuestion >= 0 ? '/ 20' : ''} /></Card>
               </Col>
               <Col span={12}>
                 <Card size="small"><Statistic title="切屏次数" value={selectedStudent.tabSwitchCount} valueStyle={{ color: selectedStudent.tabSwitchCount > alertRules.maxTabSwitches ? '#ff4d4f' : '#999' }} /></Card>
               </Col>
               <Col span={12}>
-                <Card size="small"><Statistic title="在线状态" value={selectedStudent.online ? '在线' : '离线'} valueStyle={{ color: selectedStudent.online ? '#52c41a' : '#ff4d4f' }} /></Card>
+                <Card size="small"><Statistic title="在线状态" value={selectedStudent.status === 'absent' ? '缺考' : selectedStudent.online ? '在线' : '离线'} valueStyle={{ color: selectedStudent.online ? '#52c41a' : '#ff4d4f' }} /></Card>
               </Col>
               <Col span={12}>
                 <Card size="small"><Statistic title="最后心跳" value={selectedStudent.lastHeartbeat ? dayjs(selectedStudent.lastHeartbeat).fromNow() : '-'} /></Card>
               </Col>
             </Row>
 
+            {/* 监考干预：强制交卷（答题中）/ 允许续考（已交卷且未判分），状态由服务端把关 */}
+            {(selectedStudent.status === 'in_progress' || selectedStudent.status === 'submitted') && (
+              <>
+                <Divider style={{ marginBottom: 12 }} />
+                <Space>
+                  {selectedStudent.status === 'in_progress' && (
+                    <Popconfirm
+                      title="强制交卷"
+                      description="该考生将立即结束作答，无法再继续答题。确认交卷？"
+                      okText="确认交卷"
+                      cancelText="取消"
+                      onConfirm={() => handleForceSubmit(selectedStudent.studentId)}
+                    >
+                      <Button danger type="primary" size="small" loading={actionLoading === 'force-submit'}>
+                        强制交卷
+                      </Button>
+                    </Popconfirm>
+                  )}
+                  {selectedStudent.status === 'submitted' && (
+                    <Popconfirm
+                      title="允许续考"
+                      description="答卷将退回作答中，考生可重新进入继续答题（已进入判分的答卷不可续考）。确认？"
+                      okText="确认续考"
+                      cancelText="取消"
+                      onConfirm={() => handleResume(selectedStudent.studentId)}
+                    >
+                      <Button size="small" loading={actionLoading === 'resume'}>
+                        允许续考
+                      </Button>
+                    </Popconfirm>
+                  )}
+                </Space>
+              </>
+            )}
+
             <Divider />
 
             <div>
-              <Text strong>时间线：</Text>
+              <Text strong>考生时间线</Text>
               <div style={{ marginTop: 8 }}>
-                {selectedStudent.startedAt && (
-                  <div style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
-                    <Tag color="blue">开始考试</Tag>
-                    <Text type="secondary">{dayjs(selectedStudent.startedAt).format('YYYY-MM-DD HH:mm:ss')}</Text>
-                  </div>
-                )}
-                {selectedStudent.submittedAt && (
-                  <div style={{ padding: '8px 0' }}>
-                    <Tag color="green">提交试卷</Tag>
-                    <Text>{dayjs(selectedStudent.submittedAt).format('YYYY-MM-DD HH:mm:ss')}</Text>
-                  </div>
+                {timelineLoading ? (
+                  <div style={{ textAlign: 'center', padding: 12 }}><Spin size="small" /></div>
+                ) : studentTimeline.length > 0 ? (
+                  studentTimeline.map((e) => (
+                    <div key={e.key} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+                      <Tag color={e.color}>{e.text}</Tag>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {dayjs(e.at).format('YYYY-MM-DD HH:mm:ss')}
+                      </Text>
+                    </div>
+                  ))
+                ) : (
+                  // 行为日志为空（考生全程未触发任何受监控行为）时给一句说明，而不是空白
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无行为记录" />
                 )}
               </div>
             </div>

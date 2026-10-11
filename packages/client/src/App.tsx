@@ -24,7 +24,6 @@ import { ExamManager } from './pages/teacher/ExamManager';
 import { ExamForm } from './pages/teacher/ExamForm';
 import { PaperBank } from './pages/teacher/PaperBank';
 import { PaperEditor } from './pages/teacher/PaperEditor';
-import { ExamMonitor } from './pages/teacher/ExamMonitor';
 import { StatisticsPage } from './pages/teacher/StatisticsPage';
 import { StudentProfilePage } from './pages/teacher/StudentProfile';
 // ✅ 新增：批次管理和考场管理组件

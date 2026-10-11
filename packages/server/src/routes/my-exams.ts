@@ -6,7 +6,7 @@ import { authenticate, authorize } from '../middleware/auth';
 import { hashString, shuffleWithSeed } from '../utils/helpers';
 import { isIpAllowed } from '../utils/ip-utils';
 
-import { autoEndExpiredExams, studentExamVisibilityOR, computeStudentDeadline } from '../utils/exam-utils';
+import { autoEndExpiredExams, studentExamVisibilityOR, computeStudentDeadline, computeEarliestSubmitAt } from '../utils/exam-utils';
 import { loadTablePreview } from '../services/wps-table-service';
 import { wpsConfigService } from '../services/wps-config-service';
 import { generateStudentPaper } from '../services/paper-generator';
@@ -316,6 +316,8 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
     // 每人截止时间（随到随考模式下每人不同）：由服务端统一计算并下发，
     // 客户端不再自行推算 —— 两端各算一次是历史上时间口径漂移的根源。
     const deadline = computeStudentDeadline(exam, submission);
+    // 最早交卷时刻（未配置为 null）：与 deadline 同模式由服务端算好下发，学生端只负责禁用按钮
+    const submitAllowedAt = computeEarliestSubmitAt(exam, submission);
 
     // 自愈：本人时间已到但答卷仍是 in_progress（学生关掉页面没触发自动交卷）→ 就地收卷，
     // 否则这份卷子要等到批次结束才被兜底收集，期间教师阅卷列表里看不到它。
@@ -330,7 +332,7 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
       }
     }
 
-    res.json({ exam, submission, questions, questionCount, wpsTable, deadline });
+    res.json({ exam, submission, questions, questionCount, wpsTable, deadline, submitAllowedAt });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
@@ -644,7 +646,6 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
 // POST /api/my-exams/:id/heartbeat — 心跳上报 + 切屏计数
 myExamRouter.post('/:id/heartbeat', async (req: Request, res: Response) => {
   try {
-    const { tabSwitchCount } = req.body;
     const examId = req.params.id;
     const studentId = req.user!.userId;
 
@@ -690,7 +691,14 @@ myExamRouter.post('/:id/heartbeat', async (req: Request, res: Response) => {
       }
     }
 
-    res.json({ ok: true });
+    // 回传答卷状态：监考老师「强制交卷」后，学生端在下一次 HTTP 心跳（≤30s）内感知并停止作答。
+    // 走 examId_studentId 唯一索引点查，比其他分支的查询更轻。
+    const submission = await prisma.studentSubmission.findUnique({
+      where: { examId_studentId: { examId, studentId } },
+      select: { status: true },
+    });
+
+    res.json({ ok: true, submissionStatus: submission?.status ?? null });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
@@ -776,6 +784,32 @@ myExamRouter.post('/:id/submit', async (req: Request, res: Response) => {
         message: '已提交，无法重复提交',
         status: submission.status,
       });
+    }
+
+    // 最早交卷限制（防误交/秒交）：时刻由与服务端下发同一函数计算，保证"按钮说能交就能交"。
+    // 例外：本人截止时间已到（到点自动交卷兜底）时不再限制——否则教师把"最早交卷"
+    // 配得比考试时长还长时，卷子会被卡住永远交不上。
+    const examForLimits = await prisma.exam.findUnique({
+      where: { id: req.params.id },
+      select: {
+        settings: true,
+        startTime: true,
+        endTime: true,
+        durationMinutes: true,
+        batch: { select: { examMode: true, endTime: true, examDuration: true } },
+      },
+    });
+    if (examForLimits) {
+      const submitAllowedAt = computeEarliestSubmitAt(examForLimits, submission);
+      const deadline = computeStudentDeadline(examForLimits, submission);
+      const deadlinePassed = deadline !== null && Date.now() >= deadline;
+      if (submitAllowedAt !== null && Date.now() < submitAllowedAt && !deadlinePassed) {
+        const earliestMinutes = Number((examForLimits.settings as any)?.earliestSubmitMinutes || 0);
+        const remainMin = Math.max(1, Math.ceil((submitAllowedAt - Date.now()) / 60000));
+        return res.status(400).json({
+          message: `本场考试开考 ${earliestMinutes} 分钟内不可交卷，请继续作答（约 ${remainMin} 分钟后可交卷）`,
+        });
+      }
     }
 
     // 条件更新：只有仍是 in_progress 才写入。

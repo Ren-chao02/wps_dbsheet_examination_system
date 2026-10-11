@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Table,
@@ -15,6 +15,7 @@ import {
   Col,
   Switch,
   Tooltip,
+  Tree,
 } from 'antd';
 import {
   PlusOutlined,
@@ -159,6 +160,82 @@ export function QuestionBank() {
     }
   };
 
+  // ── 知识点树（左栏）─────────────────────────────────────────
+  // categories 是扁平列表但每项保留了原始 children 子树，用它直接构建两级树；
+  // 点击节点写回同一份 filters（与上方下拉共用），二级节点需要同时写入所属一级
+  const [categorySearch, setCategorySearch] = useState('');
+
+  const categoryMeta = useMemo(() => {
+    const meta = new Map<string, { level: 'primary' | 'secondary'; parentId?: string }>();
+    categories
+      .filter((c) => c.level === 1)
+      .forEach((top) => {
+        meta.set(top.id, { level: 'primary' });
+        (top.children || []).forEach((child) => {
+          meta.set(child.id, { level: 'secondary', parentId: top.id });
+        });
+      });
+    return meta;
+  }, [categories]);
+
+  const categoryTreeData = useMemo(() => {
+    const roots = categories
+      .filter((c) => c.level === 1)
+      .map((top) => ({
+        key: top.id,
+        title: top.name,
+        children: (top.children || []).map((child) => ({
+          key: child.id,
+          title: child.name,
+          isLeaf: true,
+        })),
+      }));
+    return { key: 'ALL', title: '全部题目', children: roots };
+  }, [categories]);
+
+  // 搜索过滤：保留命中节点及其祖先（antd 树过滤的标准做法）
+  const filteredTreeData = useMemo(() => {
+    const kw = categorySearch.trim().toLowerCase();
+    if (!kw) return [categoryTreeData];
+    const filterNodes = (nodes: any[]): any[] =>
+      nodes.reduce((acc: any[], node) => {
+        const children = node.children ? filterNodes(node.children) : undefined;
+        if ((node.title as string).toLowerCase().includes(kw) || (children && children.length > 0)) {
+          acc.push({ ...node, children });
+        }
+        return acc;
+      }, []);
+    const roots = filterNodes(categoryTreeData.children);
+    return roots.length > 0 ? [{ ...categoryTreeData, children: roots }] : [categoryTreeData];
+  }, [categoryTreeData, categorySearch]);
+
+  // 展开状态受控：分类是异步加载的，defaultExpandAll 只对首帧已有数据生效，
+  // 若不接管 expandedKeys，树会一直停留在"只显示根节点"的折叠态
+  const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+  useEffect(() => {
+    if (categories.length > 0) {
+      setExpandedKeys((prev) =>
+        prev.length > 0 ? prev : ['ALL', ...categories.filter((c) => c.level === 1).map((c) => c.id)],
+      );
+    }
+  }, [categories]);
+
+  const selectedCategoryKey = filters.secondaryCategory || filters.primaryCategory || 'ALL';
+
+  const handleCategorySelect = (key: string) => {
+    if (key === 'ALL') {
+      setFilters((f) => ({ ...f, primaryCategory: undefined, secondaryCategory: undefined }));
+      return;
+    }
+    const meta = categoryMeta.get(key);
+    if (!meta) return;
+    setFilters((f) =>
+      meta.level === 'secondary'
+        ? { ...f, primaryCategory: meta.parentId, secondaryCategory: key }
+        : { ...f, primaryCategory: key, secondaryCategory: undefined },
+    );
+  };
+
   // 筛选条件变化 → 回到第一页
   useEffect(() => {
     fetchQuestions(1, data.pageSize);
@@ -258,6 +335,28 @@ export function QuestionBank() {
       key: 'score',
       width: 60,
       render: (v: number) => <span style={{ fontWeight: 500 }}>{v}</span>,
+    },
+    {
+      // 引用次数：被引用的题目不能删除（与服务端删除校验同一口径），列表直接展示避免误删操作
+      title: '引用',
+      key: 'usage',
+      width: 120,
+      render: (_: any, r: Question) => {
+        const counts = (r as any)._count as { paperQuestions?: number; examQuestions?: number } | undefined;
+        const inPapers = counts?.paperQuestions ?? 0;
+        const inExams = counts?.examQuestions ?? 0;
+        if (inPapers === 0 && inExams === 0) {
+          return <span style={{ color: '#999' }}>未引用</span>;
+        }
+        return (
+          <Tooltip title="被试卷/考试引用的次数，被引用的题目无法删除">
+            <Space size={4}>
+              {inPapers > 0 && <Tag color="purple">试卷 {inPapers}</Tag>}
+              {inExams > 0 && <Tag color="geekblue">考试 {inExams}</Tag>}
+            </Space>
+          </Tooltip>
+        );
+      },
     },
     {
       title: '一级分类',
@@ -424,206 +523,249 @@ export function QuestionBank() {
         </Space>
       </div>
 
-      {/* ✨ 高级筛选区域 */}
-      <Card size="small" style={{ marginBottom: 16 }}>
-        {/* 第一行：基础筛选 */}
-        <Row gutter={[12, 12]} align="middle" style={{ marginBottom: 12 }}>
-          <Col span={6}>
+      <Row gutter={[16, 16]}>
+        {/* 左栏知识点树：与上方下拉共用同一份筛选状态，点树即筛选（借鉴 WPS 平台的题库左树结构） */}
+        <Col xs={24} md={7} lg={6} xl={5}>
+          <Card title="知识点" size="small" styles={{ body: { padding: 8 } }}>
             <Input
-              placeholder="搜索标题或描述"
+              size="small"
+              placeholder="搜索知识点"
               prefix={<SearchOutlined />}
               allowClear
-              value={filters.search}
-              onChange={(e) =>
-                setFilters((f) => ({
-                  ...f,
-                  search: e.target.value || undefined,
-                }))
-              }
+              value={categorySearch}
+              onChange={(e) => setCategorySearch(e.target.value)}
+              style={{ marginBottom: 8 }}
             />
-          </Col>
-
-          <Col span={7}>
-            <Select
-              placeholder="难度"
-              allowClear
-              value={filters.difficulty}
-              style={{ width: '100%' }}
-              onChange={(v) =>
-                setFilters((f) => ({ ...f, difficulty: v || undefined }))
-              }
-              options={difficultyOptions}
+            <Tree
+              treeData={filteredTreeData}
+              expandedKeys={expandedKeys}
+              onExpand={(keys) => setExpandedKeys(keys as string[])}
+              blockNode
+              selectedKeys={[selectedCategoryKey]}
+              onSelect={(keys) => handleCategorySelect(String(keys[0] ?? 'ALL'))}
+              style={{ fontSize: 13 }}
             />
-          </Col>
+          </Card>
+        </Col>
 
-          <Col span={5}>
-            <Select
-              placeholder="状态"
-              allowClear
-              value={filters.status}
-              style={{ width: '100%' }}
-              onChange={(v) =>
-                setFilters((f) => ({ ...f, status: v || undefined }))
-              }
-              options={statusOptions}
-            />
-          </Col>
+        <Col xs={24} md={17} lg={18} xl={19}>
+          {/* ✨ 高级筛选区域 */}
+          <Card size="small" style={{ marginBottom: 16 }}>
+            {/* 第一行：基础筛选 */}
+            <Row gutter={[12, 12]} align="middle" style={{ marginBottom: 12 }}>
+              <Col span={6}>
+                <Input
+                  placeholder="搜索标题或描述"
+                  prefix={<SearchOutlined />}
+                  allowClear
+                  value={filters.search}
+                  onChange={(e) =>
+                    setFilters((f) => ({
+                      ...f,
+                      search: e.target.value || undefined,
+                    }))
+                  }
+                />
+              </Col>
 
-          <Col span={6}>
-            <Select
-              placeholder="出题老师"
-              allowClear
-              showSearch
-              value={filters.teacherName}
-              style={{ width: '100%' }}
-              onChange={(v) =>
-                setFilters((f) => ({
-                  ...f,
-                  teacherName: v || undefined,
-                }))
-              }
-              filterOption={(input, option) =>
-                (option?.label ?? '')
-                  .toLowerCase()
-                  .includes(input.toLowerCase())
-              }
-              options={teachers.map((t) => ({
-                value: t.realName,
-                label: t.realName,
-              }))}
-            />
-          </Col>
-        </Row>
+              <Col span={7}>
+                <Select
+                  placeholder="难度"
+                  allowClear
+                  value={filters.difficulty}
+                  style={{ width: '100%' }}
+                  onChange={(v) =>
+                    setFilters((f) => ({ ...f, difficulty: v || undefined }))
+                  }
+                  options={difficultyOptions}
+                />
+              </Col>
 
-        {/* 第二行：分类和时间筛选 */}
-        <Row gutter={[12, 12]} align="middle">
-          <Col span={4}>
-            <Select
-              placeholder="一级分类"
-              allowClear
-              showSearch
-              value={filters.primaryCategory}
-              style={{ width: '100%' }}
-              onChange={(v) => {
-                setFilters((f) => ({
-                  ...f,
-                  primaryCategory: v || undefined,
-                  secondaryCategory: undefined, // 清空二级分类
-                }));
-              }}
-              filterOption={(input, option) =>
-                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-              }
-              options={categories
-                .filter((cat) => cat.level === 1)
-                .map((cat) => ({
-                value: cat.id,
-                label: cat.name,
-              }))}
-            />
-          </Col>
+              <Col span={5}>
+                <Select
+                  placeholder="状态"
+                  allowClear
+                  value={filters.status}
+                  style={{ width: '100%' }}
+                  onChange={(v) =>
+                    setFilters((f) => ({ ...f, status: v || undefined }))
+                  }
+                  options={statusOptions}
+                />
+              </Col>
 
-          <Col span={4}>
-            <Select
-              placeholder="二级分类"
-              allowClear
-              showSearch
-              disabled={!filters.primaryCategory}
-              value={filters.secondaryCategory}
-              style={{ width: '100%' }}
-              onChange={(v) =>
-                setFilters((f) => ({
-                  ...f,
-                  secondaryCategory: v || undefined,
-                }))
-              }
-              filterOption={(input, option) =>
-                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-              }
-              options={
-                categories
-                  .filter((cat) => cat.parentId === filters.primaryCategory)
-                  .map((sub) => ({
-                    value: sub.id,
-                    label: sub.name,
-                  }))
-              }
-            />
-          </Col>
+              <Col span={6}>
+                <Select
+                  placeholder="出题老师"
+                  allowClear
+                  showSearch
+                  value={filters.teacherName}
+                  style={{ width: '100%' }}
+                  onChange={(v) =>
+                    setFilters((f) => ({
+                      ...f,
+                      teacherName: v || undefined,
+                    }))
+                  }
+                  filterOption={(input, option) =>
+                    (option?.label ?? '')
+                      .toLowerCase()
+                      .includes(input.toLowerCase())
+                  }
+                  options={teachers.map((t) => ({
+                    value: t.realName,
+                    label: t.realName,
+                  }))}
+                />
+              </Col>
+            </Row>
 
-          <Col span={7}>
-            <RangePicker
-              placeholder={['创建开始', '创建结束']}
-              style={{ width: '100%' }}
-              onChange={(dates) => {
-                if (dates && dates[0] && dates[1]) {
-                  const start = dates[0];
-                  const end = dates[1];
-                  setFilters((f) => ({
-                    ...f,
-                    createdAtStart: start.format('YYYY-MM-DD'),
-                    createdAtEnd: end.format('YYYY-MM-DD'),
-                  }));
-                } else {
-                  setFilters((f) => ({
-                    ...f,
-                    createdAtStart: undefined,
-                    createdAtEnd: undefined,
-                  }));
-                }
-              }}
-            />
-          </Col>
+            {/* 第二行：分类和时间筛选 */}
+            <Row gutter={[12, 12]} align="middle">
+              <Col span={4}>
+                <Select
+                  placeholder="一级分类"
+                  allowClear
+                  showSearch
+                  value={filters.primaryCategory}
+                  style={{ width: '100%' }}
+                  onChange={(v) => {
+                    setFilters((f) => ({
+                      ...f,
+                      primaryCategory: v || undefined,
+                      secondaryCategory: undefined, // 清空二级分类
+                    }));
+                  }}
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  options={categories
+                    .filter((cat) => cat.level === 1)
+                    .map((cat) => ({
+                    value: cat.id,
+                    label: cat.name,
+                  }))}
+                />
+              </Col>
 
-          <Col span={7}>
-            <RangePicker
-              placeholder={['更新开始', '更新结束']}
-              style={{ width: '100%' }}
-              onChange={(dates) => {
-                if (dates && dates[0] && dates[1]) {
-                  const start = dates[0];
-                  const end = dates[1];
-                  setFilters((f) => ({
-                    ...f,
-                    updatedAtStart: start.format('YYYY-MM-DD'),
-                    updatedAtEnd: end.format('YYYY-MM-DD'),
-                  }));
-                } else {
-                  setFilters((f) => ({
-                    ...f,
-                    updatedAtStart: undefined,
-                    updatedAtEnd: undefined,
-                  }));
-                }
-              }}
-            />
-          </Col>
+              <Col span={4}>
+                <Select
+                  placeholder="二级分类"
+                  allowClear
+                  showSearch
+                  disabled={!filters.primaryCategory}
+                  value={filters.secondaryCategory}
+                  style={{ width: '100%' }}
+                  onChange={(v) =>
+                    setFilters((f) => ({
+                      ...f,
+                      secondaryCategory: v || undefined,
+                    }))
+                  }
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  options={
+                    categories
+                      .filter((cat) => cat.parentId === filters.primaryCategory)
+                      .map((sub) => ({
+                        value: sub.id,
+                        label: sub.name,
+                      }))
+                  }
+                />
+              </Col>
 
-          <Col span={2}>
-            <Button onClick={handleResetFilters}>重置</Button>
-          </Col>
-        </Row>
-      </Card>
+              <Col span={7}>
+                <RangePicker
+                  placeholder={['创建开始', '创建结束']}
+                  style={{ width: '100%' }}
+                  onChange={(dates) => {
+                    if (dates && dates[0] && dates[1]) {
+                      const start = dates[0];
+                      const end = dates[1];
+                      setFilters((f) => ({
+                        ...f,
+                        createdAtStart: start.format('YYYY-MM-DD'),
+                        createdAtEnd: end.format('YYYY-MM-DD'),
+                      }));
+                    } else {
+                      setFilters((f) => ({
+                        ...f,
+                        createdAtStart: undefined,
+                        createdAtEnd: undefined,
+                      }));
+                    }
+                  }}
+                />
+              </Col>
 
-      {/* 数据表格 */}
-      <Table
-        dataSource={data.data}
-        columns={columns}
-        rowKey="id"
-        loading={loading}
-        scroll={{ x: 1200 }}
-        pagination={{
-          current: data.page,
-          total: data.total,
-          pageSize: data.pageSize,
-          showSizeChanger: true,
-          showQuickJumper: true,
-          showTotal: (total) => `共 ${total} 条记录`,
-          onChange: (page, pageSize) => {
-            fetchQuestions(page, pageSize);
-          },
-        }}
-      />
+              <Col span={7}>
+                <RangePicker
+                  placeholder={['更新开始', '更新结束']}
+                  style={{ width: '100%' }}
+                  onChange={(dates) => {
+                    if (dates && dates[0] && dates[1]) {
+                      const start = dates[0];
+                      const end = dates[1];
+                      setFilters((f) => ({
+                        ...f,
+                        updatedAtStart: start.format('YYYY-MM-DD'),
+                        updatedAtEnd: end.format('YYYY-MM-DD'),
+                      }));
+                    } else {
+                      setFilters((f) => ({
+                        ...f,
+                        updatedAtStart: undefined,
+                        updatedAtEnd: undefined,
+                      }));
+                    }
+                  }}
+                />
+              </Col>
+
+              <Col span={2}>
+                <Button onClick={handleResetFilters}>重置</Button>
+              </Col>
+            </Row>
+          </Card>
+
+          {/* 数据表格 */}
+          <Table
+            dataSource={data.data}
+            columns={columns}
+            rowKey="id"
+            loading={loading}
+            scroll={{ x: 1200 }}
+            expandable={{
+              // 行内展开题干全文：表格只显示标题时，出题老师核对内容要点开详情抽屉，多一步；
+              // 展开行让"浏览题干"像看列表一样直接（参考产品的题库列表就是题干流）
+              expandedRowRender: (record: Question) => (
+                <div style={{ padding: '4px 12px', fontSize: 13, lineHeight: 1.8 }}>
+                  <div style={{ whiteSpace: 'pre-wrap', color: '#3a3a3c' }}>
+                    {record.description || '（无题干描述）'}
+                  </div>
+                  {record.hints ? (
+                    <div style={{ marginTop: 6, color: '#86868b', fontSize: 12 }}>提示：{record.hints}</div>
+                  ) : null}
+                </div>
+              ),
+              rowExpandable: (record: Question) => Boolean(record.description),
+            }}
+            pagination={{
+              current: data.page,
+              total: data.total,
+              pageSize: data.pageSize,
+              showSizeChanger: true,
+              showQuickJumper: true,
+              showTotal: (total) => `共 ${total} 条记录`,
+              onChange: (page, pageSize) => {
+                fetchQuestions(page, pageSize);
+              },
+            }}
+          />
+        </Col>
+      </Row>
 
       {/* ✨ 详情弹窗 */}
       <QuestionDetailDrawer

@@ -8,6 +8,7 @@ import api from '../../services/api';
 import type { Exam, PaginatedResponse } from '../../types';
 import { ExamConfigWizard } from './ExamConfigWizard';
 import { ExamDetailDrawer } from './ExamDetailDrawer';
+import { EmptyState } from '../../components/common/EmptyState';
 import { useAuthStore } from '../../stores/auth';
 import { modeLabels, statusLabels, formatTimeSlot, formatRoomSettings, countAssignedStudents, examEditGuard } from '../../utils/examDisplay';
 
@@ -239,11 +240,36 @@ export function ExamManager() {
 
   return (
     <div className="page-container">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h2>考试管理</h2>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ margin: 0 }}>考试管理</h2>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setWizardOpen(true)}>创建考试</Button>
       </div>
-      <Table dataSource={data.data} columns={columns} rowKey="id" loading={loading} scroll={{ x: 1600 }} pagination={{ current: data.page, total: data.total, pageSize: data.pageSize, onChange: fetchExams }} />
+      <Card styles={{ body: { padding: 0 } }}>
+        <Table
+          dataSource={data.data}
+          columns={columns}
+          rowKey="id"
+          loading={loading}
+          scroll={{ x: 1600 }}
+          locale={{
+            emptyText: (
+              <EmptyState
+                title="还没有考试"
+                description="创建考试并发布后，学生即可在「我的考试」中看到"
+                actionText="创建考试"
+                onAction={() => setWizardOpen(true)}
+              />
+            ),
+          }}
+          pagination={{
+            current: data.page,
+            total: data.total,
+            pageSize: data.pageSize,
+            onChange: fetchExams,
+            showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`,
+          }}
+        />
+      </Card>
       <ExamConfigWizard
         open={wizardOpen}
         onClose={() => setWizardOpen(false)}

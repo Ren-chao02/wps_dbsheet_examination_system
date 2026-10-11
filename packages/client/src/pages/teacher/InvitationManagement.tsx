@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Table, Button, Tag, Space, Modal, Form, DatePicker, InputNumber,
-  message, Tooltip, Card, Typography, Select, TreeSelect
+  message, Tooltip, Card, Typography, TreeSelect
 } from 'antd';
 import {
   PlusOutlined, CopyOutlined, StopOutlined, LinkOutlined

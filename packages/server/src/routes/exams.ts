@@ -4,6 +4,7 @@ import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { autoEndExpiredExams, finalizeExamSubmissions } from '../utils/exam-utils';
 import { checkExamAccess, denyAccess } from '../middleware/exam-ownership';
+import { emitStudentSubmit, emitStudentUpdate } from '../services/socket';
 
 export const examRouter = Router();
 examRouter.use(authenticate);
@@ -35,13 +36,21 @@ examRouter.get('/', async (req: Request, res: Response) => {
   try {
     await autoEndExpiredExams();
 
-    const { page = '1', pageSize = '20', status, mode } = req.query;
+    const { page = '1', pageSize = '20', status, mode, search } = req.query;
     const skip = (Number(page) - 1) * Number(pageSize);
     const take = Number(pageSize);
 
     const where: any = {};
     if (status) where.status = String(status);
     if (mode) where.mode = String(mode);
+    // 监考中心等处按考试名称/创建人搜索（此前前端传了 search 但后端未接，搜索是无效的）
+    if (search) {
+      const kw = String(search);
+      where.OR = [
+        { title: { contains: kw, mode: 'insensitive' } },
+        { creator: { realName: { contains: kw, mode: 'insensitive' } } },
+      ];
+    }
 
     const [exams, total] = await Promise.all([
       prisma.exam.findMany({
@@ -78,7 +87,35 @@ examRouter.get('/', async (req: Request, res: Response) => {
       prisma.exam.count({ where }),
     ]);
 
-    res.json({ data: exams, total, page: Number(page), pageSize: Number(pageSize) });
+    // 监考列表的四数（应参考/到考/交卷/缺考）：
+    //   应参考 = 各考场分配的学生数之和；到考 = 有提交记录（学生开始作答即建记录，
+    //   自动收卷只更新已有记录、不为缺考建记录）；交卷 = 已提交及之后的状态（grading/graded 同理）。
+    // 用一次 groupBy 汇总本页所有考试，避免逐考试 N+1 查询。
+    const examIds = exams.map((e) => e.id);
+    const statusGroups = examIds.length
+      ? await prisma.studentSubmission.groupBy({
+          by: ['examId', 'status'],
+          where: { examId: { in: examIds } },
+          _count: { _all: true },
+        })
+      : [];
+    const statsByExam = new Map<string, { attended: number; submitted: number }>();
+    for (const g of statusGroups) {
+      const s = statsByExam.get(g.examId) ?? { attended: 0, submitted: 0 };
+      s.attended += g._count._all;
+      if (g.status !== 'in_progress') s.submitted += g._count._all;
+      statsByExam.set(g.examId, s);
+    }
+    const data = exams.map((e) => {
+      const assigned = e.assignments.reduce((sum, a) => sum + a._count.students, 0);
+      const s = statsByExam.get(e.id) ?? { attended: 0, submitted: 0 };
+      return {
+        ...e,
+        submissionStats: { assigned, attended: s.attended, submitted: s.submitted, absent: Math.max(assigned - s.attended, 0) },
+      };
+    });
+
+    res.json({ data, total, page: Number(page), pageSize: Number(pageSize) });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
@@ -810,6 +847,83 @@ examRouter.get('/:id/submissions', async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/exams/:id/submissions/:studentId/force-submit — 监考老师强制交卷
+// 状态机与学生自交卷完全一致：只允许 in_progress → submitted（条件更新防并发覆盖），
+// 不触发自动判分（判分仍由教师经「自动阅卷」发起，与既有口径一致）。
+examRouter.post('/:id/submissions/:studentId/force-submit', async (req: Request, res: Response) => {
+  try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
+    const submission = await prisma.studentSubmission.findUnique({
+      where: { examId_studentId: { examId: req.params.id, studentId: req.params.studentId } },
+      include: { student: { select: { realName: true, username: true } } },
+    });
+    if (!submission) {
+      return res.status(404).json({ message: '该考生尚未开始作答，无法强制交卷' });
+    }
+
+    const result = await prisma.studentSubmission.updateMany({
+      where: { id: submission.id, status: 'in_progress' },
+      data: { status: 'submitted', submittedAt: new Date(), isAutoSubmitted: false },
+    });
+    if (result.count === 0) {
+      return res.status(400).json({ message: `当前状态（${submission.status}）不可强制交卷` });
+    }
+
+    // 实时推送给监考页；学生端由心跳回传状态自行感知（≤30s）
+    emitStudentSubmit(req.params.id, req.params.studentId, submission.student.realName || submission.student.username);
+
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// POST /api/exams/:id/submissions/:studentId/resume — 允许续考（把误交/中断的答卷退回作答中）
+// 仅允许「已交卷且尚未进入判分」的答卷回退：一旦 grading/graded，续考会使判分结果与作答
+// 状态不一致（判分读的是当时的表格 Schema），必须先在阅卷侧处理，故明确拒绝。
+examRouter.post('/:id/submissions/:studentId/resume', async (req: Request, res: Response) => {
+  try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
+    const exam = await prisma.exam.findUnique({
+      where: { id: req.params.id },
+      select: { status: true },
+    });
+    if (exam && (exam.status === 'ended' || exam.status === 'cancelled')) {
+      return res.status(400).json({ message: '考试已结束/已取消，续考无意义；如需补考请新建考试' });
+    }
+
+    const submission = await prisma.studentSubmission.findUnique({
+      where: { examId_studentId: { examId: req.params.id, studentId: req.params.studentId } },
+    });
+    if (!submission) {
+      return res.status(404).json({ message: '该考生没有答卷记录' });
+    }
+
+    const result = await prisma.studentSubmission.updateMany({
+      where: { id: submission.id, status: 'submitted' },
+      data: { status: 'in_progress', submittedAt: null, isAutoSubmitted: false },
+    });
+    if (result.count === 0) {
+      return res.status(400).json({
+        message: submission.status === 'in_progress'
+          ? '该考生正在作答中，无需续考'
+          : `当前状态（${submission.status}）不可续考：答卷已进入判分流程，请先在阅卷侧处理`,
+      });
+    }
+
+    // 学生若仍在线（socket 已建立），把状态推回"答题中"；离线则由其重新进入考场时读到
+    emitStudentUpdate(req.params.id, req.params.studentId, { status: 'in_progress', submittedAt: null });
+
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
 // GET /api/exams/:id/students — 获取考试已分配学生列表
 examRouter.get('/:id/students', authenticate, authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
@@ -870,6 +984,8 @@ examRouter.get('/:id/room-assignments', async (req: Request, res: Response) => {
     res.json(
       assignments.map(a => ({
         studentId: a.studentId,
+        // 监考页用姓名渲染「应参考名单」（缺考学生没有实时记录，姓名只能从这里来）
+        studentName: a.student.realName || a.student.username,
         roomId: a.assignment.roomId,
         roomCode: a.assignment.room.code,
         roomName: a.assignment.room.name,

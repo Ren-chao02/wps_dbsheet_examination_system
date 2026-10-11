@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
-import { enqueueGrading, enqueueExamGrading, enqueueExamGradingBatch } from '../jobs/grading-queue';
+import { enqueueExamGradingBatch } from '../jobs/grading-queue';
 import { gradeSubmission } from '../services/grading-service';
 import { checkExamAccess, checkSubmissionAccess, denyAccess } from '../middleware/exam-ownership';
 

@@ -12,7 +12,7 @@ import { enterFullscreen } from '../../components/exam/FullscreenGuard';
 import { computeLatestEntryTime } from '../../utils/exam-time';
 import type { Exam } from '../../types';
 
-interface ExamWithSubmission extends Exam {
+export interface ExamWithSubmission extends Exam {
   roomName?: string | null;
   mySubmission: { id: string; status: string; totalScore: number | null; startedAt: string | null; submittedAt: string | null } | null;
 }
@@ -29,7 +29,8 @@ const statusMap: Record<string, { color: string; text: string }> = {
 // 口径与 ExamEnvironmentCheck / 服务端校验保持一致：
 // - flexible（随到随考）：批次窗口 endTime 已过即关闭
 // - unified（集中统一）：考试自身 endTime（或 startTime + 时长）已过即结束
-function isExamWindowClosed(exam: ExamWithSubmission): boolean {
+// export 供学生首页（Home）待办聚合复用，避免两处口径漂移。
+export function isExamWindowClosed(exam: ExamWithSubmission): boolean {
   const now = Date.now();
   const mode = exam.batch?.examMode || 'unified';
 

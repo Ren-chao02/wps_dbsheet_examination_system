@@ -90,7 +90,8 @@ export function PracticeDoing() {
     setFavPendingId(questionId);
     setFavoriteIds(prev => {
       const next = new Set(prev);
-      wasFavorited ? next.delete(questionId) : next.add(questionId);
+      if (wasFavorited) next.delete(questionId);
+      else next.add(questionId);
       return next;
     });
     try {
@@ -99,7 +100,8 @@ export function PracticeDoing() {
     } catch {
       setFavoriteIds(prev => {
         const next = new Set(prev);
-        wasFavorited ? next.add(questionId) : next.delete(questionId);
+        if (wasFavorited) next.add(questionId);
+        else next.delete(questionId);
         return next;
       });
       message.error('收藏操作失败，请重试');

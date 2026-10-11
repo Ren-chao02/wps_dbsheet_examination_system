@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Table, Button, Drawer, InputNumber, Tag, message, Space, Card, Descriptions, Divider, Alert, Spin, Tooltip, Collapse, Modal } from 'antd';
-import { CheckOutlined, CloseOutlined, ThunderboltOutlined, EyeOutlined, ExclamationCircleOutlined, CodeOutlined } from '@ant-design/icons';
+import { Table, Button, Drawer, InputNumber, Tag, message, Space, Card, Descriptions, Divider, Alert, Tooltip, Collapse, Modal } from 'antd';
+import { CheckOutlined, CloseOutlined, ThunderboltOutlined, ExclamationCircleOutlined, CodeOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
-import type { StudentSubmission, SubmissionDetail, VerificationResult } from '../../types';
+import type { StudentSubmission, SubmissionDetail } from '../../types';
 
 const statusMap: Record<string, { color: string; text: string }> = {
   pending: { color: 'default', text: '未开始' },

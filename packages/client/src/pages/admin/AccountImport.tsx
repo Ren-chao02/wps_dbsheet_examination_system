@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Steps, Button, Upload, message, Result, Typography, Space, Card } from 'antd';
 import {
-  DownloadOutlined, UploadOutlined, CheckCircleOutlined,
+  DownloadOutlined, UploadOutlined,
   InboxOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';

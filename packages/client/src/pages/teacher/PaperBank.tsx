@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Table, Button, Tag, Space, message, Card, Input, Select, Popconfirm, Tooltip } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, FileTextOutlined, EyeOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, EyeOutlined, SearchOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
+import { EmptyState } from '../../components/common/EmptyState';
 import type { Paper, PaginatedResponse } from '../../types';
 import { useAuthStore } from '../../stores/auth';
 
@@ -88,24 +89,59 @@ export function PaperBank() {
 
   return (
     <div className="page-container">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h2>试卷库</h2>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ margin: 0 }}>试卷库</h2>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/teacher/papers/new')}>创建试卷</Button>
       </div>
 
-      <Card style={{ marginBottom: 16 }}>
-        <Space>
-          <Input placeholder="试卷名称" value={searchName} onChange={e => setSearchName(e.target.value)} onPressEnter={() => fetchPapers(1)} style={{ width: 200 }} />
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Space wrap>
+          <Input
+            placeholder="试卷名称"
+            prefix={<SearchOutlined />}
+            value={searchName}
+            onChange={e => setSearchName(e.target.value)}
+            onPressEnter={() => fetchPapers(1)}
+            allowClear
+            style={{ width: 220 }}
+          />
           <Select placeholder="难度" allowClear value={searchDifficulty} onChange={v => { setSearchDifficulty(v); fetchPapers(1); }} style={{ width: 120 }}
             options={[{ value: 'easy', label: '简单' }, { value: 'medium', label: '中等' }, { value: 'hard', label: '困难' }]}
           />
           <Button type="primary" onClick={() => fetchPapers(1)}>查询</Button>
+          <Button
+            onClick={() => { setSearchName(''); setSearchDifficulty(undefined); fetchPapers(1); }}
+          >
+            重置
+          </Button>
         </Space>
       </Card>
 
-      <Table dataSource={data.data} columns={columns} rowKey="id" loading={loading}
-        pagination={{ current: data.page, total: data.total, pageSize: data.pageSize, onChange: fetchPapers }}
-      />
+      <Card styles={{ body: { padding: 0 } }}>
+        <Table
+          dataSource={data.data}
+          columns={columns}
+          rowKey="id"
+          loading={loading}
+          locale={{
+            emptyText: (
+              <EmptyState
+                title="还没有试卷"
+                description="创建试卷并配置题位后，可用于考试绑定与每生抽题"
+                actionText="创建试卷"
+                onAction={() => navigate('/teacher/papers/new')}
+              />
+            ),
+          }}
+          pagination={{
+            current: data.page,
+            total: data.total,
+            pageSize: data.pageSize,
+            onChange: fetchPapers,
+            showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`,
+          }}
+        />
+      </Card>
     </div>
   );
 }

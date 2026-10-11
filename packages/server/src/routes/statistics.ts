@@ -136,6 +136,139 @@ statisticsRouter.get('/overview', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/statistics/teaching-summary — 学情总览（教师名下考试跨场汇总 + 趋势）
+// 口径（与监考/成绩单一致）：应参考 = 考场分配学生数之和；到考 = 有提交记录；
+// 缺考 = 应参考 - 到考；通过率 = 已判分且达及格线 / 已判分（未设及格线的考试不计入）。
+statisticsRouter.get('/teaching-summary', async (req: Request, res: Response) => {
+  try {
+    const isTeacher = req.user!.role === 'teacher';
+    const examWhere = isTeacher ? { createdBy: req.user!.userId } : {};
+
+    // 趋势取最近若干场已结束的考试（倒序取再翻转，保证拿到"最近的 N 场"）
+    const recent = await prisma.exam.findMany({
+      where: { ...examWhere, status: 'ended' },
+      select: { id: true, title: true, endTime: true, totalScore: true, passScore: true },
+      orderBy: { endTime: 'desc' },
+      take: 12,
+    });
+    const exams = recent.reverse();
+    const examIds = exams.map(e => e.id);
+
+    const [statusGroups, assignedRows, gradedRows] = await Promise.all([
+      examIds.length
+        ? prisma.studentSubmission.groupBy({
+            by: ['examId', 'status'],
+            where: { examId: { in: examIds } },
+            _count: { _all: true },
+          })
+        : Promise.resolve([] as any[]),
+      examIds.length
+        ? prisma.examRoomAssignment.findMany({
+            where: { examId: { in: examIds } },
+            select: { examId: true, _count: { select: { students: true } } },
+          })
+        : Promise.resolve([] as any[]),
+      examIds.length
+        ? prisma.studentSubmission.findMany({
+            where: { examId: { in: examIds }, status: 'graded' },
+            select: { examId: true, totalScore: true },
+          })
+        : Promise.resolve([] as any[]),
+    ]);
+
+    const assignedByExam = new Map<string, number>();
+    for (const row of assignedRows) {
+      assignedByExam.set(row.examId, (assignedByExam.get(row.examId) ?? 0) + row._count.students);
+    }
+    const statusByExam = new Map<string, Map<string, number>>();
+    for (const g of statusGroups) {
+      const m = statusByExam.get(g.examId) ?? new Map<string, number>();
+      m.set(g.status, g._count._all);
+      statusByExam.set(g.examId, m);
+    }
+    const gradedScoreByExam = new Map<string, number[]>();
+    for (const row of gradedRows) {
+      const arr = gradedScoreByExam.get(row.examId) ?? [];
+      arr.push(row.totalScore ?? 0);
+      gradedScoreByExam.set(row.examId, arr);
+    }
+
+    let totalAssigned = 0;
+    let totalAttended = 0;
+    let totalGraded = 0;
+    let totalPassed = 0;
+    let totalGradedForPass = 0; // 通过率分母：只统计设置了及格线且有判分成绩的考试
+    let totalSubmitted = 0;
+    // 参加率单独累计：只在"有排考场"的考试上计算（数据里可能有人未排考场却参加，
+    // 用全局 到考/应参考 会算出 >100% 的比率）；单场按 min(到考, 应参考) 封顶
+    let rateAssigned = 0;
+    let rateAttended = 0;
+
+    const examTrend = exams.map(e => {
+      const assigned = assignedByExam.get(e.id) ?? 0;
+      const byStatus = statusByExam.get(e.id) ?? new Map<string, number>();
+      const attended = Array.from(byStatus.values()).reduce((s, n) => s + n, 0);
+      const submitted = Array.from(byStatus.entries())
+        .filter(([st]) => st !== 'in_progress')
+        .reduce((s, [, n]) => s + n, 0);
+      const scores = gradedScoreByExam.get(e.id) ?? [];
+      const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+      const avgScoreRate = avgScore !== null && e.totalScore ? Math.round((avgScore / e.totalScore) * 100) : null;
+      const passed = e.passScore != null ? scores.filter(s => s >= e.passScore!).length : null;
+      const passRate = passed !== null && scores.length > 0 ? Math.round((passed / scores.length) * 100) : null;
+
+      totalAssigned += assigned;
+      totalAttended += attended;
+      totalGraded += scores.length;
+      totalSubmitted += submitted;
+      if (assigned > 0) {
+        rateAssigned += assigned;
+        rateAttended += Math.min(attended, assigned);
+      }
+      if (passed !== null) {
+        totalPassed += passed;
+        totalGradedForPass += scores.length;
+      }
+
+      return {
+        examId: e.id,
+        title: e.title,
+        endTime: e.endTime,
+        assigned,
+        attended,
+        absent: Math.max(assigned - attended, 0),
+        submitted,
+        gradedCount: scores.length,
+        avgScore,
+        avgScoreRate,
+        passRate,
+      };
+    });
+
+    const examsWithAssigned = examTrend.filter(e => e.assigned > 0).length;
+
+    res.json({
+      overview: {
+        examCount: exams.length,
+        assigned: totalAssigned,
+        attended: totalAttended,
+        absent: Math.max(totalAssigned - totalAttended, 0),
+        submitted: totalSubmitted,
+        graded: totalGraded,
+        // 比率类指标在无有效样本时为 null（前端显示 —，而不是误导性的 0%）
+        attendRate: examsWithAssigned > 0 && rateAssigned > 0
+          ? Math.round((rateAttended / rateAssigned) * 100)
+          : null,
+        submitRate: totalAttended > 0 ? Math.round((totalSubmitted / totalAttended) * 100) : null,
+        passRate: totalGradedForPass > 0 ? Math.round((totalPassed / totalGradedForPass) * 100) : null,
+      },
+      exams: examTrend,
+    });
+  } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
 // GET /api/statistics/exam/:examId — 单场考试分析
 statisticsRouter.get('/exam/:examId', async (req: Request, res: Response) => {
   try {
@@ -152,9 +285,9 @@ statisticsRouter.get('/exam/:examId', async (req: Request, res: Response) => {
           },
         },
         submissions: {
-          where: { status: 'graded' },
+          // 不再只取 graded：成绩单需要展示"已交卷未判分/缺考"的完整名单
           include: {
-            student: { select: { id: true, realName: true } },
+            student: { select: { id: true, realName: true, username: true } },
           },
         },
       },
@@ -164,7 +297,7 @@ statisticsRouter.get('/exam/:examId', async (req: Request, res: Response) => {
       return res.status(404).json({ message: '考试不存在' });
     }
 
-    const graded = exam.submissions;
+    const graded = exam.submissions.filter(s => s.status === 'graded');
     const scores = graded.map(s => s.totalScore ?? 0).sort((a, b) => a - b);
 
     // Score distribution
@@ -221,25 +354,68 @@ statisticsRouter.get('/exam/:examId', async (req: Request, res: Response) => {
       })
     );
 
+    // ── 成绩单完整名单：应参考（考场分配）× 提交记录 并集 ──────────────
+    // 只列已判分的提交会漏掉"缺考/未判分"的学生（与监考名册同一问题）；
+    // 风险标记取该场考试 HIGH/CRITICAL 行为日志数（不替教师下"作弊"结论，只给证据量）
+    const [assignedStudents, riskGroups] = await Promise.all([
+      prisma.examRoomStudent.findMany({
+        where: { assignment: { examId: exam.id } },
+        include: {
+          student: { select: { id: true, realName: true, username: true } },
+          assignment: { select: { room: { select: { name: true } } } },
+        },
+      }),
+      prisma.studentBehaviorLog.groupBy({
+        by: ['studentId'],
+        where: { examId: exam.id, riskLevel: { in: ['HIGH', 'CRITICAL'] } },
+        _count: { _all: true },
+      }),
+    ]);
+    const riskByStudent = new Map(riskGroups.map(g => [g.studentId, g._count._all]));
+    const assignmentByStudent = new Map(assignedStudents.map(a => [a.studentId, a]));
+
+    // 并集：先放所有提交记录，再补上"分配了考场但无提交"的缺考学生（按姓名去重）
+    const rosterIds = new Set<string>(exam.submissions.map(s => s.student.id));
+    assignedStudents.forEach(a => rosterIds.add(a.studentId));
+
+    const roster = Array.from(rosterIds).map(studentId => {
+      const sub = exam.submissions.find(s => s.student.id === studentId);
+      const assigned = assignmentByStudent.get(studentId);
+      const student = sub?.student ?? assigned?.student;
+      const score = sub?.totalScore ?? null;
+      return {
+        id: sub?.id ?? `absent-${studentId}`,
+        studentId,
+        studentName: student?.realName || student?.username || studentId,
+        status: sub?.status ?? 'absent',
+        score,
+        // 只有已判分才有及格结论；未判分/缺考一律 null（前端显示 —）
+        passed: sub?.status === 'graded' && passScore != null ? (score ?? 0) >= passScore : null,
+        submittedAt: sub?.submittedAt ?? null,
+        roomName: assigned?.assignment.room.name ?? null,
+        riskCount: riskByStudent.get(studentId) ?? 0,
+      };
+    });
+    roster.sort((a, b) => {
+      if (a.status === 'absent' && b.status !== 'absent') return 1;
+      if (b.status === 'absent' && a.status !== 'absent') return -1;
+      return (b.score ?? -1) - (a.score ?? -1);
+    });
+
     res.json({
       examId: exam.id,
       examTitle: exam.title,
       totalScore: exam.totalScore,
       passScore: exam.passScore,
       submissionCount: graded.length,
+      absentCount: roster.filter(r => r.status === 'absent').length,
       avgScore,
       maxScore,
       minScore,
       passRate,
       distribution,
       questionStats,
-      submissions: graded.map(s => ({
-        id: s.id,
-        studentId: s.student.id,
-        studentName: s.student.realName || s.student.id,
-        score: s.totalScore,
-        submittedAt: s.submittedAt,
-      })),
+      submissions: roster,
     });
   } catch {
     res.status(500).json({ message: '服务器错误' });
