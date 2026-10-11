@@ -234,7 +234,11 @@ export class KingsoftAdapter {
           id: f.id,
           name: f.name,
           type: f.type,
-          required: f.required ?? false,
+          // 必须连 d.required 一起看：实测 v7 把字段配置都放在 data 里
+          // （formula / number_format / default_value 都在那），顶层只有 name/type/id/data。
+          // 原来的 `f.required ?? false` 不查 data，会把「已设为必填」的字段报成未必填 ——
+          // 见 check_field_required。这一改只会多拿到正确值，拿不到时行为与原来一致。
+          required: f.required ?? d.required ?? false,
 
           // 选择类 (SingleSelect / MultipleSelect)
           items: f.items || d.items || undefined,
