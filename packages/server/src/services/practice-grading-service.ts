@@ -8,7 +8,8 @@
  * 4. 逐题 evaluateRules（与考试同一判分口径）
  * 5. 写回 PracticeRecord：score/maxScore/passed/details/status=graded/submittedAt
  *    判分失败保持 status=in_progress，不写回分数，便于学生重新提交
- * 6. 更新错题本 WrongQuestion
+ *    （失败回滚由 routes/practice.ts 的提交占位机制负责）
+ * 6. 同一事务内更新错题本 WrongQuestion（按 recordId 幂等，防止重复累加 wrongCount）
  * 7. 返回 { score, maxScore, passed, details(含 analysis) }
  *
  * 不复用 gradeSubmission：它绑死 ExamQuestion/SubmissionDetail/ExamTableAssignment，
@@ -240,13 +241,23 @@ export async function gradePracticeRecord(
       continue;
     }
 
-    const { results } = evaluateRules(schema, rules, recordData);
+    // evaluateRules 返回的 score/maxScore 是规则的百分制原始分（25/30/70/100 权重），
+    // 而本题实际分值 = snapshot.score（如 5/10 分）。必须按比例换算：
+    //   单题得分 = round(规则原始分 / 规则满分 × 题目分值)
+    // 与 grading-service 的 autoScore = Math.round((rawAutoScore / qMaxScore) * qMaxPoints)
+    // 口径一致；否则会出现「每题 10 分却记 100 分」的虚高成绩（约 10 倍）。
+    const { maxScore: qMaxScore, results } = evaluateRules(schema, rules, recordData);
     const needsReviewCount = results.filter(r => r.needsReview).length;
     // 仅 passed && !needsReview 的规则计入自动得分（与 gradeSubmission 口径一致）
-    const qScore = results.reduce(
+    const rawAutoScore = results.reduce(
       (sum, r) => sum + (r.passed && !r.needsReview ? r.score : 0), 0,
     );
     const isCorrect = results.every(r => r.passed) && needsReviewCount === 0;
+    // 规则百分制 → 题目实际分值换算（四舍五入）；
+    // needsReview 的规则已不计入 rawAutoScore，换算后单题得分 ≤ 题目分值，总分 ≤ 满分
+    const qScore = qMaxScore > 0
+      ? Math.round((rawAutoScore / qMaxScore) * snapshot.score)
+      : 0;
 
     details.push({
       questionId: question.id,
@@ -267,39 +278,51 @@ export async function gradePracticeRecord(
   // 及格线：满分的 60%（练习无 passScore 字段，统一按 60% 判定）
   const passed = maxScore > 0 ? totalScore >= Math.ceil(maxScore * 0.6) : false;
 
-  // 8. 写回 PracticeRecord
-  await prisma.practiceRecord.update({
-    where: { id: recordId },
-    data: {
-      score: totalScore,
-      maxScore,
-      passed,
-      details: details as any,
-      status: 'graded',
-      submittedAt: new Date(),
-    },
-  });
-
-  // 9. 更新错题本（错题 wrongCount+1，源标记为 practice）
-  const wrong = details.filter(d => !d.isCorrect);
-  for (const d of wrong) {
-    await prisma.wrongQuestion.upsert({
-      where: { studentId_questionId: { studentId: record.studentId, questionId: d.questionId } },
-      update: {
-        wrongCount: { increment: 1 },
-        lastWrongAt: new Date(),
-        sourceType: 'practice',
-        sourceId: record.id,
-      },
-      create: {
-        studentId: record.studentId,
-        questionId: d.questionId,
-        sourceType: 'practice',
-        sourceId: record.id,
-        lastWrongAt: new Date(),
+  // 8. 写回 PracticeRecord + 更新错题本（同一事务，保证原子性）
+  // 错题本按 recordId 去重幂等：同一份练习记录只计一次 wrongCount，
+  // 即使判分被外部重复调用（双击/重试）也不会重复累加。
+  await prisma.$transaction(async (tx) => {
+    await tx.practiceRecord.update({
+      where: { id: recordId },
+      data: {
+        score: totalScore,
+        maxScore,
+        passed,
+        details: details as any,
+        status: 'graded',
+        submittedAt: new Date(),
       },
     });
-  }
+
+    const wrong = details.filter(d => !d.isCorrect);
+    for (const d of wrong) {
+      const existing = await tx.wrongQuestion.findUnique({
+        where: {
+          studentId_questionId: { studentId: record.studentId, questionId: d.questionId },
+        },
+        select: { sourceId: true },
+      });
+      // 该题已因这份记录计过一次错（sourceId 相同），跳过——幂等防重复累加
+      if (existing?.sourceId === record.id) continue;
+
+      await tx.wrongQuestion.upsert({
+        where: { studentId_questionId: { studentId: record.studentId, questionId: d.questionId } },
+        update: {
+          wrongCount: { increment: 1 },
+          lastWrongAt: new Date(),
+          sourceType: 'practice',
+          sourceId: record.id,
+        },
+        create: {
+          studentId: record.studentId,
+          questionId: d.questionId,
+          sourceType: 'practice',
+          sourceId: record.id,
+          lastWrongAt: new Date(),
+        },
+      });
+    }
+  }, { timeout: 30_000 });
 
   return {
     recordId,

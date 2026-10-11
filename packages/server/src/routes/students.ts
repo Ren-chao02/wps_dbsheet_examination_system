@@ -2,6 +2,7 @@
  * 学生管理路由 — CRUD + 批量导入/导出
  */
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import multer from 'multer';
@@ -12,6 +13,8 @@ import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { enqueueImport } from '../jobs/import-queue';
 import { wpsConfigService } from '../services/wps-config-service';
+
+import { checkStudentAccess, denyAccess } from '../middleware/exam-ownership';
 
 export const studentRouter = Router();
 
@@ -69,10 +72,37 @@ const updateStudentSchema = z.object({
 // 工具函数
 // ============================================================
 
-/** 默认密码规则：学号后6位，不足6位前面补0 */
+/**
+ * 新建/导入账号时的初始密码规则：学号后6位，不足6位前面补0。
+ *
+ * ⚠️ 已知风险：学号在学生之间基本公开，因此初始密码是可推算的
+ * （同学之间可以互相猜到初始密码）。这里保留该规则是规模所迫 ——
+ * 批量导入几千人时无法逐个分发随机口令；降低风险的正解是
+ * 「首次登录强制改密」，属尚未实现的后续项（已记录在待办里）。
+ * 注意：**重置**密码已改用随机口令（见 generateResetPassword）。
+ */
 function generateDefaultPassword(studentId: string): string {
   const raw = studentId.slice(-6);
   return raw.padStart(6, '0');
+}
+
+/**
+ * 重置密码用的一次性随机口令。
+ *
+ * ⚠️ 历史实现是「学号后 6 位」：学号在学生之间基本是公开信息，
+ * 这等于任何人都能推算出他人初始密码并冒用其账号登录（含考试成绩、身份）。
+ * 现改为随机口令，重置后由教师一次性转告学生，系统不再留可推测的默认密码。
+ *
+ * 字符集去掉了易混淆的 0/O/1/I/l，方便口头转述与手抄。
+ */
+function generateResetPassword(length = 8): string {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(length);
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    out += alphabet[bytes[i] % alphabet.length];
+  }
+  return out;
 }
 
 /** 性别中文 → 枚举 */
@@ -204,6 +234,9 @@ function extractPracticeFileId(shareUrl: string): string | null {
 // GET /api/students/:id/practice-file — 查询单个学生的练习表格配置
 studentRouter.get('/:id/practice-file', async (req: Request, res: Response) => {
   try {
+    const access = await checkStudentAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const { id } = req.params;
     const student = await prisma.user.findUnique({
       where: { id },
@@ -212,16 +245,21 @@ studentRouter.get('/:id/practice-file', async (req: Request, res: Response) => {
         username: true,
         realName: true,
         practiceTableAssignment: {
-          select: { fileId: true, shareUrl: true, accessToken: true, updatedAt: true },
+          // accessToken 不下发：它是可直接操作学生 WPS 文件的凭据，
+          // 页面只需要知道"有没有配"与"配的是哪个文件"，用 hasToken 布尔值即可
+          select: { fileId: true, shareUrl: true, updatedAt: true },
         },
       },
     });
     if (!student) {
       return res.status(404).json({ message: '学生不存在' });
     }
+    const practiceAssignment = student.practiceTableAssignment;
     res.json({
       student: { id: student.id, username: student.username, realName: student.realName },
-      assignment: student.practiceTableAssignment ?? null,
+      assignment: practiceAssignment
+        ? { ...practiceAssignment, hasToken: true }
+        : null,
     });
   } catch {
     res.status(500).json({ message: '服务器错误' });
@@ -231,6 +269,9 @@ studentRouter.get('/:id/practice-file', async (req: Request, res: Response) => {
 // PUT /api/students/:id/practice-file — 配置/更新学生的练习表格
 studentRouter.put('/:id/practice-file', async (req: Request, res: Response) => {
   try {
+    const access = await checkStudentAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const parsed = practiceFileSchema.parse(req.body);
     const { id } = req.params;
 
@@ -266,9 +307,11 @@ studentRouter.put('/:id/practice-file', async (req: Request, res: Response) => {
       create: { studentId: student.id, fileId, shareUrl, accessToken },
     });
 
+    // 与 GET 同口径：不下发 accessToken（凭据只进不出），只告知"是否已配置"
+    const { accessToken: _omit, ...safeAssignment } = assignment;
     res.json({
       student: { id: student.id, username: student.username, realName: student.realName },
-      assignment,
+      assignment: { ...safeAssignment, hasToken: true },
     });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
@@ -281,6 +324,9 @@ studentRouter.put('/:id/practice-file', async (req: Request, res: Response) => {
 // DELETE /api/students/:id/practice-file — 清除学生的练习表格配置
 studentRouter.delete('/:id/practice-file', async (req: Request, res: Response) => {
   try {
+    const access = await checkStudentAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const { id } = req.params;
     const student = await prisma.user.findUnique({ where: { id }, select: { id: true } });
     if (!student) {
@@ -431,6 +477,9 @@ studentRouter.get('/import-template', async (_req: Request, res: Response) => {
 
 studentRouter.get('/:id', async (req: Request, res: Response) => {
   try {
+    const access = await checkStudentAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const student = await prisma.user.findFirst({
       where: { id: req.params.id, role: 'student' },
       select: {
@@ -544,6 +593,9 @@ studentRouter.post('/', async (req: Request, res: Response) => {
 
 studentRouter.put('/:id', async (req: Request, res: Response) => {
   try {
+    const access = await checkStudentAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const data = updateStudentSchema.parse(req.body);
 
     // 检查学生存在
@@ -626,6 +678,9 @@ studentRouter.put('/:id', async (req: Request, res: Response) => {
 
 studentRouter.put('/:id/reset-password', async (req: Request, res: Response) => {
   try {
+    const access = await checkStudentAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const student = await prisma.user.findFirst({
       where: { id: req.params.id, role: 'student' },
       select: { id: true, studentId: true },
@@ -635,7 +690,7 @@ studentRouter.put('/:id/reset-password', async (req: Request, res: Response) => 
       return res.status(404).json({ message: '学生不存在' });
     }
 
-    const password = generateDefaultPassword(student.studentId || student.id);
+    const password = generateResetPassword();
     const passwordHash = await bcrypt.hash(password, 10);
 
     await prisma.user.update({
@@ -643,7 +698,8 @@ studentRouter.put('/:id/reset-password', async (req: Request, res: Response) => 
       data: { passwordHash },
     });
 
-    res.json({ message: '密码已重置为默认密码' });
+    // 口令只在这一处返回，系统不留明文；教师需当场转告学生
+    res.json({ message: '密码已重置，请把新密码转告学生', password });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }

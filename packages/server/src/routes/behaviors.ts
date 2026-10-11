@@ -102,6 +102,17 @@ router.post('/record', authenticate, async (req: Request, res: Response) => {
   try {
     const data = recordBehaviorSchema.parse(req.body);
 
+    // ⚠️ 防伪造：学生端上报的行为必须落在自己名下。
+    // 历史缺陷：studentId 直接取请求体，学生可给任意同学写入"按了 PrintScreen"这类
+    // CRITICAL 级风险记录（栽赃），也可能造成监考误报。教师/管理员保留代报能力。
+    const isStaff = req.user?.role === 'teacher' || req.user?.role === 'admin';
+    if (!isStaff && data.studentId !== req.user!.userId) {
+      return res.status(403).json({
+        success: false,
+        error: '只能上报本人的行为记录',
+      });
+    }
+
     // 自动判定风险等级
     const riskLevel = determineRiskLevel(data.behaviorType, data.metadata);
 
@@ -227,7 +238,9 @@ router.get('/reports/:examId/:studentId', authenticate, authorize('teacher', 'ad
  *
  * 功能：获取某场考试所有学生的分析报告列表
  */
-router.get('/reports/:examId', async (req: Request, res: Response) => {
+// ⚠️ 曾经漏掉鉴权：本接口返回某场考试全部考生的姓名 + 可疑度 + "疑似作弊"结论，
+// 任何知道 examId 的匿名请求者都能拉走，属严重隐私泄露。
+router.get('/reports/:examId', authenticate, authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
     const { examId } = req.params;
     const { suspiciousOnly } = req.query; // 是否只返回可疑报告
@@ -264,7 +277,7 @@ router.get('/reports/:examId', async (req: Request, res: Response) => {
  * 功能：人工审核分析报告（标记结论）
  * ✅ 修复Bug#2：需要认证（用于获取reviewerId）
  */
-router.put('/reports/:examId/:studentId/review', authenticate, async (req: Request, res: Response) => {
+router.put('/reports/:examId/:studentId/review', authenticate, authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
     const { examId, studentId } = req.params;
     const reviewerId = req.user?.id; // 从认证中间件获取

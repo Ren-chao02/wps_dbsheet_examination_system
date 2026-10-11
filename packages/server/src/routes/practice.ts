@@ -5,6 +5,7 @@ import { authenticate, authorize } from '../middleware/auth';
 import { KingsoftAdapter } from '../engine/adapters/kingsoft-adapter';
 import { gradePracticeRecord } from '../services/practice-grading-service';
 import { wpsConfigService } from '../services/wps-config-service';
+import { loadTablePreview } from '../services/wps-table-service';
 
 export const practiceRouter = Router();
 practiceRouter.use(authenticate);
@@ -80,6 +81,35 @@ practiceRouter.get('/assignment', async (req: Request, res: Response) => {
     res.json(assignment);
   } catch {
     res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// ── 练习页右侧面板辅助接口（与考试页同款，只读，不参与判分）──
+// 内嵌 iframe 能否显示表格取决于链接权限与浏览器三方 Cookie 策略，
+// 因此提供一条不依赖浏览器登录态的「实时数据预览」兜底，实现见 wps-table-service。
+
+// GET /api/practice/wps-preview — 练习表格实时数据预览（只读）
+practiceRouter.get('/wps-preview', async (req: Request, res: Response) => {
+  try {
+    const assignment = await prisma.practiceTableAssignment.findUnique({
+      where: { studentId: req.user!.userId },
+    });
+    if (!assignment) {
+      return res.status(404).json({ message: '尚未注册练习表格，请联系教师' });
+    }
+
+    // 优先用系统当前（自动刷新）的 token；注册记录里的 token 是注册时的快照，会过期
+    const current = await wpsConfigService.get();
+    const payload = await loadTablePreview({
+      cacheKey: `practice:${req.user!.userId}`,
+      fileId: assignment.fileId,
+      accessTokens: [current?.accessToken, assignment.accessToken],
+      sheetId: typeof req.query.sheetId === 'string' ? req.query.sheetId : undefined,
+    });
+    res.json(payload);
+  } catch (err: any) {
+    console.error('[practice/wps-preview] 读取表格失败:', err?.message || err);
+    res.status(err?.statusCode || 502).json({ message: `读取表格失败：${err?.message || '未知错误'}` });
   }
 });
 
@@ -252,8 +282,28 @@ practiceRouter.post('/:recordId/submit', async (req: Request, res: Response) => 
       return res.status(403).json({ message: '无权操作他人练习记录' });
     }
 
-    const result = await gradePracticeRecord(recordId);
-    res.json(result);
+    // 幂等抢占：仅 in_progress 状态可提交。条件更新原子地把状态翻转为 graded（占位），
+    // 双击/重复提交时第二次 updateMany 命中 0 行 → 直接返回「已提交」，
+    // 避免同一份记录被重复判分、错题本 wrongCount 重复累加。
+    const claimed = await prisma.practiceRecord.updateMany({
+      where: { id: recordId, studentId, status: 'in_progress' },
+      data: { status: 'graded' },
+    });
+    if (claimed.count === 0) {
+      return res.status(409).json({ message: '该练习已提交，请勿重复提交' });
+    }
+
+    try {
+      const result = await gradePracticeRecord(recordId);
+      res.json(result);
+    } catch (err: any) {
+      // 判分失败：回滚占位状态，保持 in_progress，学生可重新提交
+      await prisma.practiceRecord.updateMany({
+        where: { id: recordId, studentId, status: 'graded', score: null },
+        data: { status: 'in_progress' },
+      });
+      throw err;
+    }
   } catch (err: any) {
     console.error('Practice submit error:', err);
     // 判分失败保持 in_progress，学生可重新提交

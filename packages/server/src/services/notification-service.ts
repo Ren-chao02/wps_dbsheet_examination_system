@@ -134,6 +134,7 @@ class NotificationService {
           entityType: payload.entityType,
           entityId: payload.entityId,
           actionUrl: payload.actionUrl,
+          senderId: payload.senderId,
         },
       });
 
@@ -170,7 +171,88 @@ class NotificationService {
   }
 
   /**
-   * ✅ 广播通知给所有在线用户（系统公告）
+   * ✅ 批量发送通知（取代对每个用户串行调用 sendToUser）
+   *
+   * 旧实现的 broadcast 对每个目标用户串行 2~3 次 DB 查询，
+   * 3000 人规模就是上万次串行查询。这里改为：
+   * 1. 一次 createMany 批量落库（含 senderId，返回带 id 的记录用于推送）
+   * 2. 一次查询批量取所有接收者偏好
+   * 3. 批量 emit 给在线用户 + 一次 updateMany 回写 sentViaWeb
+   *
+   * 说明：批量路径不触发邮件（sendEmailAsync 目前只是日志桩，逐人查询
+   * email + 延时更新在批量场景会放大为数千次无意义操作；接入真实 SMTP
+   * 时再引入批量邮件队列）。
+   */
+  async sendToUsers(payloads: NotificationPayload[]): Promise<{ success: boolean; count: number }> {
+    try {
+      // 去重（同一接收者只建一条）
+      const seen = new Set<string>();
+      const unique = payloads.filter(p => {
+        if (seen.has(p.userId)) return false;
+        seen.add(p.userId);
+        return true;
+      });
+      if (unique.length === 0) return { success: true, count: 0 };
+
+      // 1. 批量落库（一次 createMany，返回带 id 的记录用于推送）
+      const created = await prisma.notification.createManyAndReturn({
+        data: unique.map(p => ({
+          type: p.type,
+          priority: p.priority || NotificationPriority.MEDIUM,
+          title: p.title,
+          content: p.content,
+          userId: p.userId,
+          entityType: p.entityType,
+          entityId: p.entityId,
+          actionUrl: p.actionUrl,
+          senderId: p.senderId,
+        })),
+      });
+
+      // 2. 批量取偏好（一次查询）
+      const prefs = await prisma.notificationPreference.findMany({
+        where: { userId: { in: unique.map(p => p.userId) } },
+      });
+      const prefsMap = new Map(prefs.map(x => [x.userId, x]));
+
+      // 3. 批量推送在线用户
+      if (this.io) {
+        const webSentIds: string[] = [];
+        for (const n of created) {
+          // 未配置偏好的用户沿用默认：开启 WebPush
+          const pref = prefsMap.get(n.userId);
+          if ((pref?.enableWebPush ?? true) && this.isOnline(n.userId)) {
+            this.io.to(`user:${n.userId}`).emit('notification:new', {
+              id: n.id,
+              type: n.type,
+              priority: n.priority,
+              title: n.title,
+              content: n.content,
+              entityType: n.entityType,
+              entityId: n.entityId,
+              actionUrl: n.actionUrl,
+              createdAt: n.createdAt,
+            });
+            webSentIds.push(n.id);
+          }
+        }
+        if (webSentIds.length > 0) {
+          await prisma.notification.updateMany({
+            where: { id: { in: webSentIds } },
+            data: { sentViaWeb: true },
+          });
+        }
+      }
+
+      return { success: true, count: created.length };
+    } catch (err) {
+      console.error('批量发送通知失败:', err);
+      return { success: false, count: 0 };
+    }
+  }
+
+  /**
+   * ✅ 广播通知（按角色筛选或全部在线用户，系统公告）
    */
   async broadcast(payload: Omit<NotificationPayload, 'userId'> & { targetRoles?: string[] }): Promise<void> {
     if (!this.io) return;
@@ -190,10 +272,10 @@ class NotificationService {
       targetUsers = Array.from(this.onlineUsers.keys());
     }
 
-    // 批量发送
-    for (const userId of targetUsers) {
-      await this.sendToUser({ ...payload, userId });
-    }
+    if (targetUsers.length === 0) return;
+
+    // 批量落库 + 批量推送（不再逐人串行查询）
+    await this.sendToUsers(targetUsers.map(userId => ({ ...payload, userId })));
   }
 
   /**

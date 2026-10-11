@@ -13,9 +13,16 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { PrismaClient, NotificationType, NotificationPriority } from '@prisma/client';
 import { notificationService } from '../services/notification-service';
+import { authorize } from '../middleware/auth';
 
 const router = Router();
 const prisma = new PrismaClient();
+
+// 权限说明：路由在 app.ts 只挂了 authenticate（任何人都能进来），
+// 因此「发通知 / 模板增删改」这些管理动作必须在本文件内加 authorize 收紧：
+// - POST /send：限 teacher/admin（学生不能给任意用户发通知）
+// - 模板 POST/PUT/DELETE：限 teacher/admin（学生不能改全局模板）
+// - GET /?senderId=xxx：只能查自己发出的（admin 例外）
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 1️⃣ Zod Schema 定义
@@ -80,12 +87,17 @@ const updateTemplateSchema = createTemplateSchema.partial();
  */
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user?.id;
+    const userId = req.user!.id;
     if (!userId) {
       return res.status(401).json({ success: false, error: '未授权' });
     }
 
     const query = queryNotificationsSchema.parse(req.query);
+
+    // senderId 只允许查自己发出的（发送历史），管理员例外——防止越权读取他人发送记录
+    if (query.senderId && req.user!.role !== 'admin' && query.senderId !== userId) {
+      return res.status(403).json({ success: false, error: '无权查看他人的发送记录' });
+    }
 
     // 如果传了 senderId，查询"我发送的"通知（发送历史）；否则查询"我收到的"通知
     const where: any = query.senderId
@@ -191,9 +203,10 @@ router.get('/templates', async (_req: Request, res: Response) => {
   }
 });
 
-router.post('/templates', async (req: Request, res: Response) => {
+// 模板增删改：限 teacher/admin（app.ts 只挂了 authenticate，这里必须补 authorize）
+router.post('/templates', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user?.id;
+    const userId = req.user!.id;
     const data = createTemplateSchema.parse(req.body);
     const template = await prisma.notificationTemplate.create({
       data: { ...data, createdBy: userId },
@@ -207,7 +220,7 @@ router.post('/templates', async (req: Request, res: Response) => {
   }
 });
 
-router.put('/templates/:id', async (req: Request, res: Response) => {
+router.put('/templates/:id', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
     const data = updateTemplateSchema.parse(req.body);
     const template = await prisma.notificationTemplate.update({
@@ -223,7 +236,7 @@ router.put('/templates/:id', async (req: Request, res: Response) => {
   }
 });
 
-router.delete('/templates/:id', async (req: Request, res: Response) => {
+router.delete('/templates/:id', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
     await prisma.notificationTemplate.delete({ where: { id: req.params.id } });
     res.json({ success: true, message: '模板已删除' });
@@ -308,11 +321,12 @@ router.delete('/:id', async (req: Request, res: Response) => {
 /**
  * POST /api/notifications/send
  *
- * 功能：管理员手动发送通知（支持批量）
+ * 功能：教师/管理员手动发送通知（支持批量）
+ * 限 teacher/admin：任何登录用户（含学生）都不能给任意用户发通知
  */
-router.post('/send', async (req: Request, res: Response) => {
+router.post('/send', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user?.id;
+    const userId = req.user!.id;
     const body = sendNotificationSchema.parse(req.body);
 
     // 解析接收者：如果提供了班级ID，展开为班级内所有学生
@@ -332,36 +346,25 @@ router.post('/send', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: '没有找到有效的接收者' });
     }
 
-    const results = [];
-    for (const targetUserId of targetUserIds) {
-      await notificationService.sendToUser({
+    // 批量发送：一次 createMany 落库（含 senderId）+ 批量 WebSocket 推送，
+    // 不再逐人串行调用 sendToUser（且旧实现里 sendToUser 与手动 create 会
+    // 对每个接收者重复建两条通知，已一并消除）
+    const result = await notificationService.sendToUsers(
+      targetUserIds.map(targetUserId => ({
         ...body,
         userId: targetUserId,
-        senderId: userId,  // 记录发送者
-      } as any);
-      // 也直接通过 DB 写入 senderId（notificationService 可能不包含该字段）
-      const notification = await prisma.notification.create({
-        data: {
-          type: body.type,
-          priority: body.priority || 'MEDIUM',
-          title: body.title,
-          content: body.content,
-          userId: targetUserId,
-          entityType: body.entityType,
-          entityId: body.entityId,
-          actionUrl: body.actionUrl,
-          senderId: userId,
-        },
-      });
-      results.push({ success: true, notificationId: notification.id });
-    }
+        senderId: userId, // 记录发送者
+      })),
+    );
 
-    const successCount = results.length;
+    if (!result.success) {
+      return res.status(500).json({ success: false, error: '通知发送失败' });
+    }
 
     res.json({
       success: true,
-      message: `成功发送 ${successCount}/${targetUserIds.length} 条通知`,
-      results,
+      message: `成功发送 ${result.count}/${targetUserIds.length} 条通知`,
+      count: result.count,
     });
   } catch (err: any) {
     console.error('发送通知失败:', err);

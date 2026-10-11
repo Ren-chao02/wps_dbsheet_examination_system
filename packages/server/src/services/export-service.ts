@@ -4,7 +4,7 @@
  * 核心功能：
  * - 多格式支持（Excel、CSV、PDF）
  * - 自定义模板系统
- * - 大数据量分批处理（内存优化）
+ * - 大数据量流式写盘（Excel 用 exceljs WorkbookWriter，CSV/PDF 异步写文件）
  * - 异步任务队列（避免超时）
  *
  * 使用方式：
@@ -13,7 +13,8 @@
  */
 
 import * as XLSX from 'xlsx';
-import { createWriteStream } from 'fs';
+import * as ExcelJS from 'exceljs';
+import { promises as fsPromises } from 'fs';
 import { join } from 'path';
 import { mkdirSync, existsSync, unlinkSync } from 'fs';
 import dayjs from 'dayjs';
@@ -94,7 +95,10 @@ class ExportService {
   private readonly outputDir: string;
 
   constructor() {
-    this.outputDir = join(process.cwd(), 'exports');
+    // 导出目录可用 EXPORT_DIR 覆盖：默认 <cwd>/exports 在 Docker 里是 /app/exports（已挂卷），
+    // 但非容器部署时 cwd 随启动方式而变（systemd/pm2/直接 node 都不同），
+    // 迁移服务器时若没跟着搬这个目录，历史导出任务会全部 404。
+    this.outputDir = process.env.EXPORT_DIR || join(process.cwd(), 'exports');
     this.ensureOutputDir();
   }
 
@@ -139,6 +143,11 @@ class ExportService {
 
   /**
    * ✅ 导出到Excel (.xlsx)
+   *
+   * 使用 exceljs 流式 WorkbookWriter 逐行写盘：
+   * - 不再使用 XLSX.writeFile（全量内存 + 同步写盘，会把事件循环堵死，
+   *   几个人同时导出即可让全站卡住）
+   * - 流式写入时内存占用与数据行数无关，且写盘过程可被 await，不阻塞事件循环
    */
   async exportToExcel(data: any[], options: ExportOptions = {}): Promise<ExportResult> {
     const startTime = Date.now();
@@ -146,39 +155,47 @@ class ExportService {
     // 准备数据
     const processedData = this.processData(data, options);
 
-    // 创建工作簿和工作表
-    const worksheet = XLSX.utils.json_to_sheet(processedData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, options.sheetName || 'Sheet1');
-
-    // 设置列宽
-    if (options.columns) {
-      worksheet['!cols'] = options.columns.map(col => ({
-        wch: col.width || 15,
-      }));
-    }
-
-    // 设置表头样式（基础实现）
-    if (options.headerStyle && processedData.length > 0) {
-      const range = XLSX.utils.decode_range(worksheet['!ref']!);
-      for (let C = range.s.c; C <= range.e.c; C++) {
-        const cellAddress = XLSX.utils.encode_cell({ r: 0, c: C });
-        if (!worksheet[cellAddress]) continue;
-        // 注意：xlsx库的样式设置较复杂，这里仅做基础示例
-      }
-    }
-
     // 生成文件名和路径
     const timestamp = dayjs().format('YYYYMMDD-HHmmss');
     const baseFilename = this.sanitizeBaseFilename(options.filename) || `export-${timestamp}`;
     const filePath = join(this.outputDir, `${baseFilename}.xlsx`);
 
-    // 写入文件
-    XLSX.writeFile(workbook, filePath);
+    // 流式工作簿：数据逐行 commit 落盘，避免把全部数据再复制一份到内存
+    const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+      filename: filePath,
+      useStyles: false,
+      useSharedStrings: true,
+    });
+    const worksheet = workbook.addWorksheet(options.sheetName || 'Sheet1');
+
+    // 列定义（流式模式下设置 columns 会自动写出表头行）
+    if (options.columns && options.columns.length > 0) {
+      // 有列配置时，processData 已把行数据转成「列标题 → 值」，key 取标题即可对齐
+      worksheet.columns = options.columns.map(col => ({
+        header: col.title,
+        key: col.title,
+        width: col.width || 15,
+      }));
+    } else if (processedData.length > 0) {
+      // 无列配置：以第一行的键作为表头
+      worksheet.columns = Object.keys(processedData[0]).map(k => ({
+        header: k,
+        key: k,
+        width: 15,
+      }));
+    }
+
+    // 逐行写入（addRow 后立即 commit 释放该行内存）
+    for (const row of processedData) {
+      worksheet.addRow(row).commit();
+    }
+
+    // 完成写盘（await：等待流真正写完，不阻塞事件循环）
+    await workbook.commit();
 
     // 如果需要密码保护（需额外库支持，此处仅标记）
     if (options.password) {
-      console.warn('Excel密码保护功能需要额外依赖（如exceljs），当前版本暂不支持');
+      console.warn('Excel密码保护功能需要额外依赖，当前版本暂不支持');
     }
 
     return this.createResult(filePath, data.length, ExportFormat.EXCEL, startTime);
@@ -198,11 +215,12 @@ class ExportService {
     const baseFilename = this.sanitizeBaseFilename(options.filename) || `export-${timestamp}`;
     const filePath = join(this.outputDir, `${baseFilename}.csv`);
 
-    // 写入CSV（使用xlsx库的CSV支持）
+    // 生成CSV内容（使用xlsx库的CSV支持）
     const worksheet = XLSX.utils.json_to_sheet(processedData);
     const csvContent = XLSX.utils.sheet_to_csv(worksheet);
 
-    require('fs').writeFileSync(filePath, csvContent, 'utf-8');
+    // 异步写盘，避免 writeFileSync 阻塞事件循环
+    await fsPromises.writeFile(filePath, csvContent, 'utf-8');
 
     return this.createResult(filePath, data.length, ExportFormat.CSV, startTime);
   }
@@ -257,7 +275,7 @@ class ExportService {
     const baseFilename = this.sanitizeBaseFilename(options.filename) || `export-${timestamp}`;
     const filePath = join(this.outputDir, `${baseFilename}.html`);
 
-    require('fs').writeFileSync(filePath, htmlContent, 'utf-8');
+    await fsPromises.writeFile(filePath, htmlContent, 'utf-8');
 
     console.warn('PDF导出当前为HTML预览模式，完整PDF生成需集成Puppeteer或PDFKit');
 
@@ -292,8 +310,20 @@ class ExportService {
       });
     }
 
-    // 无列配置时直接返回原始数据
-    return data;
+    // 无列配置：浅拍平一行。嵌套对象（如 student/exam 子对象）JSON 序列化，
+    // 否则 xlsx 的 sheet_to_csv 对对象值输出空串、Excel 端也无法正常显示。
+    // Date 保持原样（xlsx/exceljs 均按日期单元格处理）。
+    return data.map(item => {
+      const row: any = {};
+      for (const [k, v] of Object.entries(item)) {
+        row[k] = (v === null || v === undefined)
+          ? ''
+          : (typeof v === 'object' && !(v instanceof Date))
+            ? JSON.stringify(v)
+            : v;
+      }
+      return row;
+    });
   }
 
   /**
@@ -320,33 +350,6 @@ class ExportService {
       downloadUrl: `/export/download?path=${encodeURIComponent(relativePath)}`,
       createdAt: new Date(),
     };
-  }
-
-  /**
-   * ✅ 分批处理大数据集（内存优化）
-   */
-  async exportLargeDataset(
-    fetchFn: (offset: number, limit: number) => Promise<any[]>,
-    totalRecords: number,
-    format: ExportFormat,
-    options: ExportOptions & { batchSize?: number } = {}
-  ): Promise<ExportResult> {
-    const batchSize = options.batchSize || 1000;
-    const allData: any[] = [];
-    const totalBatches = Math.ceil(totalRecords / batchSize);
-
-    for (let i = 0; i < totalBatches; i++) {
-      const batch = await fetchFn(i * batchSize, batchSize);
-      allData.push(...batch);
-
-      // 内存优化：如果数据量过大，考虑分文件导出
-      if (allData.length > 50000) {
-        console.warn(`数据量过大(${allData.length}条)，建议分批次导出`);
-        break;
-      }
-    }
-
-    return this.export(allData, format, options);
   }
 
   /**

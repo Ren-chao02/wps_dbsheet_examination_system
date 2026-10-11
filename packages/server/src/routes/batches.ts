@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { validateCidrList } from '../utils/ip-utils';
+import { finalizeExamSubmissions } from '../utils/exam-utils';
+import { checkBatchAccess, denyAccess } from '../middleware/exam-ownership';
 
 export const batchRouter = Router();
 batchRouter.use(authenticate);
@@ -140,6 +142,9 @@ batchRouter.post('/', async (req: Request, res: Response) => {
 // PUT /api/batches/:id - 更新批次信息
 batchRouter.put('/:id', async (req: Request, res: Response) => {
   try {
+    const access = await checkBatchAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const existing = await prisma.examBatch.findUnique({ 
       where: { id: req.params.id },
       include: { _count: { select: { exams: true } } },
@@ -190,6 +195,9 @@ batchRouter.put('/:id', async (req: Request, res: Response) => {
 // DELETE /api/batches/:id - 删除批次（仅草稿状态可删除）
 batchRouter.delete('/:id', async (req: Request, res: Response) => {
   try {
+    const access = await checkBatchAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const existing = await prisma.examBatch.findUnique({
       where: { id: req.params.id },
       include: { _count: { select: { exams: true } } },
@@ -219,6 +227,9 @@ batchRouter.delete('/:id', async (req: Request, res: Response) => {
 // PUT /api/batches/:id/status - 更新批次状态（含级联发布）
 batchRouter.put('/:id/status', async (req: Request, res: Response) => {
   try {
+    const access = await checkBatchAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const { status } = z.object({
       status: z.enum(['draft', 'active', 'completed', 'archived']),
     }).parse(req.body);
@@ -267,6 +278,39 @@ batchRouter.put('/:id/status', async (req: Request, res: Response) => {
       }
     }
 
+    // ⚠️ 批次置为「已完成」时必须级联结束子考试并收卷（与 scheduler 的 autoCompleteBatches 同口径）。
+    // 手动路径若只改批次状态：随到随考的子考试 endTime 为 null，永远不会被 autoEndExams 兜底，
+    // 学生会永久停在"考试中"、答卷卡 in_progress 无法判分。
+    let endedExams = 0;
+    let submittedCount = 0;
+    if (status === 'completed') {
+      const now = new Date();
+      const examsToEnd = await prisma.exam.findMany({
+        where: { batchId: req.params.id, status: { in: ['in_progress', 'published'] } },
+        select: { id: true, endTime: true },
+      });
+
+      await prisma.$transaction(async (tx) => {
+        if (examsToEnd.length > 0) {
+          await tx.exam.updateMany({
+            where: { id: { in: examsToEnd.map(e => e.id) } },
+            data: { status: 'ended' },
+          });
+          for (const e of examsToEnd) {
+            submittedCount += await finalizeExamSubmissions(e.id, e.endTime ?? now, tx);
+          }
+          endedExams = examsToEnd.length;
+        }
+        await tx.examBatch.update({
+          where: { id: req.params.id },
+          data: { status },
+        });
+      }, { timeout: 30_000 });
+
+      const latest = await prisma.examBatch.findUnique({ where: { id: req.params.id } });
+      return res.json({ ...latest, cascadePublished, endedExams, submittedCount });
+    }
+
     const updated = await prisma.examBatch.update({
       where: { id: req.params.id },
       data: { status },
@@ -285,6 +329,9 @@ batchRouter.put('/:id/status', async (req: Request, res: Response) => {
 // POST /api/batches/:id/deactivate — 下线批次（active → draft）
 batchRouter.post('/:id/deactivate', async (req: Request, res: Response) => {
   try {
+    const access = await checkBatchAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const existing = await prisma.examBatch.findUnique({
       where: { id: req.params.id },
       include: { exams: { select: { id: true, status: true } } },
@@ -308,10 +355,17 @@ batchRouter.post('/:id/deactivate', async (req: Request, res: Response) => {
     // 将已发布的考试退回草稿
     const publishedExams = existing.exams.filter(e => e.status === 'published');
     if (publishedExams.length > 0) {
-      await prisma.exam.updateMany({
-        where: { id: { in: publishedExams.map(e => e.id) } },
-        data: { status: 'draft' },
-      });
+      // 退回草稿前先收卷：随到随考考试长期停留在 published，此时可能已有学生在作答，
+      // 直接置 draft 会让他们的答卷永久卡在 in_progress（兜底只扫 in_progress/published 的考试）
+      await prisma.$transaction(async (tx) => {
+        await tx.exam.updateMany({
+          where: { id: { in: publishedExams.map(e => e.id) } },
+          data: { status: 'draft' },
+        });
+        for (const e of publishedExams) {
+          await finalizeExamSubmissions(e.id, new Date(), tx);
+        }
+      }, { timeout: 30_000 });
     }
 
     const updated = await prisma.examBatch.update({
@@ -329,6 +383,9 @@ batchRouter.post('/:id/deactivate', async (req: Request, res: Response) => {
 // POST /api/batches/:id/extend — 批次延期
 batchRouter.post('/:id/extend', async (req: Request, res: Response) => {
   try {
+    const access = await checkBatchAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const { endTime } = z.object({
       endTime: z.string().refine(v => !isNaN(Date.parse(v)), { message: '无效的时间格式' }),
     }).parse(req.body);

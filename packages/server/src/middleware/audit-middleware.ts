@@ -20,10 +20,21 @@ import { AuditAction } from '@prisma/client';
 import { prisma } from '../config/prisma';
 
 // ✅ 配置常量
+// 前缀排除（startsWith 匹配）：健康检查、登录、审计自身
 const EXCLUDE_PATHS = [
   '/api/health',
   '/api/auth/login',
   '/api/audit', // 避免循环记录
+];
+
+// ✅ 高频上报路径排除（正则精确匹配）。
+// 为什么排除：单场 3000 人 × 2 小时考试，光心跳（每 10 秒一次）就会产生
+// 约 36 万行审计日志——既没有审计价值，又会拖垮 auditLog 表的写入与查询。
+// 注意：必须精确匹配，绝不能把 /api/my-exams/:id/submit（交卷）也排掉——
+// 交卷是关键审计事件，必须保留（这也是为什么不用前缀 /api/my-exams/ 一刀切）。
+const EXCLUDE_PATH_PATTERNS = [
+  /^\/api\/my-exams\/[^/]+\/heartbeat$/, // 学生心跳上报（POST，每 10 秒一次）
+  /^\/api\/behaviors\/record$/,          // 切屏等行为上报（POST，高频）
 ];
 
 const SENSITIVE_FIELDS = [
@@ -96,8 +107,10 @@ function computeChangedFields(oldData: any, newData: any): string[] {
 
 // ✅ 主中间件函数
 export function auditMiddleware(req: Request, res: Response, next: NextFunction) {
-  // 检查是否需要跳过
-  const shouldSkip = EXCLUDE_PATHS.some(path => req.path.startsWith(path));
+  // 检查是否需要跳过（前缀匹配 + 精确正则匹配）
+  const shouldSkip =
+    EXCLUDE_PATHS.some(path => req.path.startsWith(path)) ||
+    EXCLUDE_PATH_PATTERNS.some(pattern => pattern.test(req.path));
   if (shouldSkip) return next();
 
   // 仅拦截写操作

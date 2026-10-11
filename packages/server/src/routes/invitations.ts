@@ -398,6 +398,20 @@ applicationRouter.put('/batch-approve', async (req: Request, res: Response) => {
             continue;
           }
 
+          // 归属校验：教师只能审批指向自己班级的申请，admin 放行。
+          // 否则任意教师可批量把学生拉进别人的班级（与单条审批同口径）。
+          if (req.user!.role !== 'admin') {
+            const link = await tx.teacherClass.findFirst({
+              where: { teacherId: req.user!.userId, classId: application.invitation.classRoomId },
+              select: { id: true },
+            });
+            if (!link) {
+              failed++;
+              errors.push({ id, reason: '无权审批：该申请指向的班级不属于您' });
+              continue;
+            }
+          }
+
           // 检查学号是否已注册
           const existingUser = await tx.user.findUnique({
             where: { studentId: application.studentId },
@@ -489,6 +503,18 @@ applicationRouter.put('/:id/approve', async (req: Request, res: Response) => {
       return res.status(404).json({ message: '申请不存在' });
     }
 
+    // 归属校验：教师只能审批指向自己班级的申请（teacherClass 口径），admin 放行。
+    // 否则任意教师可审批全校所有班级的入学申请，把学生拉进别人的班级。
+    if (req.user!.role !== 'admin') {
+      const link = await prisma.teacherClass.findFirst({
+        where: { teacherId: req.user!.userId, classId: application.invitation.classRoomId },
+        select: { id: true },
+      });
+      if (!link) {
+        return res.status(403).json({ message: '只能审批自己班级的入学申请' });
+      }
+    }
+
     if (application.status !== 'PENDING') {
       return res.status(400).json({ message: '该申请已被处理' });
     }
@@ -568,10 +594,23 @@ applicationRouter.put('/:id/reject', async (req: Request, res: Response) => {
 
     const application = await prisma.studentApplication.findUnique({
       where: { id: req.params.id },
+      include: { invitation: { select: { classRoomId: true } } },
     });
 
     if (!application) {
       return res.status(404).json({ message: '申请不存在' });
+    }
+
+    // 归属校验：教师只能驳回指向自己班级的申请（teacherClass 口径），admin 放行。
+    // 与审批接口同口径，防止任意教师干扰其他班级的入学流程。
+    if (req.user!.role !== 'admin') {
+      const link = await prisma.teacherClass.findFirst({
+        where: { teacherId: req.user!.userId, classId: application.invitation.classRoomId },
+        select: { id: true },
+      });
+      if (!link) {
+        return res.status(403).json({ message: '只能驳回自己班级的入学申请' });
+      }
     }
 
     if (application.status !== 'PENDING') {

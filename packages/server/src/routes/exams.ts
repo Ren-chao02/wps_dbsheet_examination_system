@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { autoEndExpiredExams, finalizeExamSubmissions } from '../utils/exam-utils';
+import { checkExamAccess, denyAccess } from '../middleware/exam-ownership';
 
 export const examRouter = Router();
 examRouter.use(authenticate);
@@ -387,6 +388,17 @@ examRouter.delete('/:id', async (req: Request, res: Response) => {
       return res.status(400).json({ message: '考试进行中，无法删除' });
     }
 
+    // ⚠️ 成绩档案保护：删除会级联抹掉全部答卷、判分明细与验证结果。
+    // 教师不能删除已经产生答卷的考试（无论是否已结束），只有管理员可以强制清理。
+    if (req.user!.role !== 'admin') {
+      const submissionCount = await prisma.studentSubmission.count({ where: { examId: req.params.id } });
+      if (submissionCount > 0) {
+        return res.status(400).json({
+          message: `该考试已有 ${submissionCount} 份答卷，删除会一并清除全部成绩与判分记录；如需清理请联系管理员`,
+        });
+      }
+    }
+
     // 使用事务显式清理全部关联记录，避免外键约束导致删除失败、留下孤儿考试
     const examId = req.params.id;
     await prisma.$transaction(async (tx) => {
@@ -486,6 +498,9 @@ examRouter.put('/:id/questions', async (req: Request, res: Response) => {
 // POST /api/exams/:id/publish
 examRouter.post('/:id/publish', async (req: Request, res: Response) => {
   try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const exam = await prisma.exam.findUnique({
       where: { id: req.params.id },
       include: {
@@ -542,6 +557,9 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
 // POST /api/exams/:id/unpublish — 撤销发布（已发布 → 草稿）
 examRouter.post('/:id/unpublish', async (req: Request, res: Response) => {
   try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const exam = await prisma.exam.findUnique({ where: { id: req.params.id } });
 
     if (!exam) {
@@ -551,10 +569,21 @@ examRouter.post('/:id/unpublish', async (req: Request, res: Response) => {
       return res.status(400).json({ message: '只有已发布或已排期的考试才能撤销发布' });
     }
 
-    const updated = await prisma.exam.update({
-      where: { id: req.params.id },
-      data: { status: 'draft' },
-    });
+    // ⚠️ 必须同时收卷：随到随考（flexible）考试的 startTime/endTime 为 null，
+    // 考试状态长期停在 published，此时已经有学生在作答。若只把状态改回 draft，
+    // 这些答卷会永久卡在 in_progress —— 所有兜底只扫 in_progress/published 的"考试"，
+    // 而它已变成 draft；教师阅卷列表（只查 submitted）也看不到。
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.exam.update({
+        where: { id: req.params.id },
+        data: { status: 'draft' },
+      });
+      const count = await finalizeExamSubmissions(req.params.id, new Date(), tx);
+      if (count > 0) {
+        console.log(`[exam/unpublish] exam ${req.params.id}: auto-submitted ${count} stale submissions`);
+      }
+      return result;
+    }, { timeout: 30_000 });
 
     res.json(updated);
   } catch {
@@ -565,6 +594,9 @@ examRouter.post('/:id/unpublish', async (req: Request, res: Response) => {
 // POST /api/exams/:id/start
 examRouter.post('/:id/start', async (req: Request, res: Response) => {
   try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const exam = await prisma.exam.findUnique({ where: { id: req.params.id } });
     if (!exam) {
       return res.status(404).json({ message: '考试不存在' });
@@ -609,6 +641,9 @@ examRouter.post('/:id/start', async (req: Request, res: Response) => {
 // POST /api/exams/:id/end
 examRouter.post('/:id/end', async (req: Request, res: Response) => {
   try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const exam = await prisma.exam.findUnique({ where: { id: req.params.id } });
     if (!exam) {
       return res.status(404).json({ message: '考试不存在' });
@@ -618,23 +653,29 @@ examRouter.post('/:id/end', async (req: Request, res: Response) => {
     }
 
     const endedAt = new Date();
-    const updated = await prisma.exam.update({
-      where: { id: req.params.id },
-      data: { status: 'ended', endTime: endedAt },
-    });
 
-    // 级联更新考场预约状态
-    await prisma.examRoomAssignment.updateMany({
-      where: { examId: req.params.id, status: 'in_progress' },
-      data: { status: 'completed' },
-    });
+    // ⚠️ 整体事务：考试置 ended、考场收尾、学生答卷收卷必须同生共死。
+    // 若分步执行且中途失败，exam 已是 ended 便不再匹配任何兜底扫描条件
+    // （兜底只扫 in_progress/published 的考试），答卷会永久卡在 in_progress
+    // —— 教师阅卷列表看不到、判不了分。
+    let submittedCount = 0;
+    await prisma.$transaction(async (tx) => {
+      await tx.exam.update({
+        where: { id: req.params.id },
+        data: { status: 'ended', endTime: endedAt },
+      });
+      await tx.examRoomAssignment.updateMany({
+        where: { examId: req.params.id, status: 'in_progress' },
+        data: { status: 'completed' },
+      });
+      submittedCount = await finalizeExamSubmissions(req.params.id, endedAt, tx);
+    }, { timeout: 30_000 });
 
-    // 全局状态兜底：强制回收所有"考试中"的提交，标记为系统代交
-    const submittedCount = await finalizeExamSubmissions(req.params.id, endedAt);
     if (submittedCount > 0) {
       console.log(`[exam/end] exam ${req.params.id}: auto-submitted ${submittedCount} stale submissions`);
     }
 
+    const updated = await prisma.exam.findUnique({ where: { id: req.params.id } });
     res.json(updated);
   } catch {
     res.status(500).json({ message: '服务器错误' });
@@ -644,6 +685,9 @@ examRouter.post('/:id/end', async (req: Request, res: Response) => {
 // POST /api/exams/:id/archive — 归档考试（ended → archived）
 examRouter.post('/:id/archive', async (req: Request, res: Response) => {
   try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const exam = await prisma.exam.findUnique({ where: { id: req.params.id } });
     if (!exam) return res.status(404).json({ message: '考试不存在' });
     if (exam.status !== 'ended') {
@@ -664,16 +708,28 @@ examRouter.post('/:id/archive', async (req: Request, res: Response) => {
 // POST /api/exams/:id/cancel — 取消考试（draft/published/scheduled → cancelled）
 examRouter.post('/:id/cancel', async (req: Request, res: Response) => {
   try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const exam = await prisma.exam.findUnique({ where: { id: req.params.id } });
     if (!exam) return res.status(404).json({ message: '考试不存在' });
     if (!['draft', 'published', 'scheduled'].includes(exam.status)) {
       return res.status(400).json({ message: `当前状态 ${exam.status} 无法取消` });
     }
 
-    const updated = await prisma.exam.update({
-      where: { id: req.params.id },
-      data: { status: 'cancelled' },
-    });
+    // 与 unpublish 同理：取消考试时也有人在作答（尤其随到随考），必须一并收卷，
+    // 否则答卷永久悬空在 in_progress。
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.exam.update({
+        where: { id: req.params.id },
+        data: { status: 'cancelled' },
+      });
+      const count = await finalizeExamSubmissions(req.params.id, new Date(), tx);
+      if (count > 0) {
+        console.log(`[exam/cancel] exam ${req.params.id}: auto-submitted ${count} stale submissions`);
+      }
+      return result;
+    }, { timeout: 30_000 });
 
     res.json(updated);
   } catch {
@@ -684,6 +740,9 @@ examRouter.post('/:id/cancel', async (req: Request, res: Response) => {
 // POST /api/exams/:id/revive — 恢复考试（cancelled → draft）
 examRouter.post('/:id/revive', async (req: Request, res: Response) => {
   try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const exam = await prisma.exam.findUnique({ where: { id: req.params.id } });
     if (!exam) return res.status(404).json({ message: '考试不存在' });
     if (exam.status !== 'cancelled') {
