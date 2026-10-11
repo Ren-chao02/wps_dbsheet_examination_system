@@ -32,6 +32,7 @@ packages/server/scripts/*
 !packages/server/scripts/probe-practice-reset.ts
 !packages/server/scripts/probe-v7-delete.ts
 !packages/server/scripts/probe-view-data.ts
+!packages/server/scripts/wps-browser.ts
 
 demo-wps-embed.html
 
@@ -67,5 +68,7 @@ packages/client/vite.config.d.ts
 test-results/
 playwright-report/
 blob-report/
+# Vitest 覆盖率报告
+coverage/
 # 导出中心生成的文件目录
 packages/server/exports/
