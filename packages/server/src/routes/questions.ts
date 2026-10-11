@@ -20,6 +20,12 @@ const answerRuleSchema = z.object({
   score: z.number().int().min(0),
 });
 
+/** 全部题型（单一来源：schema 校验与列表筛选共用，避免两处枚举漂移） */
+const QUESTION_TYPE_VALUES = [
+  'create_table', 'add_field', 'config_view', 'create_form', 'comprehensive',
+  'single_choice', 'multiple_choice', 'true_false',
+] as const;
+
 // ✅ 更新Zod验证Schema：支持两级分类和元数据字段
 const questionSchema = z.object({
   // ❌ 删除原有字段
@@ -34,10 +40,7 @@ const questionSchema = z.object({
   title: z.string().min(1).max(512),
   description: z.string().optional(),
   // 题型：不传默认实操综合题（兼容旧客户端）
-  type: z.enum([
-    'create_table', 'add_field', 'config_view', 'create_form', 'comprehensive',
-    'single_choice', 'multiple_choice', 'true_false',
-  ]).optional(),
+  type: z.enum(QUESTION_TYPE_VALUES).optional(),
   difficulty: z.enum(['easy', 'medium', 'hard']).default('medium'),
   score: z.number().int().min(0).default(10),
   answerRules: z.array(answerRuleSchema).default([]),
@@ -92,6 +95,7 @@ questionRouter.get('/', async (req: Request, res: Response) => {
       page = '1',
       pageSize = '20',
       search,
+      type,
       difficulty,
       status,
       teacherName,
@@ -101,6 +105,7 @@ questionRouter.get('/', async (req: Request, res: Response) => {
       createdAtEnd,
       updatedAtStart,
       updatedAtEnd,
+      source,
     } = req.query;
 
     const skip = (Number(page) - 1) * Number(pageSize);
@@ -120,6 +125,16 @@ questionRouter.get('/', async (req: Request, res: Response) => {
     // 基础筛选
     if (difficulty) where.difficulty = String(difficulty);
     if (status) where.status = String(status);
+
+    // 题型筛选：支持逗号分隔多选（题库列表与试卷选题页的"题型"过滤器共用同一参数）
+    if (type) {
+      const types = String(type).split(',').map(s => s.trim()).filter(Boolean);
+      const valid = types.filter(t => (QUESTION_TYPE_VALUES as readonly string[]).includes(t));
+      if (valid.length > 0) where.type = { in: valid };
+    }
+
+    // 来源筛选：official = 官方题库 / school = 校本题库（题库页页签）
+    if (source) where.source = String(source);
 
     // ✨ 新增：出题老师模糊匹配
     if (teacherName) {

@@ -257,6 +257,8 @@ model Question {
   analysis        String?        @db.Text // 教师手写解析（题库练习用）
   tags            String[]       @default([])
   status          QuestionStatus @default(published)
+  /// 题目来源：official = 官方题库（平台统一维护，教师不可编辑/删除）；school = 校本（教师自建）
+  source          String         @default("school") @db.VarChar(16)
   createdBy       String?        @map("created_by") @db.Uuid
   createdAt       DateTime       @default(now()) @map("created_at")
   updatedAt       DateTime       @updatedAt @map("updated_at")

@@ -505,11 +505,15 @@ export function WpsExamDoingPage() {
                     </Title>
                   </div>
 
-                  <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
-                    <Paragraph style={{ whiteSpace: 'pre-wrap', fontSize: 15, lineHeight: 1.8, margin: 0 }}>
-                      {currentQuestion.description}
-                    </Paragraph>
-                  </Card>
+                  {/* 客观题（尤其官方题库导入的）title 即题干、description 可能为空：
+                      空的题干卡片不渲染，避免学生看到一块空白灰条 */}
+                  {currentQuestion.description && (
+                    <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
+                      <Paragraph style={{ whiteSpace: 'pre-wrap', fontSize: 15, lineHeight: 1.8, margin: 0 }}>
+                        {currentQuestion.description}
+                      </Paragraph>
+                    </Card>
+                  )}
 
                   {currentQuestion.hints && (
                     <Alert type="info" showIcon message="操作提示" description={currentQuestion.hints} style={{ marginBottom: 16 }} />

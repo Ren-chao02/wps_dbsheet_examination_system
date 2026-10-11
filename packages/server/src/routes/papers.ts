@@ -10,8 +10,10 @@ paperRouter.use(authorize('teacher', 'admin'));
 
 const paperSchema = z.object({
   name: z.string().min(1).max(256),
-  description: z.string().optional(),
-  difficulty: z.string().optional(),
+  // description/difficulty 允许显式 null：编辑页清空这两个字段后要以"写 NULL"落库，
+  // 只收 undefined 的话"清空"会静默变成"不改"（历史实现里清空直接 400，保存不了）
+  description: z.string().nullable().optional(),
+  difficulty: z.string().nullable().optional(),
   passScore: z.number().int().min(0).nullable().optional(),
 });
 
@@ -79,7 +81,29 @@ paperRouter.get('/', async (req: Request, res: Response) => {
       prisma.paper.count({ where }),
     ]);
 
-    res.json({ data: papers, total, page: Number(page), pageSize: Number(pageSize) });
+    // 组卷方式（固定题/抽题题位各几个）：列表页要展示"手动组卷/自动组卷/混合"，
+    // _count 分不出题位类型，这里对本页试卷做一次 groupBy 补齐
+    const slotStats = new Map<string, { fixed: number; rule: number }>();
+    if (papers.length > 0) {
+      const grouped = await prisma.paperQuestion.groupBy({
+        by: ['paperId', 'slotType'],
+        where: { paperId: { in: papers.map(p => p.id) } },
+        _count: { _all: true },
+      });
+      for (const g of grouped) {
+        const stat = slotStats.get(g.paperId) ?? { fixed: 0, rule: 0 };
+        if (g.slotType === 'rule') stat.rule += g._count._all;
+        else stat.fixed += g._count._all;
+        slotStats.set(g.paperId, stat);
+      }
+    }
+
+    res.json({
+      data: papers.map(p => ({ ...p, slotStats: slotStats.get(p.id) ?? { fixed: 0, rule: 0 } })),
+      total,
+      page: Number(page),
+      pageSize: Number(pageSize),
+    });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
@@ -292,6 +316,10 @@ paperRouter.post('/:id/duplicate', async (req: Request, res: Response) => {
             questionId: pq.questionId,
             sortOrder: pq.sortOrder,
             score: pq.score,
+            // 题位类型与抽题规则必须一并复制：只拷 questionId 会把 rule 题位
+            // 复制成"没有题目也没有规则"的空题位，开考时直接缺题
+            slotType: pq.slotType,
+            rule: (pq.rule ?? undefined) as any,
           })),
         },
       },

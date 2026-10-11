@@ -1,6 +1,7 @@
 import React from 'react';
 import { Drawer, Descriptions, Tag, Divider, Typography, Space } from 'antd';
 import { Question } from '../../types';
+import { isObjectiveQuestionType } from '../../utils/questionLabels';
 
 const { Paragraph, Text } = Typography;
 
@@ -65,6 +66,12 @@ export const QuestionDetailDrawer: React.FC<QuestionDetailDrawerProps> = ({
           <Tag color={statusConfig[question.status]?.color || 'default'}>
             {statusConfig[question.status]?.label || question.status}
           </Tag>
+        </Descriptions.Item>
+
+        <Descriptions.Item label="来源">
+          {question.source === 'official'
+            ? <Tag color="orange">官方题库</Tag>
+            : <Tag color="cyan">校本题库</Tag>}
         </Descriptions.Item>
       </Descriptions>
 
@@ -133,6 +140,31 @@ export const QuestionDetailDrawer: React.FC<QuestionDetailDrawerProps> = ({
         </>
       )}
 
+      {/* 客观题选项与答案：列表里不标答案，这里给教师核对（正确项绿色高亮） */}
+      {isObjectiveQuestionType(question.type) && question.objectiveAnswer && (
+        <>
+          <Divider titlePlacement="left">选项与答案</Divider>
+          <div style={{ marginBottom: 16 }}>
+            {question.objectiveAnswer.options.map((o) => {
+              const correct = question.objectiveAnswer!.correct.includes(o.key);
+              return (
+                <div key={o.key} className={correct ? 'objective-option objective-option--correct' : 'objective-option'}>
+                  <span className="objective-option__key">{o.key}</span>
+                  <span style={{ flex: 1 }}>{o.text}</span>
+                  {correct && <Tag color="success">正确答案</Tag>}
+                </div>
+              );
+            })}
+            <div style={{ marginTop: 8 }}>
+              <Text type="secondary">正确答案：</Text>
+              <Text strong style={{ color: '#52c41a' }}>
+                {question.objectiveAnswer.correct.join('、') || '未设置'}
+              </Text>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* 提示信息 */}
       {question.hints && (
         <>
@@ -147,6 +179,24 @@ export const QuestionDetailDrawer: React.FC<QuestionDetailDrawerProps> = ({
             }}
           >
             <Text type="secondary">{question.hints}</Text>
+          </div>
+        </>
+      )}
+
+      {/* 解析（官方题库导入的题目自带解析，教师核对答案时一并可见） */}
+      {question.analysis && (
+        <>
+          <Divider titlePlacement="left">解析</Divider>
+          <div
+            style={{
+              background: '#fffbe6',
+              border: '1px solid #ffe58f',
+              borderRadius: '8px',
+              padding: '12px',
+              marginBottom: '16px',
+            }}
+          >
+            <Text style={{ whiteSpace: 'pre-wrap' }}>{question.analysis}</Text>
           </div>
         </>
       )}

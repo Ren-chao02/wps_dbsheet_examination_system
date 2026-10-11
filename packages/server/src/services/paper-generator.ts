@@ -234,28 +234,40 @@ export async function previewSlotCandidates(rule: SlotRule, slotScore: number) {
   const where: Prisma.QuestionWhereInput = { status: 'published' };
   if (rule.capabilityIds?.length) where.capabilityIds = { hasEvery: rule.capabilityIds };
   if (rule.type) where.type = rule.type as any;
-  if (rule.difficulty) where.difficulty = rule.difficulty as any;
 
+  // 一次取全（不叠加难度条件），在同一份数据上算出两个口径：
+  // ① 按 rule.difficulty 过滤后的候选池（单题位预览，原有语义）
+  // ② 三个难度各自有多少「分值一致」的可用题（组卷规则行的 简单/中等/困难 数量框显示 /N）
+  // 若拆成两次查询，两次之间题库变动会让两个数字对不上
   const rows = await prisma.question.findMany({
     where,
     select: { id: true, title: true, type: true, difficulty: true, score: true, schemaRefs: true, capabilityIds: true },
     orderBy: { id: 'asc' },
   });
 
-  const byScore = rows.filter(r => (r.score ?? 0) === slotScore);
+  const scoped = rule.difficulty ? rows.filter(r => r.difficulty === rule.difficulty) : rows;
+  const byScore = scoped.filter(r => (r.score ?? 0) === slotScore);
   const wanted = rule.schemaRefs ? schemaRefsSignature(rule.schemaRefs) : '';
   const homogeneous = wanted ? byScore.filter(r => schemaRefsSignature(r.schemaRefs) === wanted) : byScore;
 
   // 不同 schemaRefs 的候选题不能混用（学生各自表格结构不同），单独报出来
   const signatures = new Set(byScore.map(r => schemaRefsSignature(r.schemaRefs)));
 
+  const difficultyCounts: Record<string, number> = { easy: 0, medium: 0, hard: 0 };
+  for (const r of rows) {
+    if ((r.score ?? 0) !== slotScore) continue;
+    if (r.difficulty in difficultyCounts) difficultyCounts[r.difficulty] += 1;
+  }
+
   return {
     /** 真正可用于抽题的候选数 */
     candidateCount: homogeneous.length,
     /** 分值不匹配而被排除的数量（教师常见配置错误） */
-    excludedByScore: rows.length - byScore.length,
+    excludedByScore: scoped.length - byScore.length,
     /** 候选池内部 schemaRefs 不一致：需要教师收敛引用声明 */
     schemaRefsConflict: signatures.size > 1,
+    /** 各难度可用题数（分值一致口径，不带难度过滤；组卷规则行数量框用） */
+    difficultyCounts,
     candidates: homogeneous.slice(0, 20).map(r => ({
       id: r.id, title: r.title, type: r.type, difficulty: r.difficulty, score: r.score,
     })),

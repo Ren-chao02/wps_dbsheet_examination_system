@@ -96,6 +96,8 @@ export interface SlotPreviewResult {
   excludedByScore: number;
   /** 候选池内引用声明不一致：混抽会导致部分学生做不了题 */
   schemaRefsConflict: boolean;
+  /** 各难度可用题数（分值一致口径，不带难度过滤）：组卷规则行数量框显示 /N */
+  difficultyCounts: Record<string, number>;
   /** 最多 20 条候选题 */
   candidates: Array<{ id: string; title: string; type: string; difficulty: string; score: number }>;
   /** 0 道候选 = 开考抽不出题；1 道 = 全员同题 */
@@ -127,8 +129,12 @@ export interface Question {
   /** 实操题引用的表/字段声明（抽题等值校验依据，选填） */
   schemaRefs?: SchemaRefs | null;
   hints: string | null;
+  /** 解析（官方题库导入的题目自带；教师出题时可选填） */
+  analysis?: string | null;
   tags: string[];
   status: QuestionStatus;
+  /** 来源：official = 官方题库（平台统一维护，教师不可编辑）；school = 校本（教师自建，默认） */
+  source?: string;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -189,6 +195,8 @@ export interface Paper {
   creator?: { id: string; realName: string } | null;
   paperQuestions?: PaperQuestion[];
   _count?: { paperQuestions: number; exams: number };
+  /** 组卷方式统计（列表接口附带）：固定题位/抽题题位各几个 */
+  slotStats?: { fixed: number; rule: number };
 }
 
 export interface PaperQuestion {

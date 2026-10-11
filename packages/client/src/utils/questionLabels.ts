@@ -24,6 +24,19 @@ export function questionTypeLabel(type: string): string {
   return QUESTION_TYPE_LABELS[type] || type;
 }
 
+/** 客观题题型（单选/多选/判断）：作答是选选项，不走判分规则编辑器 */
+export const OBJECTIVE_QUESTION_TYPES = ['single_choice', 'multiple_choice', 'true_false'];
+
+export function isObjectiveQuestionType(type?: string | null): boolean {
+  return !!type && OBJECTIVE_QUESTION_TYPES.includes(type);
+}
+
+/** 单选题/多选题/判断题（判断题的选项就是「正确/错误」两项，编辑器预填） */
+export const OBJECTIVE_TYPE_OPTIONS = OBJECTIVE_QUESTION_TYPES.map((value) => ({
+  value,
+  label: QUESTION_TYPE_LABELS[value],
+}));
+
 /** 中文序号（答题卡分组标题「一、二、…」）：超出 20 回退为阿拉伯数字 */
 const CN_DIGITS = '一二三四五六七八九十';
 export function toChineseIndex(index: number): string {
