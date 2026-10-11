@@ -93,6 +93,8 @@ npx tsx scripts/probe-v7-delete.ts        # 探测 v7 sheet 删除接口形态�
 - `KingsoftAdapter` 支持两套 API：v7（`/v7/coop/dbsheet`，Bearer token，默认）与 v3（`/kopen/office/file`，WPS-3 签名）。用 `createAdapterFromSpaceId('fileId:accessToken')` 构造，无 token 时回退环境变量凭据。
 - **Token 取用顺序**：`WpsConfig` 表（单行 `id='wps_config'`）里由 `services/wps-config-service.ts` 自动刷新的**当前** token 优先；`ExamTableAssignment.accessToken` / `PracticeTableAssignment.accessToken` 只是「分配当时的快照」，24 小时即失效。直接照抄快照 token 会拿到 `401000001 invalid_token`。
 - 作答界面靠 iframe 嵌入 kdocs 分享链接，但**能否显示取决于该文档的分享权限与浏览器三方 Cookie 策略**（实测同一批分配表里有的匿名可渲染、有的直接跳 WPS 登录页）。因此 `components/wps/WpsTablePanel.tsx` 提供两种展示方式（内嵌 / 独立窗口工作台），并配 `WpsLivePreview` + `/wps-preview` 接口从服务端读表格数据兜底——改这块时不要退回「只靠 iframe」。
+- **`/schema/query` 不返回视图的筛选条件**（2026-10-11 在真实表格上验证：界面上配了筛选，接口里一个字都没有）。排序 `sort`、分组 `group`、字段显隐 `fields_attribute` 都返回，唯独 `filter` 不返回。因此 `check_view_filter` 拿不到数据，已改成**转人工复核**——改这条规则前先跑 `scripts/probe-view-data.ts` 确认接口有没有补上；代码里是前置守卫，接口一旦支持会自动恢复自动判定。
+- 字段的配置项都在 `data` 里（`unique_value` / `formula` / `number_format` / `default_value` / `default_value_type`），顶层只有 `name/type/id/data`。给适配器加字段映射时必须 `f.x ?? d.x` 两边都看——`required` 曾经只看了顶层，导致「必填」那条规则永远判不过。
 - 独立窗口打开期间要豁免切屏计数（`useExamSession.setTabSwitchExempt`）并挂起全屏守护（`FullscreenGuard suspended`），否则学生每看一次表格就被记一次违规。
 
 ### 前端结构

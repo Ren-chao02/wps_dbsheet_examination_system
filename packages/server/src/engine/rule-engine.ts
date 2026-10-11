@@ -748,6 +748,37 @@ const ruleHandlers: Record<string, RuleHandler> = {
       };
     }
 
+    // ⚠️ WPS v7 的 /schema/query **不返回视图的筛选条件**。
+    //
+    // 这不是推测：2026-10-11 在真实表格上验证过 —— 界面上确实配了筛选（肉眼可见），
+    // 但接口返回的视图对象里只有 id/name/type/records_count/sort/group/fields_attribute，
+    // 递归扫所有键名也找不到任何 filter 相关字段。而 sort 和 group 是返回的
+    // （结构见下方 check_view_sort / check_view_group），所以这是筛选独有的缺失。
+    //
+    // 后果：下面那套「拿 filter 数据比对」的逻辑永远拿不到数据，会把**每个**学生
+    // 都判成不通过 —— 做对了也 0 分，而且不标记、不提示，老师只会看到"全班都错"。
+    //
+    // 所以先判断"接口到底有没有给筛选数据"：
+    //   - 一点都没有 → 这是判不了的，转人工复核（遵循项目约定：判不了的不要硬判）
+    //   - 有（将来接口补上，或走 v3）→ 正常走下面的自动判定
+    // 这样写成"前置守卫"而不是直接写死 needsReview，是为了让接口一旦支持就自动恢复。
+    const hasAnyFilterData = (sheet.views || []).some((v: any) => !!v.filter);
+    if (!hasAnyFilterData) {
+      return {
+        passed: false,
+        score: 0,
+        expected: params,
+        actual: {
+          tableName: params.tableName,
+          viewName: params.viewName,
+          availableViews: (sheet.views || []).map((v: any) => v.name),
+          note: '接口未返回任何视图的筛选条件',
+        },
+        errorMessage: '当前 WPS 接口不返回视图的筛选条件，无法自动判定，需人工复核',
+        needsReview: true,
+      };
+    }
+
     const reqCriteria: any[] = params.criteria || [];
     const minCriteria = params.minCriteria || 0;
 

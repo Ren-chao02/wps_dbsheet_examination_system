@@ -208,6 +208,92 @@ describe('几条从未被执行过的规则', () => {
 });
 
 // ============================================================
+describe('视图类规则 —— 用真实抓到的接口结构做回归', () => {
+  // 下面的字段名和嵌套形状不是编的：2026-10-11 在用户的真实表格上，
+  // 让人在 WPS 界面上配好排序/分组/筛选之后，从 /schema/query 的原始响应里抄下来的。
+  // 判分引擎必须认得这个形状，否则真实考场上的判定全是错的。
+  //
+  // ⚠️ 注意这里**没有 filter**：筛选条件在界面上确实配了，接口却一个字都不返回。
+  // 这正是 check_view_filter 改成转人工复核的原因。
+  const REAL_VIEW = {
+    id: 's',
+    name: '表格视图',
+    type: 'Grid',
+    sort: { auto_sort: true, conditions: [{ field: '入职日期', is_ascending: false }] },
+    group: { conditions: [{ field: '工龄（年）', is_ascending: true }] },
+    fieldsAttribute: [
+      { field: '工龄（年）', hidden: false },
+      { field: '入职日期', hidden: false },
+    ],
+  };
+  const realSchema = () =>
+    schemaOf([S('员工信息表', [F('工龄（年）'), F('入职日期')], [REAL_VIEW])]);
+
+  it('认得真实结构的排序（is_ascending=false 即倒序）', () => {
+    const r = run(realSchema(), 'check_view_sort', {
+      tableName: '员工信息表', viewName: '表格视图',
+      sortBy: [{ field: '入职日期', order: 'desc' }],
+    });
+    expect(r.passed).toBe(true);
+  });
+
+  it('排序方向反了 → 拒绝（不能只认字段名不看方向）', () => {
+    const r = run(realSchema(), 'check_view_sort', {
+      tableName: '员工信息表', viewName: '表格视图',
+      sortBy: [{ field: '入职日期', order: 'asc' }],
+    });
+    expect(r.passed).toBe(false);
+  });
+
+  it('认得真实结构的分组', () => {
+    const r = run(realSchema(), 'check_view_group', {
+      tableName: '员工信息表', viewName: '表格视图', groupByField: '工龄（年）',
+    });
+    expect(r.passed).toBe(true);
+  });
+
+  it('分组的字段不对 → 拒绝', () => {
+    const r = run(realSchema(), 'check_view_group', {
+      tableName: '员工信息表', viewName: '表格视图', groupByField: '入职日期',
+    });
+    expect(r.passed).toBe(false);
+  });
+
+  it('筛选：接口不返回筛选数据 → 转人工复核，绝不判学生 0 分', () => {
+    const r = run(realSchema(), 'check_view_filter', {
+      tableName: '员工信息表', viewName: '表格视图', criteria: [{ field: '入职日期' }],
+    });
+    expect(r.passed).toBe(false);
+    expect(r.needsReview).toBe(true);
+    expect(r.errorMessage).toContain('人工复核');
+  });
+
+  it('筛选：视图本身不存在 → 仍按「学生没建视图」判不通过，不需要复核', () => {
+    const r = run(realSchema(), 'check_view_filter', {
+      tableName: '员工信息表', viewName: '看板视图', criteria: [{ field: '入职日期' }],
+    });
+    expect(r.passed).toBe(false);
+    expect(r.needsReview).toBe(false);
+  });
+
+  it('筛选：接口若将来开始返回筛选数据，自动判定应当自动恢复', () => {
+    // 这条是给未来留的后路：转人工是权宜之计，不该把自动判定的能力永久关掉。
+    // 模拟 WPS 补上 filter 之后的行为。
+    const futureSchema = schemaOf([
+      S('员工信息表', [F('入职日期')], [{
+        ...REAL_VIEW,
+        filter: { conjunction: 'and', conditions: [{ field: '入职日期', operator: 'isNotEmpty' }] },
+      }]),
+    ]);
+    const r = run(futureSchema, 'check_view_filter', {
+      tableName: '员工信息表', viewName: '表格视图', criteria: [{ field: '入职日期' }],
+    });
+    expect(r.needsReview).toBe(false); // 不再需要人工
+    expect(r.passed).toBe(true);       // 而且真的判出来了
+  });
+});
+
+// ============================================================
 describe('未知规则类型', () => {
   it('遇到不认识的 action → 转人工复核，而不是静默判 0 分', () => {
     const r = run(schemaOf([]), 'check_something_new', {});

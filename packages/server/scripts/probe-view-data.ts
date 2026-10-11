@@ -1,19 +1,26 @@
 /**
  * 只读探测：WPS `/schema/query` 到底返回了哪些视图/字段配置。
  *
- * 存在的理由（一个至今没定论的问题）：
- * 规则引擎里有 3 条规则依赖视图的 `filter`(筛选) / `sort`(排序) / `group`(分组)，
- * 但实测抓到的视图对象只有 `id / name / type / fields_attribute` ——
- * 没有 filter/sort/group，官方 API 文档也只列了 id/name/type。
- * 如果确实不返回，这 3 条规则会对**每个学生**都判不通过（做对了也 0 分），
- * 而且不会有任何提示，直到有学生来申诉。
+ * ── 已结论（2026-10-11，在真实表格上验证）──
+ * 在 WPS 界面上手动配好「筛选 + 排序 + 分组」之后，接口返回的视图对象是：
  *
- * 怎么用它做结论性验证：
- *   1. 在任意一张测试表里，给某个视图**加上一个筛选条件**（WPS 界面点两下，30 秒）；
- *   2. 跑这个脚本；
- *   3. 看该视图的原始对象里有没有冒出 `filter` 键：
- *      - 有 → 接口会返回，那 3 条规则是好的，之前只是恰好没配筛选；
- *      - 没有 → 数据根本到不了引擎，这 3 条规则需要改成"转人工复核"或换数据源。
+ *   { id, name, type, records_count,
+ *     sort:  { auto_sort: true, conditions: [{ field, is_ascending }] },   ← 有
+ *     group: { conditions: [{ field, is_ascending }] },                    ← 有
+ *     fields_attribute: [{ field, hidden }] }                              ← 有
+ *                                                                          ← filter 没有
+ *
+ * 也就是说：**filter（筛选条件）配了也不返回**，递归扫所有键名都找不到。
+ * 后果是「验证视图筛选条件」那条规则永远拿不到数据 —— 已改成转人工复核，
+ * 见 rule-engine.ts 里 check_view_filter 上方的注释。
+ *
+ * 字段那边同理：配置全部在 `data` 里（unique_value / formula / number_format /
+ * default_value / default_value_type），顶层只有 name/type/id/data。
+ *
+ * ── 这个脚本留着做什么 ──
+ * 1. 接口升级后重跑，确认 filter 有没有被补上 —— 一旦补上，check_view_filter
+ *    会自动恢复自动判定（代码里做成了前置守卫，不是写死转人工）；
+ * 2. 排查"学生明明配了却判错"这类问题时，一眼看到接口到底给了什么。
  *
  * 运行：cd packages/server && npx tsx scripts/probe-view-data.ts
  */
