@@ -38,8 +38,11 @@ else
   ")
   if [ "$HAS_USERS" = "0" ]; then
     echo "[entrypoint] 首次部署，导入种子数据（题库/账号/考试）..."
+    # 管理/教师账号口令：优先取 ADMIN_INITIAL_PASSWORD，未设置则随机生成并在下面这几行输出里打印一次
     npx tsx packages/server/prisma/seed.ts
     echo "[entrypoint] 种子数据导入完成 ✓"
+    echo "[entrypoint] ⚠️  上面的日志里含有管理员初始口令，请立即记录；系统不会再次显示。"
+    echo "[entrypoint]     也可在部署前用环境变量 ADMIN_INITIAL_PASSWORD 指定固定口令。"
   else
     echo "[entrypoint] 数据库已有 $HAS_USERS 个用户，跳过种子导入"
   fi

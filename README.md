@@ -214,11 +214,13 @@ npm run dev
 npm run docker:up    # 等价于 docker compose up -d
 ```
 
-编排 `postgres` / `redis` / `app` 三个容器：应用端口 3002 与数据库、缓存均**仅绑定 `127.0.0.1`**，容器入口脚本会自动执行迁移、种子与启动。
+编排 `postgres` / `redis` / `app` 三个容器：数据库与缓存**仅绑定 `127.0.0.1`**，应用端口默认也只绑回环（适合同机反向代理），容器入口脚本会自动执行迁移、种子与启动。
 
 ```bash
 npm run docker:down  # 停止并移除容器
 ```
+
+> 📦 **部署到新服务器 / 整体迁移**：见 [DEPLOYMENT.md](DEPLOYMENT.md)（数据搬迁清单、反向代理配置、首启安全项、常见坑）。
 
 ### 常用脚本
 
