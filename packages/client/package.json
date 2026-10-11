@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.2.5",
+    "@sentry/react": "^11.6.0",
     "antd": "^6.4.5",
     "axios": "^1.7.2",
     "dayjs": "^1.11.11",

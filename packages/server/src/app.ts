@@ -43,6 +43,9 @@ import { studentProfileRouter } from './routes/student-profile';
 import { coachingRouter } from './routes/coaching';
 import { llmConfigRouter } from './routes/llm-config';
 import { errorHandler } from './middleware/error-handler';
+import { logger, httpSerializers } from './utils/logger';
+import { setupSentryErrorHandler } from './utils/telemetry';
+import pinoHttp from 'pino-http';
 
 export function createApp() {
   const app = express();
@@ -67,6 +70,19 @@ export function createApp() {
     .map(o => o.trim())
     .filter(Boolean);
   app.use(cors(corsOrigins.length > 0 ? { origin: corsOrigins } : {}));
+
+  // 访问日志（结构化）。放在最前面，这样连 413/401 这类早期拒绝也会被记下来。
+  // 健康检查会被探针/监控高频打点，排除掉以免淹没真正的业务日志。
+  app.use(pinoHttp({
+    logger,
+    serializers: httpSerializers,
+    autoLogging: { ignore: (req) => req.url === '/api/health' },
+    customLogLevel: (_req, res, err) => {
+      if (err || res.statusCode >= 500) return 'error';
+      if (res.statusCode >= 400) return 'warn';
+      return 'info';
+    },
+  }));
 
   // 批量分配 WPS 表格的请求体很大：每名学生一条 { studentId, shareUrl, accessToken }，
   // accessToken 是长 JWT（约 1KB），3000 人 ≈ 3MB，远超 express.json() 默认的 100KB。
@@ -138,6 +154,9 @@ export function createApp() {
   }
 
   // Error handling
+  // Sentry 的错误中间件必须排在业务错误处理之前（它只负责上报，不负责响应）；
+  // 未配置 SENTRY_DSN 时是空操作。
+  setupSentryErrorHandler(app);
   app.use(errorHandler);
 
   return app;
