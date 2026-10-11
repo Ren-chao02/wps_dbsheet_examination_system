@@ -62,5 +62,9 @@ packages/client/vite.config.d.ts
 
 # Playwright MCP 调试产物
 .playwright-mcp/
+# Playwright 测试产物（失败时的 trace/截图、HTML 报告）
+test-results/
+playwright-report/
+blob-report/
 # 导出中心生成的文件目录
 packages/server/exports/
