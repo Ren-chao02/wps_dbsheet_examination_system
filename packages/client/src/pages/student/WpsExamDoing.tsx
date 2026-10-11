@@ -1,22 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Button, Card, Typography, Tag, message, Spin, Alert, Progress, Tooltip, Space } from 'antd';
+import { Button, Card, Typography, Tag, message, Spin, Alert, Progress, Space } from 'antd';
 import {
   CheckOutlined,
   ClockCircleOutlined,
   WarningOutlined,
-  LinkOutlined,
   LeftOutlined,
   RightOutlined,
-  TableOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import type { Question } from '../../types';
 import { FullscreenGuard } from '../../components/exam/FullscreenGuard';
+import { WpsTablePanel } from '../../components/wps/WpsTablePanel';
 import { useExamSession } from '../../hooks/useExamSession';
-import { computeExamDeadline } from '../../utils/exam-time';
-import { useWpsEmbed } from '../../hooks/useWpsEmbed';
+import { computeExamDeadline, serverNow, syncServerTime } from '../../utils/exam-time';
 
 const { Text, Paragraph, Title } = Typography;
 
@@ -31,9 +29,13 @@ export function WpsExamDoingPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  // 加载失败进入错误态（Alert + 重新加载 + 联系监考老师），而不是白屏卡死
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
   const [deadline, setDeadline] = useState<number | null>(null);
-  const [now, setNow] = useState(Date.now());
+  // 倒计时用服务端时间（serverNow）：机房电脑 CMOS 漂移会导致本机 Date.now()
+  // 与服务端 deadline 错位 —— 钟快 10 分钟的学生会被提前自动交卷。见 utils/exam-time。
+  const [now, setNow] = useState(() => Date.now());
 
   const {
     tabSwitchCount,
@@ -41,28 +43,47 @@ export function WpsExamDoingPage() {
     handleSubmit,
     handleTimerFinish,
     handleFullscreenExit,
+    handleFullscreenUnavailable,
+    autoSubmitExhausted,
+    setTabSwitchExempt,
   } = useExamSession({
     examId: id,
     onNavigateToResult: (examId) => navigate(`/student/exam/${examId}/result`),
   });
+  // 表格独立窗口打开期间：豁免切屏计数、挂起全屏守护（切到表格窗口是预期行为）。
+  // 注意豁免已收紧：只有「学生确实正在表格窗口里」才回调 true（见 useWpsEmbed）。
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const handleWorkbenchChange = useCallback(
+    (open: boolean) => {
+      setWorkbenchOpen(open);
+      setTabSwitchExempt(open);
+    },
+    [setTabSwitchExempt],
+  );
 
-  useEffect(() => {
+  const loadExam = useCallback(() => {
+    setLoading(true);
+    setLoadError(null);
     api.get(`/my-exams/${id}`).then(res => {
       const d = res.data;
       setData(d);
-      // 截止时间口径与 ExamEntrySteps 保持一致：基于考试 endTime（或 startTime + 时长），
-      // 不基于 submission.startedAt，保证中途入场/断点续考时剩余时间与入场界面一致。
-      // 服务端 autoEndExpiredExams 同样按 exam.endTime 收卷，口径统一。
-      const dl = computeExamDeadline(d.exam);
+      // 优先用服务端下发的时间戳：随到随考模式下每人截止时间不同（开考时刻 + 时长，
+      // 且不越过批次窗口），只有服务端算得准；本地推算仅作为老接口/字段缺失时的兜底。
+      const dl = typeof d.deadline === 'number' ? d.deadline : computeExamDeadline(d.exam);
       if (dl !== null) setDeadline(dl);
     }).catch((err) => {
-      message.error(err.response?.data?.message || '加载失败');
+      setLoadError(err.response?.data?.message || '网络异常，请稍后重试');
     }).finally(() => setLoading(false));
   }, [id]);
 
-  // Countdown
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    loadExam();
+  }, [loadExam]);
+
+  // Countdown（每秒刷新服务端时间；同步失败时 serverNow 自动退回本机时间）
+  useEffect(() => {
+    void syncServerTime();
+    const timer = setInterval(() => setNow(serverNow()), 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -76,29 +97,17 @@ export function WpsExamDoingPage() {
   const isTimeLow = deadline ? remainingMs < 5 * 60 * 1000 : false;
 
   useEffect(() => {
-    if (deadline && Date.now() >= deadline) {
+    // 到点判定同样用服务端时间：本机钟快了也不提前收卷，钟慢了也不拖延收卷
+    if (deadline && serverNow() >= deadline) {
       handleTimerFinish();
     }
   }, [now, deadline, handleTimerFinish]);
 
   const wpsTable = data?.wpsTable || null;
   const hasWpsTable = !!wpsTable?.shareUrl;
-  // 使用完整分享链接直链（不带 embed=1 参数），呈现与 WPS 一致的完整界面：
-  // 左侧「数据表/视图」侧边栏 + 顶部标题/页签/工具栏。
-  // embed=1 是纯视图内嵌模式，只会显示当前视图的网格，不带侧边栏与上边栏。
-  // iframe 加载/超时/重载/新标签登录后自动刷新由 useWpsEmbed 统一管理。
-  const {
-    reloadKey,
-    iframeLoaded,
-    iframeError,
-    iframeTimeout,
-    showSpinner,
-    showFallback,
-    reload,
-    openInNewTab,
-    handleIframeLoad,
-    handleIframeError,
-  } = useWpsEmbed(hasWpsTable ? wpsTable.shareUrl : null, 15000);
+  // 右侧表格面板（内嵌 / 独立窗口两种展示方式）见 components/wps/WpsTablePanel：
+  // kdocs 对未登录访客强制登录，内嵌 iframe 能否拿到登录态取决于三方 Cookie 策略，
+  // 因此失败时必须有出路 —— 面板内置「独立窗口」模式与实时数据面板。
 
   if (loading) {
     return (
@@ -107,7 +116,35 @@ export function WpsExamDoingPage() {
       </div>
     );
   }
-  if (!data) return null;
+
+  // 加载失败（或响应异常）时的错误态：保留页面框架，给出重试与求助出路。
+  // 此前这里 `return null` 是纯白屏 —— 学生既看不到题，也找不到任何操作入口。
+  if (loadError || !data) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f5f5f5' }}>
+        <div style={{ padding: '10px 24px', background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
+          <Title level={5} style={{ margin: 0 }}>答题</Title>
+        </div>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ maxWidth: 560, width: '100%' }}>
+            <Alert
+              type="error"
+              showIcon
+              message="试卷加载失败"
+              description={`${loadError || '响应异常'}。请点击「重新加载」重试；若多次失败，请举手联系监考老师处理，不要关闭本页。`}
+              style={{ marginBottom: 16 }}
+            />
+            <Space>
+              <Button type="primary" icon={<ReloadOutlined />} onClick={loadExam}>
+                重新加载
+              </Button>
+              <Button onClick={() => navigate('/student/dashboard')}>返回我的考试</Button>
+            </Space>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const questions: Question[] = data.questions || [];
   const currentQuestion = questions[currentStep];
@@ -117,7 +154,12 @@ export function WpsExamDoingPage() {
   const leftWidth = hasWpsTable ? 420 : '100%';
 
   return (
-    <FullscreenGuard active={true} onExit={handleFullscreenExit}>
+    <FullscreenGuard
+      active={true}
+      onExit={handleFullscreenExit}
+      onForceContinue={handleFullscreenUnavailable}
+      suspended={workbenchOpen}
+    >
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f5f5f5' }}>
 
         {/* ═══════════ HEADER ═══════════ */}
@@ -176,6 +218,19 @@ export function WpsExamDoingPage() {
             type="warning" showIcon icon={<WarningOutlined />}
             message={`检测到 ${tabSwitchCount} 次切屏行为，请注意考试纪律`}
             banner closable
+          />
+        )}
+
+        {/* 自动交卷重试耗尽：给出去成绩页的入口，学生不会被困在答题页 */}
+        {autoSubmitExhausted && (
+          <Alert
+            type="error" showIcon banner
+            message="自动交卷多次失败，请点击「前往成绩页」确认交卷状态，或联系监考老师"
+            action={
+              <Button size="small" type="primary" onClick={() => navigate(`/student/exam/${id}/result`)}>
+                前往成绩页
+              </Button>
+            }
           />
         )}
 
@@ -285,74 +340,14 @@ export function WpsExamDoingPage() {
             </div>
           </div>
 
-          {/* Right: WPS iframe + 打开按钮 */}
+          {/* Right: WPS 多维表格面板（内嵌 / 独立窗口工作台 + 实时数据面板） */}
           {hasWpsTable && (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f0f2f5' }}>
-              {/* 顶部工具栏：刷新表格 + 在新标签页打开（WPS 登录/备用操作） */}
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '8px 16px', background: '#fff', borderBottom: '1px solid #f0f0f0', flexShrink: 0,
-              }}>
-                <Text strong style={{ fontSize: 14 }}>
-                  <TableOutlined style={{ marginRight: 8 }} />
-                  多维表格
-                </Text>
-                <Space>
-                  <Button icon={<ReloadOutlined />} onClick={reload}>
-                    刷新表格
-                  </Button>
-                  <Button type="primary" icon={<LinkOutlined />} onClick={openInNewTab}>
-                    在新标签页打开
-                  </Button>
-                </Space>
-              </div>
-
-              {/* iframe 区域 */}
-              <div style={{ flex: 1, position: 'relative' }}>
-                {/* 加载遮罩 */}
-                {showSpinner && (
-                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5', zIndex: 5 }}>
-                    <Spin tip="正在加载 WPS 多维表格..." />
-                  </div>
-                )}
-
-                {/* 超时/错误/未登录提示：全屏卡片 + 操作按钮 */}
-                {showFallback && (
-                  <div style={{
-                    position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center', background: '#f0f2f5',
-                    zIndex: 6, padding: 40, textAlign: 'center',
-                  }}>
-                    <TableOutlined style={{ fontSize: 48, color: '#1890ff', marginBottom: 16 }} />
-                    <Title level={5} style={{ marginBottom: 8 }}>表格未能在页面内显示</Title>
-                    <Text style={{ color: '#666', marginBottom: 20, lineHeight: 1.9 }}>
-                      浏览器安全策略可能阻止了内嵌加载，或表格提示需要登录 WPS。<br />
-                      请点下方「在新标签页打开」完成登录后回到本页，表格会自动刷新；<br />
-                      仍提示未登录时，可直接在新标签页操作表格，完成后返回本页交卷
-                      （判分读取的是表格数据，与你在哪里操作无关）。
-                    </Text>
-                    <Space>
-                      <Button size="large" icon={<ReloadOutlined />} onClick={reload}>
-                        已登录，刷新表格
-                      </Button>
-                      <Button type="primary" size="large" icon={<LinkOutlined />} onClick={openInNewTab}>
-                        在新标签页打开多维表格
-                      </Button>
-                    </Space>
-                  </div>
-                )}
-
-                <iframe
-                  key={reloadKey}
-                  src={wpsTable?.shareUrl || ''}
-                  style={{ width: '100%', height: '100%', border: 'none' }}
-                  title="WPS 多维表格"
-                  onLoad={handleIframeLoad}
-                  onError={handleIframeError}
-                  referrerPolicy="no-referrer"
-                />
-              </div>
-            </div>
+            <WpsTablePanel
+              shareUrl={wpsTable!.shareUrl}
+              storageKey={`exam:${id}`}
+              previewEndpoint={`/my-exams/${id}/wps-preview`}
+              onWorkbenchChange={handleWorkbenchChange}
+            />
           )}
         </div>
       </div>

@@ -17,7 +17,8 @@ export interface PracticeFileStudent {
 interface Assignment {
   fileId: string;
   shareUrl: string | null;
-  accessToken: string | null;
+  /** 服务端不再下发 accessToken（凭据只进不出），只表示是否已配置 */
+  hasToken?: boolean;
   updatedAt: string;
 }
 
@@ -46,9 +47,10 @@ export function PracticeFileModal({ student, open, onClose, onSaved }: Props) {
       .then((res) => {
         setAssignment(res.data.assignment);
         if (res.data.assignment) {
+          // 不回填 accessToken：服务端已不下发该凭据；留空即沿用系统当前 Token
           form.setFieldsValue({
             shareUrl: res.data.assignment.shareUrl || '',
-            accessToken: res.data.assignment.accessToken || '',
+            accessToken: '',
           });
         }
       })

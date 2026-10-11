@@ -47,7 +47,13 @@ export function LoginPage() {
       login(res.data.user, res.data.token, res.data.permissions);
 
       const role = res.data.user.role;
-      if (role === 'student') navigate('/student');
+      // 会话过期被踢出时（api 拦截器写入 login_return_url），登录后回到原来的位置：
+      // 考试中掉线重登能直接回到答题页，而不是落到首页后自己找路
+      const returnUrl = sessionStorage.getItem('login_return_url');
+      sessionStorage.removeItem('login_return_url');
+      if (returnUrl && returnUrl.startsWith('/')) {
+        navigate(returnUrl, { replace: true });
+      } else if (role === 'student') navigate('/student');
       else if (role === 'admin') navigate('/admin');
       else navigate('/teacher');
 
@@ -121,9 +127,10 @@ export function LoginPage() {
           </Form.Item>
         </Form>
 
+        {/* 自助注册已关闭（任何人可自封教师的权限漏洞）：
+            学生走教师发的班级邀请链接入班，教师账号由管理员开通 */}
         <div style={{ textAlign: 'center' }}>
-          <Text type="secondary">还没有账号？</Text>
-          <Link to="/register">立即注册</Link>
+          <Text type="secondary">还没有账号？请联系任课教师获取班级邀请链接</Text>
         </div>
 
         {import.meta.env.DEV && (

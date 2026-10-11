@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, Button, Spin, message, Steps, Tag, Result, Space, Typography } from 'antd';
 import {
@@ -8,10 +8,15 @@ import {
   FullscreenOutlined,
   ReloadOutlined,
   ArrowRightOutlined,
+  CloudOutlined,
+  ExportOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
+import { useAuthStore } from '../../stores/auth';
 import { FullscreenGuard } from '../../components/exam/FullscreenGuard';
+import { useWpsEmbed } from '../../hooks/useWpsEmbed';
+import { serverNow, syncServerTime } from '../../utils/exam-time';
 
 const { Title, Text } = Typography;
 
@@ -21,7 +26,7 @@ interface CheckItem {
   key: string;
   title: string;
   icon: React.ReactNode;
-  description: string;
+  description: React.ReactNode;
   status: CheckStatus;
   message?: string;
 }
@@ -29,9 +34,25 @@ interface CheckItem {
 export function ExamEnvironmentCheck() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
   const [exam, setExam] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [entering, setEntering] = useState(false);
+  // 可入场时段判定用服务端时间（serverNow）：机房电脑 CMOS 漂移时本机 Date.now()
+  // 与服务端时间戳错位，会导致「未到候考/已过迟到」判错。每秒刷新一次，
+  // 也让 canEnter 随考试窗口开放自动变可入（此前只算一次，早到的学生需刷新页面）。
+  const [now, setNow] = useState(() => Date.now());
+  // 全屏项连续失败计数：连续失败后允许「跳过并标记」（见 handleSkipFullscreen）
+  const [fullscreenFailCount, setFullscreenFailCount] = useState(0);
+  // 已跳过全屏检查：重新检测时保持通过态，不因「文档确实没在全屏」反复报失败
+  const fullscreenSkippedRef = useRef(false);
+  // ── WPS 登录检测（仅在本场考试分配了多维表格时出现）──
+  // 部分分配表会跳 WPS 登录页，内嵌 iframe 又受三方 Cookie 策略限制，
+  // 因此把「登录 WPS」提前到考前做掉：学生只需登录一次，整场考试都不再被登录墙拦住。
+  const [wpsShareUrl, setWpsShareUrl] = useState<string | null>(null);
+  const [wpsStatus, setWpsStatus] = useState<CheckStatus>('pending');
+  // 登录窗口打开期间挂起全屏守护（切到 WPS 登录窗口是预期行为）
+  const [guardSuspended, setGuardSuspended] = useState(false);
   const [checks, setChecks] = useState<CheckItem[]>([
     {
       key: 'browser',
@@ -63,10 +84,19 @@ export function ExamEnvironmentCheck() {
     },
   ]);
 
+  // 打开 WPS 登录窗口（顶层窗口，登录/扫码均正常；能复用已打开的窗口）
+  const { openWorkbench, focusWorkbench, workbenchOpen, popupBlocked } = useWpsEmbed(wpsShareUrl, {
+    storageKey: `envcheck:${id}`,
+    onWorkbenchChange: setGuardSuspended,
+  });
+
   useEffect(() => {
     api
       .get(`/my-exams/${id}`)
-      .then((res) => setExam(res.data.exam))
+      .then((res) => {
+        setExam(res.data.exam);
+        setWpsShareUrl(res.data.wpsTable?.shareUrl || null);
+      })
       .catch(() => message.error('加载考试信息失败'))
       .finally(() => setLoading(false));
   }, [id]);
@@ -77,6 +107,13 @@ export function ExamEnvironmentCheck() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, exam]);
+
+  // 每秒刷新服务端时间：canEnter 与页面上的时段提示随之重算
+  useEffect(() => {
+    void syncServerTime();
+    const timer = setInterval(() => setNow(serverNow()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const updateCheck = (key: string, status: CheckStatus, message?: string) => {
     setChecks((prev) =>
@@ -114,6 +151,11 @@ export function ExamEnvironmentCheck() {
     );
 
     // 4. 全屏状态
+    // 已被学生「跳过并标记」（无法全屏）：保持通过态并保留说明，不因重新检测反复报失败
+    if (fullscreenSkippedRef.current) {
+      updateCheck('fullscreen', 'pass', '已跳过全屏检查（无法进入全屏，已记录）');
+      return;
+    }
     const doc: any = document;
     const fullscreenOk = !!(
       doc.fullscreenElement ||
@@ -121,16 +163,96 @@ export function ExamEnvironmentCheck() {
       doc.mozFullScreenElement ||
       doc.msFullscreenElement
     );
-    updateCheck('fullscreen', fullscreenOk ? 'pass' : 'fail', fullscreenOk ? undefined : '请先点击"进入全屏"按钮');
+    // 连续失败计数：企业 GPO / 电子教室软件拒绝全屏时，连续失败后放行「跳过并标记」
+    setFullscreenFailCount((c) => (fullscreenOk ? 0 : c + 1));
+    updateCheck(
+      'fullscreen',
+      fullscreenOk ? 'pass' : 'fail',
+      fullscreenOk
+        ? undefined
+        : '未能进入全屏（可能被企业策略或电子教室软件限制）。请点弹窗中的「重新进入全屏」重试；连续失败后可「跳过并标记」继续入场'
+    );
   };
 
-  const allPassed = useMemo(() => checks.every((c) => c.status === 'pass'), [checks]);
+  /**
+   * 全屏检查「跳过并标记」：requestFullscreen 被浏览器策略拒绝（企业 GPO、
+   * 电子教室软件等）时，学生不能因此永远进不了考场。跳过时记一笔行为
+   * （FULLSCREEN_EXIT + metadata.reason: 'unsupported'），并把该项标记为通过
+   * （附带说明），不再阻塞入场 —— 异常留痕，监考可查。
+   */
+  const handleSkipFullscreen = useCallback(() => {
+    fullscreenSkippedRef.current = true;
+    setFullscreenFailCount(0);
+    updateCheck('fullscreen', 'pass', '已跳过全屏检查（无法进入全屏，已记录）');
+    // 环境检测页没有考试会话，直接走 behavior 上报通道
+    api
+      .post('/behaviors/record', {
+        examId: id,
+        studentId: user?.id,
+        behaviorType: 'FULLSCREEN_EXIT',
+        metadata: { reason: 'unsupported', source: 'env-check' },
+      })
+      .catch(() => {});
+    message.info('已跳过全屏检查并已记录，考试中请保持考试页面在最前');
+  }, [id, user?.id]);
 
-  // 计算是否允许进入考场（匹配 ExamEntrySteps 的 canStart 逻辑）
+  // WPS 登录检测项：只有本场考试分配了多维表格时才出现，且需学生手动确认（无法跨域自动探测登录态）
+  const wpsCheckItem: CheckItem = useMemo(
+    () => ({
+      key: 'wps',
+      title: 'WPS 账号登录',
+      icon: <CloudOutlined />,
+      description: (
+        <div style={{ lineHeight: 1.9 }}>
+          <div>本场考试需在 WPS 多维表格中作答，请先登录 WPS 账号（登录一次，整场考试无需重复登录）。</div>
+          <Space style={{ marginTop: 8 }} wrap>
+            {workbenchOpen ? (
+              <Button size="small" icon={<ExportOutlined />} onClick={focusWorkbench}>
+                回到 WPS 登录窗口
+              </Button>
+            ) : (
+              <Button size="small" type="primary" onClick={openWorkbench}>
+                打开 WPS 登录窗口
+              </Button>
+            )}
+            <Button
+              size="small"
+              disabled={wpsStatus === 'pass'}
+              onClick={() => setWpsStatus('pass')}
+            >
+              我已完成登录
+            </Button>
+          </Space>
+          {popupBlocked && (
+            <div style={{ color: '#ff4d4f', marginTop: 6 }}>
+              窗口被浏览器拦截：请允许本站弹出窗口后重试
+            </div>
+          )}
+          {wpsStatus !== 'pass' && (
+            <div style={{ color: '#999', marginTop: 6 }}>
+              登录方式：手机号 / 微信 / QQ 扫码均可。登录成功后回到本页点「我已完成登录」。
+            </div>
+          )}
+        </div>
+      ),
+      status: wpsStatus,
+      message: wpsStatus === 'pass' ? undefined : '未确认登录',
+    }),
+    [wpsStatus, workbenchOpen, popupBlocked, openWorkbench, focusWorkbench],
+  );
+
+  const allChecks = useMemo(
+    () => (wpsShareUrl ? [...checks, wpsCheckItem] : checks),
+    [checks, wpsCheckItem, wpsShareUrl],
+  );
+
+  const allPassed = useMemo(() => allChecks.every((c) => c.status === 'pass'), [allChecks]);
+
+  // 计算是否允许进入考场（匹配 ExamEntrySteps 的 canStart 逻辑）。
+  // now 为服务端时间（每秒刷新）：机房电脑时钟漂移时不会误判可入场时段。
   const canEnter = useMemo(() => {
     if (!exam) return false;
     const examMode = exam?.batch?.examMode || 'unified';
-    const now = Date.now();
 
     if (examMode === 'flexible') {
       const winStart = exam?.batch?.startTime ? new Date(exam.batch.startTime).getTime() : null;
@@ -158,7 +280,7 @@ export function ExamEnvironmentCheck() {
     if (examEnd && now > examEnd) return false;
 
     return true;
-  }, [exam]);
+  }, [exam, now]);
 
   const handleEnterExamRoom = async () => {
     if (!allPassed) {
@@ -181,7 +303,7 @@ export function ExamEnvironmentCheck() {
 
   if (loading) {
     return (
-      <FullscreenGuard active={true}>
+      <FullscreenGuard active={true} onForceContinue={handleSkipFullscreen}>
         <div style={{ textAlign: 'center', padding: 100 }}>
           <Spin size="large" />
         </div>
@@ -190,7 +312,7 @@ export function ExamEnvironmentCheck() {
   }
 
   return (
-    <FullscreenGuard active={true}>
+    <FullscreenGuard active={true} suspended={guardSuspended} onForceContinue={handleSkipFullscreen}>
       <div style={{ minHeight: '100vh', background: '#f0f2f5' }}>
         <div style={{ background: '#1890ff', padding: '32px 24px', textAlign: 'center', color: '#fff' }}>
           <Title level={3} style={{ color: '#fff', margin: 0 }}>WPS教学平台-考前环境检测</Title>
@@ -243,7 +365,7 @@ export function ExamEnvironmentCheck() {
                 <div style={{ color: '#ff4d4f' }}>
                   {(() => {
                     const examMode = exam?.batch?.examMode || 'unified';
-                    const now = Date.now();
+                    // now 为服务端时间（见顶部 ticker）：时段提示与 canEnter 口径一致
 
                     // ── 随到随考模式 ──
                     if (examMode === 'flexible') {
@@ -322,7 +444,7 @@ export function ExamEnvironmentCheck() {
               </Button>
             }
           >
-            <Steps direction="vertical" current={-1} items={checks.map((item) => {
+            <Steps direction="vertical" current={-1} items={allChecks.map((item) => {
               let statusIcon: React.ReactNode;
               if (item.status === 'pass') statusIcon = <Tag color="success">通过</Tag>;
               else if (item.status === 'fail') statusIcon = <Tag color="error">未通过</Tag>;
@@ -341,6 +463,17 @@ export function ExamEnvironmentCheck() {
                   <div>
                     <div>{item.description}</div>
                     {item.message && <Text type="danger">{item.message}</Text>}
+                    {/* 全屏项连续失败后放行「跳过并标记」：企业策略限制全屏时不能把学生永久挡在考场外 */}
+                    {item.key === 'fullscreen' && item.status === 'fail' && fullscreenFailCount >= 2 && (
+                      <div style={{ marginTop: 8 }}>
+                        <Button size="small" type="primary" onClick={handleSkipFullscreen}>
+                          无法全屏，跳过并标记（已记录）
+                        </Button>
+                        <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                          仅当浏览器被企业策略/电子教室软件限制全屏时使用
+                        </Text>
+                      </div>
+                    )}
                   </div>
                 ),
               };
@@ -348,7 +481,9 @@ export function ExamEnvironmentCheck() {
 
             {!allPassed && (
               <div style={{ marginTop: 16, textAlign: 'center' }}>
-                <Text type="secondary">请修复未通过项后点击“重新检测”</Text>
+                <Text type="secondary">
+                  请逐项完成检测；「WPS 账号登录」需完成登录后点「我已完成登录」，其余项目点「重新检测」
+                </Text>
               </div>
             )}
           </Card>

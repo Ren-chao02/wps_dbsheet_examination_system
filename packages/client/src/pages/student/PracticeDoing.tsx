@@ -4,12 +4,12 @@ import {
   Button, Card, Typography, Tag, message, Spin, Alert, Space, Result, List, Empty, Tooltip,
 } from 'antd';
 import {
-  ArrowLeftOutlined, CheckOutlined, LinkOutlined, ReloadOutlined, RightOutlined,
+  ArrowLeftOutlined, CheckOutlined, ReloadOutlined, RightOutlined,
   StarFilled, StarOutlined,
 } from '@ant-design/icons';
 import { practiceApi } from '../../services/api';
 import type { RuleResult } from '../../types';
-import { useWpsEmbed } from '../../hooks/useWpsEmbed';
+import { WpsTablePanel } from '../../components/wps/WpsTablePanel';
 
 const { Text, Title, Paragraph } = Typography;
 
@@ -71,19 +71,6 @@ export function PracticeDoing() {
   const [loading, setLoading] = useState(!payload);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<GradingResult | null>(null);
-  // ── WPS iframe 嵌入（遮罩/超时/重载/新标签登录后自动刷新） ──
-  const {
-    reloadKey,
-    iframeLoaded,
-    iframeError,
-    iframeTimeout,
-    showSpinner,
-    showFallback,
-    reload,
-    openInNewTab,
-    handleIframeLoad,
-    handleIframeError,
-  } = useWpsEmbed(shareUrl, 10000);
   // ── 收藏（个人题集）：星标状态全局共享（作答页 + 结果页） ──
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [favPendingId, setFavPendingId] = useState<string | null>(null);
@@ -416,52 +403,13 @@ export function PracticeDoing() {
           </div>
         </div>
 
-        {/* 右侧 WPS iframe */}
+        {/* 右侧：WPS 多维表格面板（内嵌 / 独立窗口工作台 + 实时数据面板） */}
         {hasShareUrl && (
-          <div style={{ flex: 1, position: 'relative', background: '#f0f2f5' }}>
-            {/* 右上角工具：刷新表格 + 在新标签页打开（WPS 登录/备用操作入口） */}
-            <div style={{ position: 'absolute', top: 8, right: 12, zIndex: 10, display: 'flex', gap: 8 }}>
-              <Button size="small" icon={<ReloadOutlined />} onClick={reload}>
-                刷新表格
-              </Button>
-              <Button size="small" icon={<LinkOutlined />} onClick={openInNewTab}>
-                在新标签页打开
-              </Button>
-            </div>
-
-            {/* 加载遮罩：onLoad 触发 / 报错 / 超时 三者任一发生即撤下，避免永久转圈 */}
-            {showSpinner && (
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5', zIndex: 5 }}>
-                <Spin tip="正在加载 WPS 多维表格..." />
-              </div>
-            )}
-
-            {/* 超时/错误提示：iframe 迟迟未触发 onLoad，提示学生刷新或新标签页打开 */}
-            {showFallback && (
-              <div style={{ position: 'absolute', top: 44, left: 12, right: 12, zIndex: 6 }}>
-                <Alert
-                  type="warning" showIcon banner
-                  message="WPS 表格加载较慢、被浏览器拦截或提示需登录"
-                  description={
-                    <div style={{ lineHeight: 1.9 }}>
-                      若表格区域提示「登录 WPS」：请点右上「在新标签页打开」完成登录后回到本页，表格会自动刷新；
-                      仍提示未登录时，可直接在新标签页操作表格，完成后返回本页交卷（判分读取表格数据，与在哪操作无关）。
-                      也可点击「刷新表格」重试加载。
-                    </div>
-                  }
-                />
-              </div>
-            )}
-
-            <iframe
-              key={reloadKey}
-              src={shareUrl || ''}
-              style={{ width: '100%', height: '100%', border: 'none' }}
-              title="WPS 多维表格练习"
-              onLoad={handleIframeLoad}
-              onError={handleIframeError}
-            />
-          </div>
+          <WpsTablePanel
+            shareUrl={shareUrl}
+            storageKey="practice"
+            previewEndpoint="/practice/wps-preview"
+          />
         )}
       </div>
     </div>

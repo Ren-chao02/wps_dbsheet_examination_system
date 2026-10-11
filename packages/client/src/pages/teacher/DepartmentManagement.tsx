@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Card, Row, Col, Tree, Input, Button, Form, Empty, message, Popconfirm,
-  Space, Divider, Spin,
+  Space, Divider, Spin, Tag,
 } from 'antd';
 import {
   PlusOutlined, BankOutlined, BookOutlined, TeamOutlined,
@@ -10,6 +10,7 @@ import {
 import type { TreeProps } from 'antd';
 import type { DataNode } from 'antd/es/tree';
 import api from '../../services/api';
+import { useAuthStore } from '../../stores/auth';
 import type { Department, Major, ClassRoom } from '../../types';
 
 type NodeType = 'dept' | 'major' | 'class';
@@ -36,6 +37,10 @@ function parseNodeKey(key: string): { type: NodeType; id: string } {
 }
 
 export default function DepartmentManagement() {
+  // 组织架构写操作仅管理员可用（后端已收紧）：教师只能查看，
+  // 因此把新增/删除/保存入口一并隐藏，避免点了才收到 403。
+  const canWrite = useAuthStore((s) => s.user?.role) === 'admin';
+
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchValue, setSearchValue] = useState('');
@@ -222,7 +227,8 @@ export default function DepartmentManagement() {
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
         <span>{nodeData.title as string}</span>
         <Space size={4} style={{ marginLeft: 4 }} onClick={(e) => e.stopPropagation()}>
-          {type !== 'class' && (
+          {/* 写操作仅管理员：教师端整页只读，直接不渲染按钮（点了才报 403 体验更差） */}
+          {canWrite && type !== 'class' && (
             <Button
               type="text"
               size="small"
@@ -231,28 +237,30 @@ export default function DepartmentManagement() {
               title={type === 'dept' ? '新增专业' : '新增班级'}
             />
           )}
-          <Popconfirm
-            title={`确定删除该${nodeTypeLabel[type]}？${type !== 'class' ? '其下所有子级也将被删除。' : ''}`}
-            onConfirm={handleDelete}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Button
-              type="text"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              title={`删除${nodeTypeLabel[type]}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                // Ensure this node is selected before deleting
-                const nodeData = resolveNode(type, id);
-                if (nodeData) {
-                  setSelectedNode({ type, id, data: nodeData });
-                }
-              }}
-            />
-          </Popconfirm>
+          {canWrite && (
+            <Popconfirm
+              title={`确定删除该${nodeTypeLabel[type]}？${type !== 'class' ? '其下所有子级也将被删除。' : ''}`}
+              onConfirm={handleDelete}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button
+                type="text"
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+                title={`删除${nodeTypeLabel[type]}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // Ensure this node is selected before deleting
+                  const nodeData = resolveNode(type, id);
+                  if (nodeData) {
+                    setSelectedNode({ type, id, data: nodeData });
+                  }
+                }}
+              />
+            </Popconfirm>
+          )}
         </Space>
       </span>
     );
@@ -270,14 +278,18 @@ export default function DepartmentManagement() {
       <Card
         title={`编辑${nodeTypeLabel[type]}`}
         extra={
-          <Popconfirm
-            title={`确定删除该${nodeTypeLabel[type]}？${type !== 'class' ? '其下所有子级也将被删除。' : ''}`}
-            onConfirm={handleDelete}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Button danger icon={<DeleteOutlined />} size="small">删除</Button>
-          </Popconfirm>
+          canWrite ? (
+            <Popconfirm
+              title={`确定删除该${nodeTypeLabel[type]}？${type !== 'class' ? '其下所有子级也将被删除。' : ''}`}
+              onConfirm={handleDelete}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button danger icon={<DeleteOutlined />} size="small">删除</Button>
+            </Popconfirm>
+          ) : (
+            <Tag>只读</Tag>
+          )
         }
       >
         <Form form={form} layout="vertical" onFinish={handleSave}>
@@ -322,7 +334,11 @@ export default function DepartmentManagement() {
           )}
 
           <Form.Item>
-            <Button type="primary" htmlType="submit" loading={saving}>保存</Button>
+            {canWrite ? (
+              <Button type="primary" htmlType="submit" loading={saving}>保存</Button>
+            ) : (
+              <Button disabled>只读模式：如需调整组织架构请联系管理员</Button>
+            )}
           </Form.Item>
         </Form>
       </Card>
@@ -335,9 +351,13 @@ export default function DepartmentManagement() {
       <Card
         title="院系架构管理"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAddDepartment}>
-            新增院系
-          </Button>
+          canWrite ? (
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleAddDepartment}>
+              新增院系
+            </Button>
+          ) : (
+            <Tag>只读（组织架构调整请联系管理员）</Tag>
+          )
         }
       >
         <Row gutter={16}>

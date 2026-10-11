@@ -22,6 +22,17 @@ api.interceptors.response.use(
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       if (window.location.pathname !== '/login') {
+        // 考试中遇到 401（服务端重启换密钥/账号被禁用）会整页跳走、丢失当前题与切屏计数。
+        // 这里先把当前 URL 存进 sessionStorage，登录成功后跳回（key: login_return_url，
+        // 由 LoginPage 消费：登录成功后读取并清除、navigate 回去，未接入前只存不用）。
+        try {
+          sessionStorage.setItem(
+            'login_return_url',
+            window.location.pathname + window.location.search + window.location.hash
+          );
+        } catch {
+          // 隐私模式下 sessionStorage 可能不可用：忽略，仅丢失回跳能力
+        }
         window.location.href = '/login';
       }
     }
