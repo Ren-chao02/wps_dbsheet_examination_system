@@ -39,6 +39,7 @@ const { mockPrisma } = vi.hoisted(() => {
     exam: { findUnique: vi.fn(), findFirst: vi.fn() },
     studentSubmission: { findUnique: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
     examQuestion: { findMany: vi.fn() },
+    studentExamQuestion: { findMany: vi.fn(), count: vi.fn(), createMany: vi.fn() },
     examTableAssignment: { findUnique: vi.fn() },
     examRoomStudent: { findFirst: vi.fn() },
     examSession: { findFirst: vi.fn(), create: vi.fn() },
@@ -99,8 +100,10 @@ beforeEach(() => {
   mockPrisma.exam.findFirst.mockResolvedValue({ id: 'exam-1' });
   mockPrisma.studentSubmission.findUnique.mockResolvedValue(null);
   mockPrisma.examQuestion.findMany.mockResolvedValue([
-    { question: QUESTION_WITH_RULES, scoreOverride: null, sortOrder: 0 },
+    { question: QUESTION_WITH_RULES, scoreOverride: null, sortOrder: 0, slotIndex: 0, slotType: 'fixed', questionId: 'q-1' },
   ]);
+  // 默认无卷子快照（未开考）→ 接口走「固定题位」分支
+  mockPrisma.studentExamQuestion.findMany.mockResolvedValue([]);
   mockPrisma.examTableAssignment.findUnique.mockResolvedValue({ shareUrl: null, fileId: 'f1' });
 });
 
@@ -116,6 +119,23 @@ describe('学生视角的题目下发（答案防泄露）', () => {
     expect(q.title).toBe('创建员工信息表');
     expect(q.answerRules).toBeUndefined();
     expect(q.analysis).toBeUndefined();
+  });
+
+  it('已开考（有卷子快照）时下发该生实际拿到的题目，同样剥离答案字段', async () => {
+    mockPrisma.studentSubmission.findUnique.mockResolvedValue({ id: 'sub-1', status: 'in_progress', startedAt: new Date(), details: [] });
+    mockPrisma.studentExamQuestion.findMany.mockResolvedValue([
+      { question: QUESTION_WITH_RULES, score: 8, sortOrder: 0, source: 'rule' },
+    ]);
+
+    const res = await request(makeApp(myExamRouter, '/api/my-exams'))
+      .get('/api/my-exams/exam-1')
+      .set('x-test-role', 'student');
+
+    expect(res.status).toBe(200);
+    expect(res.body.questions).toHaveLength(1);
+    expect(res.body.questions[0].answerRules).toBeUndefined();
+    expect(res.body.questions[0].score).toBe(8); // 分值取该生卷子里的分值，不是题库默认分
+    expect(res.body.questionCount).toBe(1);
   });
 
   it('未被分配到该考试的学生 → 403（防止用考试 ID 越权读题）', async () => {

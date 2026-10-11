@@ -208,16 +208,24 @@ examRouter.post('/', async (req: Request, res: Response) => {
       });
 
       if (paperQuestions.length > 0) {
+        // 连题位信息一起拷过去：rule 题位（按知识点抽题）没有固定题目，
+        // 只拷 questionId 会把抽题规则丢掉，考试就退化成"缺失大半题目"
         await prisma.examQuestion.createMany({
-          data: paperQuestions.map(pq => ({
+          data: paperQuestions.map((pq, index) => ({
             examId: exam.id,
             questionId: pq.questionId,
             sortOrder: pq.sortOrder,
             scoreOverride: pq.score ?? null,
+            slotType: pq.slotType ?? 'fixed',
+            rule: (pq.rule ?? undefined) as any,
+            slotIndex: index,
           })),
         });
 
-        const totalScore = paperQuestions.reduce((sum, pq) => sum + (pq.score ?? pq.question?.score ?? 0), 0);
+        // 抽题题位的分值取题位分（没有固定题目可回退）；固定题位仍可用题目分兜底
+        const totalScore = paperQuestions.reduce(
+          (sum, pq) => sum + (pq.score ?? pq.question?.score ?? 0), 0,
+        );
         await prisma.exam.update({
           where: { id: exam.id },
           data: { totalScore },
@@ -341,11 +349,14 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
 
         if (paperQuestions.length > 0) {
           await prisma.examQuestion.createMany({
-            data: paperQuestions.map(pq => ({
+            data: paperQuestions.map((pq, index) => ({
               examId: req.params.id,
               questionId: pq.questionId,
               sortOrder: pq.sortOrder,
               scoreOverride: pq.score ?? null,
+              slotType: pq.slotType ?? 'fixed',
+              rule: (pq.rule ?? undefined) as any,
+              slotIndex: index,
             })),
           });
         }
