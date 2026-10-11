@@ -1,0 +1,17 @@
+# 提交前扫描暂存区的密钥。
+#
+# 这条钩子存在的具体理由：本项目的 tableSpaceId 形如 `fileId:accessToken`，
+# 凭据极易被顺带写进调试脚本、日志或种子数据（已经真实发生过一次——
+# 诊断脚本把一整条可用的 WPS token 打印到了终端，而那脚本正要入库）。
+#
+# 没装 gitleaks 时不阻断提交，只提示：否则新克隆的人第一次 commit 就会卡住，
+# 而 CI 里那一步是强制的（.github/workflows/ci.yml），兜底不会漏。
+#
+# 安装：下载对应平台二进制放到 PATH 即可
+#   https://github.com/gitleaks/gitleaks/releases
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "[pre-commit] 未检测到 gitleaks，跳过密钥扫描（CI 仍会强制扫描）"
+  exit 0
+fi
+
+gitleaks git --staged --no-banner --redact

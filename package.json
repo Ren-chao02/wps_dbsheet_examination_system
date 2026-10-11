@@ -8,18 +8,33 @@
     "dev:server": "npm run dev -w packages/server",
     "dev:client": "npm run dev -w packages/client",
     "build": "npm run build -w packages/server && npm run build -w packages/client",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "npm run typecheck -w packages/server && npm run typecheck -w packages/client",
+    "test": "npm run test -w packages/server && npm run test -w packages/client",
+    "test:coverage": "npm run test:coverage -w packages/server",
     "db:migrate": "npm run db:migrate -w packages/server",
     "db:seed": "npm run db:seed -w packages/server",
     "db:studio": "npm run db:studio -w packages/server",
     "docker:up": "docker compose up -d",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "prepare": "husky"
   },
   "workspaces": [
     "packages/server",
     "packages/client"
   ],
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.0",
+    "@vitest/coverage-v8": "^4.1.11",
     "concurrently": "^8.2.2",
-    "typescript": "^5.4.0"
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "globals": "^17.13.0",
+    "husky": "^9.1.7",
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.71.1"
   }
 }

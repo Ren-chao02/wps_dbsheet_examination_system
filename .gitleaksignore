@@ -1,0 +1,29 @@
+# gitleaks 逐条豁免清单　指纹格式：<提交SHA>:<文件>:<规则ID>:<行号>
+#
+# 为什么用这个文件、而不是 .gitleaks.toml 里的 allowlist：
+# 实测确认 gitleaks 的 [[allowlists]] 中 paths 与 regexes 之间是 **OR** 语义
+# （我原本以为能"按路径 + 按内容"双重限定，实际写了 paths 就等于把整个文件放行），
+# 那样会留下真实盲区，所以改成逐条指纹豁免——同一个文件里将来出现新密钥照样会被拦。
+#
+# 这个项目保留这道扫描是有具体理由的：多维表格的 tableSpaceId 形如
+# `fileId:accessToken`，凭据极易被顺带写进日志、种子数据或调试脚本
+# （已经真实发生过一次：诊断脚本把一整条可用 token 打印到了终端）。
+
+# ① 环境变量模板里的空值行（共 3 条）。
+#    generic-api-key 规则遇到 `KINGSOFT_API_KEY=""` 会跨行匹配，把下一行的键名
+#    当成"值"。这三个文件按设计只放占位符，不含真实凭据。
+583253a61c249f265b0c802652b7199fb5c279d1:.env.example:generic-api-key:10
+a4a90c52e6fa7ad9a25f46450b437343ed017e7e:packages/server/.env.example:generic-api-key:13
+42e7f23b23f6eb1203e33ffffc44293bd1050b70:.env.production:generic-api-key:28
+
+# ② 单元测试夹具里的假 key（db-glm-key 之类，mock 用）
+583253a61c249f265b0c802652b7199fb5c279d1:packages/server/src/services/__tests__/llm-config-service.test.ts:generic-api-key:113
+
+# ③ 实施计划文档里的 curl 示例，Authorization 用的是 YOUR_TOKEN_HERE 占位符
+bd2b60d036ac9e2c5278dd6da4fdbe086e31fe67:docs/superpowers/plans/2026-06-17-question-bank-enhancement.md:curl-auth-header:1158
+
+# ④ 种子数据 dump.json 里的 WPS 临时令牌：2026-07 签发、有效期 24 小时，早已失效。
+#    该字段必须保持 `fileId:token` 格式代码才解析得出来，故未抹除。
+#    ⚠️ 这是本清单里唯一"确实含凭据"的一条：如果哪天它被新提交重新触发，正确的做法是
+#    重新导出种子数据并清空 token 部分，而不是再往这里加一条豁免。
+42e7f23b23f6eb1203e33ffffc44293bd1050b70:packages/server/prisma/seed-data/dump.json:jwt:2886
