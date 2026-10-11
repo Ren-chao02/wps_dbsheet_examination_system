@@ -11,11 +11,16 @@ __pycache__/
 *.pyc
 uploads/
 .qoder/
-docs/
 .trae/
 mockups/
 test_screenshots/
 scripts/
+
+# 说明：docs/ 不再整体忽略 —— 里面的 API 参考、知识点清单、设计稿与实施计划
+# 是项目的一部分，交付/迁移/交接时应当随代码一起走（此前被整体忽略，
+# 换台机器 clone 下来就只剩代码、看不到设计来龙去脉）。
+# 仍被忽略的本地目录：.qoder/ .trae/ mockups/ test_screenshots/ scripts/
+# （分别是 AI 工具产物、本地原型、本地截图、本地小脚本）
 demo-wps-embed.html
 
 
@@ -27,8 +32,10 @@ packages/client/cert/*.pem
 # 调试文件 - 本地开发产物
 debug-*
 
-# vite.config.ts 的编译产物：由 `npm run build` 的 tsc -b 生成，
-# 且 Vite 解析顺序 .js 优先于 .ts 会遮蔽源码，故不纳入版本管理
+# tsc -b 的中间产物目录（已在 tsconfig.node.json 里指定 outDir，
+# 避免 vite.config.js 生成在源码旁遮蔽 vite.config.ts）
+.tsbuild/
+# 兼容：历史版本曾在源码旁生成过这两个文件，留着防止误提交
 packages/client/vite.config.js
 packages/client/vite.config.d.ts
 
