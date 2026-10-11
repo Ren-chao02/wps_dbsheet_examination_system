@@ -44,6 +44,13 @@ export interface RecordData {
   [tableName: string]: {
     records: { id: string; fields: Record<string, any> }[];
     fieldsSchema?: { id: string; name: string; type: string }[];
+    /**
+     * 表存在、但记录数据没取回来（WPS 接口报错 / 权限不足 / 限流 / 网络）。
+     *
+     * 与「表压根不存在」必须区分开：表不存在是学生没做，判 0 分是对的；
+     * 数据取不回来是系统这边的问题，判 0 分等于冤枉学生，必须转人工复核。
+     */
+    fetchFailed?: boolean;
   };
 }
 
@@ -252,6 +259,24 @@ function findView(sheet: SheetInfo, viewName: string): ViewInfo | undefined {
   return (sheet.views || []).find(v => v.name === viewName);
 }
 
+/**
+ * 「表在，但记录数据没取回来」的统一返回：转人工复核。
+ *
+ * 为什么不能直接判 0 分：取不回来可能是 WPS 接口报错、权限失效（已真实出现过
+ * 一个 fileId 报 403）、限流或网络抖动 —— 这些都不是学生的操作问题。判 0 分
+ * 等于冤枉学生，而且不会有任何人发现。
+ */
+function recordFetchFailed(params: any, tableName: string) {
+  return {
+    passed: false,
+    score: 0,
+    expected: params,
+    actual: { tableName, recordData: '读取失败' },
+    errorMessage: `表「${tableName}」的记录数据读取失败（非学生操作问题），需人工复核`,
+    needsReview: true,
+  };
+}
+
 // ============================================================
 // 规则处理器
 // ============================================================
@@ -284,10 +309,22 @@ const ruleHandlers: Record<string, RuleHandler> = {
    * params: { tableName: string }
    */
   check_table_name(schema, params) {
-    const target = params.tableName.toLowerCase();
-    const matched = schema.detail.sheets.find(
-      s => s.name.toLowerCase().includes(target) || target.includes(s.name.toLowerCase())
-    );
+    const target = String(params.tableName || '').toLowerCase();
+    if (!target) {
+      // 规则没配表名属于出题错误，不该让学生背锅
+      return {
+        passed: false,
+        score: 0,
+        expected: { tableName: params.tableName },
+        actual: null,
+        errorMessage: '规则未配置表名，需人工复核',
+        needsReview: true,
+      };
+    }
+    // 只保留「学生的表名里包含要求的名字」这一个方向（"员工信息表(副本)" 匹配 "员工信息表"）。
+    // 原来还允许反向包含，于是学生建一张名为「表」的表就能通过「员工信息表」的检查 ——
+    // 名字越短越容易蒙混，单字表名几乎能通过任何检查。
+    const matched = schema.detail.sheets.find(s => s.name.toLowerCase().includes(target));
     return {
       passed: !!matched,
       score: 0,
@@ -1132,9 +1169,15 @@ const ruleHandlers: Record<string, RuleHandler> = {
       };
     }
 
-    const actualFormat = field.numberFormat || field.data?.number_format || '';
-    const expectedFormat = params.format as string;
-    const passed = actualFormat.includes(expectedFormat) || expectedFormat.includes(actualFormat);
+    const actualFormat = String(field.numberFormat || field.data?.number_format || '');
+    const expectedFormat = String(params.format ?? '');
+    // ⚠️ 必须先判空再比较：空字符串是**任何**字符串的子串，
+    // 原来的 `actualFormat.includes(expected) || expected.includes(actualFormat)`
+    // 在「学生根本没配格式」（actualFormat === ''）时会恒为真 —— 学生什么都不做也能得分。
+    const passed =
+      actualFormat !== '' &&
+      expectedFormat !== '' &&
+      (actualFormat.includes(expectedFormat) || expectedFormat.includes(actualFormat));
 
     return {
       passed,
@@ -1446,6 +1489,8 @@ const ruleHandlers: Record<string, RuleHandler> = {
       };
     }
 
+    if (tableRecords.fetchFailed) return recordFetchFailed(params, params.tableName);
+
     const { fieldName, value } = params;
     const matchedRecords = tableRecords.records.filter(r => {
       const fieldValue = r.fields[fieldName];
@@ -1507,6 +1552,8 @@ const ruleHandlers: Record<string, RuleHandler> = {
         needsReview: false,
       };
     }
+    if (tableRecords.fetchFailed) return recordFetchFailed(params, params.tableName);
+
     const hasRecords = tableRecords.records.length > 0;
     return {
       passed: hasRecords,
@@ -1530,6 +1577,8 @@ const ruleHandlers: Record<string, RuleHandler> = {
         needsReview: false,
       };
     }
+
+    if (tableRecords.fetchFailed) return recordFetchFailed(params, params.tableName);
 
     // params: { tableName, fieldName, value, matchType?: 'exact' | 'contains' }
     const { fieldName, value, matchType = 'contains' } = params;
@@ -1570,6 +1619,8 @@ const ruleHandlers: Record<string, RuleHandler> = {
         needsReview: false,
       };
     }
+
+    if (tableRecords.fetchFailed) return recordFetchFailed(params, params.tableName);
 
     // params: { tableName, count, operator?: 'gte' | 'eq' | 'lte' }
     const actualCount = tableRecords.records.length;

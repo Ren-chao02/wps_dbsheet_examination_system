@@ -26,6 +26,7 @@ import {
 } from '../engine/rule-engine';
 import { createAdapterFromSpaceId } from '../engine/adapters/kingsoft-adapter';
 import { wpsConfigService } from './wps-config-service';
+import { logger } from '../utils/logger';
 
 // ============================================================
 // 类型定义
@@ -186,11 +187,24 @@ export async function gradePracticeRecord(
   if (tablesNeedingRecords.size > 0) {
     recordData = {};
     for (const tableName of tablesNeedingRecords) {
-      const result = await adapter.getRecordsByTableName(tableName);
-      recordData[tableName] = {
-        records: result.records,
-        fieldsSchema: result.fieldsSchema,
-      };
+      // 表不存在 = 学生没建，交给规则引擎判「不通过」（正确判定）
+      if (!schema.detail.sheets.some(s => s.name === tableName)) continue;
+
+      try {
+        const result = await adapter.getRecordsByTableName(tableName);
+        recordData[tableName] = {
+          records: result.records,
+          fieldsSchema: result.fieldsSchema,
+        };
+      } catch (err: any) {
+        // 与 grading-service 同问题：适配器对「表不存在」是直接 throw，
+        // 原来这里没有 try/catch，一次读取失败会让整份练习判分中断。
+        logger.warn(
+          { tableName, err: err?.message || String(err) },
+          '[practice-grading] 记录数据读取失败，该题转人工复核',
+        );
+        recordData[tableName] = { records: [], fetchFailed: true };
+      }
     }
   }
 

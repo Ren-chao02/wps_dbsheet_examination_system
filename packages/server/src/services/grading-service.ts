@@ -16,6 +16,7 @@ import { prisma } from '../config/prisma';
 import { evaluateRules, type AnswerRule, type RuleResult, type SchemaResponse, type RecordData } from '../engine/rule-engine';
 import { gradeObjectiveQuestion, isObjectiveType } from '../engine/objective-grader';
 import { createAdapterFromSpaceId } from '../engine/adapters/kingsoft-adapter';
+import { logger } from '../utils/logger';
 import { wpsConfigService } from './wps-config-service';
 
 // ============================================================
@@ -233,11 +234,26 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
   if (tablesNeedingRecords.size > 0 && adapter) {
     recordData = {};
     for (const tableName of tablesNeedingRecords) {
-      const result = await adapter.getRecordsByTableName(tableName);
-      recordData[tableName] = {
-        records: result.records,
-        fieldsSchema: result.fieldsSchema,
-      };
+      // 表压根不存在 = 学生没建这张表，交给规则引擎判「不通过」（这是正确判定）
+      if (!schema.detail.sheets.some(s => s.name === tableName)) continue;
+
+      try {
+        const result = await adapter.getRecordsByTableName(tableName);
+        recordData[tableName] = {
+          records: result.records,
+          fieldsSchema: result.fieldsSchema,
+        };
+      } catch (err: any) {
+        // 表在，但数据取不回来（WPS 接口报错 / 权限失效 / 限流 / 网络）。
+        // 原来这里没有 try/catch，适配器对「表不存在」是直接 throw 的 ——
+        // 一次读取失败会让**整份答卷**判分中断：不是某一道题 0 分，是全部判不了。
+        // 而这类失败多半不是学生的操作问题，所以标记为读取失败、转人工复核。
+        logger.warn(
+          { tableName, submissionId: submission.id, err: err?.message || String(err) },
+          '记录数据读取失败，该题转人工复核',
+        );
+        recordData[tableName] = { records: [], fetchFailed: true };
+      }
     }
   }
 
