@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
+import { checkExamAccess, checkStudentAccess, denyAccess } from '../middleware/exam-ownership';
 import ExcelJS from 'exceljs';
 
 export const statisticsRouter = Router();
@@ -138,6 +139,10 @@ statisticsRouter.get('/overview', async (req: Request, res: Response) => {
 // GET /api/statistics/exam/:examId — 单场考试分析
 statisticsRouter.get('/exam/:examId', async (req: Request, res: Response) => {
   try {
+    // 归属校验：教师只能查看自己创建（或监考）的考试统计，admin 放行
+    const access = await checkExamAccess(req, req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const exam = await prisma.exam.findUnique({
       where: { id: req.params.examId },
       include: {
@@ -516,6 +521,10 @@ statisticsRouter.get('/exam/:examId/export', async (req: Request, res: Response)
 // GET /api/statistics/student/:studentId
 statisticsRouter.get('/student/:studentId', async (req: Request, res: Response) => {
   try {
+    // 归属校验：教师只能查看自己班级学生的统计；未分班学生对所有教师开放（口径见 checkStudentAccess）
+    const access = await checkStudentAccess(req, req.params.studentId);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const student = await prisma.user.findUnique({
       where: { id: req.params.studentId },
       select: { id: true, username: true, realName: true },

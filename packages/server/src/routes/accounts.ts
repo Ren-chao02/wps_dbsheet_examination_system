@@ -2,6 +2,7 @@
  * 账户管理路由 — 增强版用户管理（支持 systemRole、gender、remark）
  */
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import ExcelJS from 'exceljs';
@@ -226,6 +227,12 @@ accountRouter.put('/:id', async (req: Request, res: Response) => {
   try {
     const data = updateAccountSchema.parse(req.body);
 
+    // ⚠️ 禁止自我提权/自我降权：若允许改自己的 role 或 systemRoleId，
+    // 任何拿到 SYSTEM_MANAGEMENT 权限的账号都能把自己变成 admin（进而重置他人密码）。
+    if (req.params.id === req.user!.userId && (data.role !== undefined || data.systemRoleId !== undefined)) {
+      return res.status(400).json({ message: '不能修改自己的角色，请由其他管理员操作' });
+    }
+
     if (data.systemRoleId) {
       const role = await prisma.systemRole.findUnique({ where: { id: data.systemRoleId } });
       if (!role) {
@@ -239,6 +246,7 @@ accountRouter.put('/:id', async (req: Request, res: Response) => {
         ...(data.realName !== undefined && { realName: data.realName }),
         ...(data.email !== undefined && { email: data.email }),
         ...(data.role !== undefined && { role: data.role }),
+        // 注意：以下由上方守卫保证 —— 不允许修改自己的角色（防自我提权）
         ...(data.gender !== undefined && { gender: data.gender }),
         ...(data.remark !== undefined && { remark: data.remark }),
         ...(data.systemRoleId !== undefined && { systemRoleId: data.systemRoleId }),
@@ -353,6 +361,18 @@ accountRouter.put('/:id/classes', async (req: Request, res: Response) => {
 // ============================================================
 // POST /api/accounts/reset-password/:id — 重置密码
 // ============================================================
+/**
+ * 重置密码用一次性随机口令（字符集去掉易混淆的 0/O/1/I/l，便于口头转告）。
+ * 不使用固定弱口令，避免「猜到默认密码即可登录他人账号」。
+ */
+function generateResetPassword(length = 8): string {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(length);
+  let out = '';
+  for (let i = 0; i < length; i++) out += alphabet[bytes[i] % alphabet.length];
+  return out;
+}
+
 accountRouter.put('/reset-password/:id', async (req: Request, res: Response) => {
   try {
     const user = await prisma.user.findUnique({
@@ -363,14 +383,16 @@ accountRouter.put('/reset-password/:id', async (req: Request, res: Response) => 
       return res.status(404).json({ message: '用户不存在' });
     }
 
-    const defaultPassword = '123456';
-    const passwordHash = await bcrypt.hash(defaultPassword, 10);
+    // ⚠️ 不再重置为固定弱口令 123456：管理员重置后若不转告，任何人猜到就能登录；
+    // 改为随机口令并只在此处返回一次，由管理员转告使用者。
+    const password = generateResetPassword();
+    const passwordHash = await bcrypt.hash(password, 10);
     await prisma.user.update({
       where: { id: user.id },
       data: { passwordHash },
     });
 
-    res.json({ message: '密码已重置为默认密码 (123456)' });
+    res.json({ message: '密码已重置，请把新密码转告使用者', password });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }

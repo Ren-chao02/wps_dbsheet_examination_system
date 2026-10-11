@@ -119,6 +119,10 @@ paperRouter.put('/:id', async (req: Request, res: Response) => {
     if (!paper) {
       return res.status(404).json({ message: '试卷不存在' });
     }
+    // ✅ 所有权检查：非 admin 只能修改自己创建的试卷（与 /:id/questions 同口径）
+    if (req.user!.role !== 'admin' && paper.createdBy !== req.user!.userId) {
+      return res.status(403).json({ message: '只能修改自己创建的试卷' });
+    }
 
     const data = paperSchema.parse(req.body);
     const updated = await prisma.paper.update({
@@ -144,6 +148,10 @@ paperRouter.delete('/:id', async (req: Request, res: Response) => {
     });
     if (!paper) {
       return res.status(404).json({ message: '试卷不存在' });
+    }
+    // ✅ 所有权检查：非 admin 只能删除自己创建的试卷（与 /:id/questions 同口径）
+    if (req.user!.role !== 'admin' && paper.createdBy !== req.user!.userId) {
+      return res.status(403).json({ message: '只能删除自己创建的试卷' });
     }
     if (paper._count.exams > 0) {
       return res.status(400).json({ message: '试卷已被考试使用，无法删除' });

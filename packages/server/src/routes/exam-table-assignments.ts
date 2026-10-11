@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import express, { Router, Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { rejectExamConfigMutationWhenEnded } from '../middleware/exam-lock';
@@ -6,6 +6,12 @@ import { rejectExamConfigMutationWhenEnded } from '../middleware/exam-lock';
 export const examTableAssignmentRouter = Router();
 examTableAssignmentRouter.use(authenticate);
 examTableAssignmentRouter.use(authorize('teacher', 'admin'));
+
+// 批量分配表格的请求体可达 3000 学生 × 约 1KB（含超长 WPS accessToken），
+// 远超 app.ts 全局 express.json() 的默认 100KB 上限 → 考前分配这一步会 413。
+// 这里为本路由挂载独立的 10MB 解析器；对已解析过的小请求体 body-parser 会
+// 直接跳过，不影响本路由外的任何接口。
+examTableAssignmentRouter.use(express.json({ limit: '10mb' }));
 
 // ✅ 考试已结束(ended)后，禁止继续修改该考试的 WPS 表格分配
 examTableAssignmentRouter.use('/:examId', rejectExamConfigMutationWhenEnded());
@@ -33,7 +39,15 @@ examTableAssignmentRouter.get('/:examId', async (req: Request, res: Response) =>
       },
       orderBy: { assignedAt: 'asc' },
     });
-    res.json({ assignments });
+    // 凭据保护：accessToken 是 WPS 访问凭据，不能原样返回给列表接口
+    // （前端只用于显示「已分配/未分配」与回填分享链接，用布尔 hasToken 代替）。
+    // 教师端 WpsTableAssignStep 仅读取 studentId/shareUrl，剥离不影响其显示。
+    res.json({
+      assignments: assignments.map(({ accessToken, ...rest }) => ({
+        ...rest,
+        hasToken: !!accessToken,
+      })),
+    });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }

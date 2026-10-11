@@ -8,6 +8,9 @@ import { wpsConfigService } from '../services/wps-config-service';
 
 export const questionRouter = Router();
 questionRouter.use(authenticate);
+// 题库含 answerRules（判分规则＝标准答案）与未发布草稿，只对教师/管理员开放。
+// 学生侧取题一律走 /api/practice/*（该路径会裁剪答案字段），不得直连题库。
+questionRouter.use(authorize('teacher', 'admin'));
 
 const answerRuleSchema = z.object({
   id: z.string(),
@@ -200,6 +203,23 @@ questionRouter.put('/:id', authorize('teacher', 'admin'), async (req: Request, r
     // ✅ 所有权检查：非 admin 只能编辑自己创建的题目
     if (req.user!.role !== 'admin' && existingQuestion.createdBy !== req.user!.userId) {
       return res.status(403).json({ message: '只能编辑自己创建的题目' });
+    }
+
+    // ⚠️ 正在进行的考试不能改题目规则：判分是「读题目当前规则 → 比对表格」实时执行的，
+    // 考试中途改规则会让同一场考试前后判分口径不同（先交卷的学生按旧规则，后交卷的按新规则），
+    // 申诉时也无法复现。已结束的考试重判同样受影响，因此一并拦截。
+    // 需要修题时：等考试结束，或复制一份新题用于后续考试。
+    const lockedExam = await prisma.examQuestion.findFirst({
+      where: {
+        questionId: req.params.id,
+        exam: { status: { in: ['in_progress'] } },
+      },
+      select: { exam: { select: { title: true } } },
+    });
+    if (lockedExam && req.user!.role !== 'admin') {
+      return res.status(400).json({
+        message: `该题正被进行中的考试「${lockedExam.exam.title}」使用，考试结束前不能修改（避免同场考试判分口径不一致）`,
+      });
     }
 
     const data = questionSchema.parse(req.body);

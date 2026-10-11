@@ -8,10 +8,11 @@
  *     - exam:submit      { examId, studentId }
  *
  *   Server → Client (teacher):
- *     - monitor:update   { studentId, studentName, status, currentQuestion, tabSwitchCount, lastHeartbeat }
- *     - monitor:submit   { studentId, studentName, submittedAt }
- *     - monitor:join     { studentId, studentName }
- *     - monitor:leave    { studentId }
+ *     - monitor:update        { studentId, studentName, currentQuestion, tabSwitchCount, lastHeartbeat, online }
+ *     - monitor:update-batch  MonitorUpdatePayload[]（心跳状态变更按 1 秒窗口聚合后批量下发，推荐新版教师页订阅此事件）
+ *     - monitor:submit        { studentId, studentName, submittedAt }
+ *     - monitor:join          { studentId, studentName }
+ *     - monitor:leave         { studentId }
  */
 
 import { Server as HttpServer } from 'http';
@@ -30,10 +31,85 @@ interface StudentState {
   online: boolean;
 }
 
+/** monitor:update 单条事件载荷（与旧协议完全一致，保证老教师页无需改动即可兼容） */
+interface MonitorUpdatePayload {
+  studentId: string;
+  studentName: string;
+  currentQuestion: number;
+  tabSwitchCount: number;
+  lastHeartbeat: Date;
+  online: boolean;
+}
+
 // examId → Map<studentId, StudentState>
 const examStudents = new Map<string, Map<string, StudentState>>();
 // socket.id → { examId, studentId }
 const socketStudentMap = new Map<string, { examId: string; studentId: string }>();
+
+// ============================================================
+// 心跳广播聚合（修复广播风暴）
+//
+// 为什么：学生每 10 秒一次心跳，旧实现每次心跳立刻向 monitor:examId 房间
+// emit 一条 monitor:update —— 3000 人同场 = 每秒约 300 次广播打给每个教师端，
+// 教师端（每个连接都要处理 300 事件/秒）与服务器（300 次/秒的组播转发）都扛不住。
+//
+// 方案：按考试把 1 秒窗口内的学生状态变更聚合，窗口结束时统一下发：
+//   1) 发一条批量事件 monitor:update-batch（数组）—— 新版教师页只需订阅这一条，
+//      一次广播即可拿到窗口内全部变更；
+//   2) 兼容旧教师页：仍为窗口内每个变更学生逐条发旧形状的 monitor:update
+//      （与批量事件同批下发，socket.io 会尽量合并成更少的底层帧）。
+// 旧事件名称与载荷形状一字未动，现有教师监控页无需任何修改即可继续工作，
+// 代价只是心跳展示晚最多 1 秒（监控场景完全可接受）。
+// ============================================================
+const MONITOR_BATCH_WINDOW_MS = 1_000;
+
+// examId → { timer, updates }；同一学生在窗口内多次心跳只保留最新一条（按 studentId 去重）
+const pendingMonitorUpdates = new Map<string, {
+  timer: ReturnType<typeof setTimeout> | null;
+  updates: Map<string, MonitorUpdatePayload>;
+}>();
+
+/** 由 StudentState 生成旧协议形状的 monitor:update 载荷 */
+function buildMonitorUpdate(student: StudentState): MonitorUpdatePayload {
+  return {
+    studentId: student.studentId,
+    studentName: student.studentName,
+    currentQuestion: student.currentQuestion,
+    tabSwitchCount: student.tabSwitchCount,
+    lastHeartbeat: student.lastHeartbeat,
+    online: student.online,
+  };
+}
+
+/** 把一条学生状态变更并入 1 秒聚合窗口（窗口结束统一下发，不做散点广播） */
+function queueMonitorUpdate(examId: string, update: MonitorUpdatePayload) {
+  if (!io) return;
+  let bucket = pendingMonitorUpdates.get(examId);
+  if (!bucket) {
+    bucket = { timer: null, updates: new Map() };
+    pendingMonitorUpdates.set(examId, bucket);
+  }
+  bucket.updates.set(update.studentId, update);
+  if (bucket.timer) return;
+  bucket.timer = setTimeout(() => flushMonitorUpdates(examId), MONITOR_BATCH_WINDOW_MS);
+}
+
+/** 窗口结束：一次性下发该考试窗口内聚合的所有变更 */
+function flushMonitorUpdates(examId: string) {
+  const bucket = pendingMonitorUpdates.get(examId);
+  if (!bucket) return;
+  pendingMonitorUpdates.delete(examId);
+  if (!io || bucket.updates.size === 0) return;
+
+  const room = `monitor:${examId}`;
+  const updates = Array.from(bucket.updates.values());
+  // 批量事件（新协议）：一次广播下发窗口内全部变更
+  io.to(room).emit('monitor:update-batch', updates);
+  // 兼容旧协议：逐条发同形状的 monitor:update（与批量事件同批下发，避免心跳时刻的散点广播）
+  for (const update of updates) {
+    io.to(room).emit('monitor:update', update);
+  }
+}
 
 let io: SocketServer | null = null;
 
@@ -155,15 +231,9 @@ export function initSocketIO(httpServer: HttpServer): SocketServer {
           if (data.currentQuestion !== undefined) student.currentQuestion = data.currentQuestion;
           if (data.tabSwitchCount !== undefined) student.tabSwitchCount = data.tabSwitchCount;
 
-          // 广播给教师
-          io!.to(`monitor:${data.examId}`).emit('monitor:update', {
-            studentId: student.studentId,
-            studentName: student.studentName,
-            currentQuestion: student.currentQuestion,
-            tabSwitchCount: student.tabSwitchCount,
-            lastHeartbeat: student.lastHeartbeat,
-            online: true,
-          });
+          // 状态变更并入 1 秒聚合窗口，窗口结束时统一批量下发（见上方聚合方案注释），
+          // 避免每次心跳都立刻向教师端广播（3000 人 = 每秒 300 次广播风暴）
+          queueMonitorUpdate(data.examId, buildMonitorUpdate(student));
         }
       }
 
@@ -214,14 +284,8 @@ export function initSocketIO(httpServer: HttpServer): SocketServer {
         const student = students?.get(studentId);
         if (student) {
           student.online = false;
-          io!.to(`monitor:${examId}`).emit('monitor:update', {
-            studentId: student.studentId,
-            studentName: student.studentName,
-            currentQuestion: student.currentQuestion,
-            tabSwitchCount: student.tabSwitchCount,
-            lastHeartbeat: student.lastHeartbeat,
-            online: false,
-          });
+          // 断线同样走聚合窗口（考试结束/网络抖动时会有成批断线，散点广播会放大风暴）
+          queueMonitorUpdate(examId, buildMonitorUpdate(student));
           console.log(`[Socket] 学生离线: ${student.studentName} -> exam:${examId}`);
         }
       }

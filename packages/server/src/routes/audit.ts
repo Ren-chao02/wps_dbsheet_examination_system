@@ -10,11 +10,17 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { PrismaClient, AuditAction } from '@prisma/client';
+import { AuditAction } from '@prisma/client';
 import dayjs from 'dayjs';
+import { prisma } from '../config/prisma';
+import { authenticate, authorize } from '../middleware/auth';
 
 const router = Router();
-const prisma = new PrismaClient();
+
+// 审计日志含操作人、变更前后数据等敏感信息，且提供删除/清理能力，
+// 因此：查询类接口对教师与管理员开放，删除与清理仅限管理员。
+router.use(authenticate);
+router.use(authorize('teacher', 'admin'));
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 1️⃣ Zod Schema 定义
@@ -254,12 +260,10 @@ router.get('/statistics', async (_req: Request, res: Response) => {
 /**
  * DELETE /api/audit/logs/:id
  *
- * 功能：删除单条审计日志（仅限超级管理员）
+ * 功能：删除单条审计日志（仅限管理员）
  */
-router.delete('/logs/:id', async (req: Request, res: Response) => {
+router.delete('/logs/:id', authorize('admin'), async (req: Request, res: Response) => {
   try {
-    // TODO: 权限检查（需superadmin角色）
-
     await prisma.auditLog.delete({
       where: { id: req.params.id },
     });
@@ -277,14 +281,18 @@ router.delete('/logs/:id', async (req: Request, res: Response) => {
 /**
  * POST /api/audit/cleanup
  *
- * 功能：批量清理过期审计日志（保留最近N天）
+ * 功能：批量清理过期审计日志（保留最近N天，仅限管理员）
  */
-router.post('/cleanup', async (req: Request, res: Response) => {
+router.post('/cleanup', authorize('admin'), async (req: Request, res: Response) => {
   try {
     const { retainDays = 180 } = req.body; // 默认保留180天
+    // 保留天数兜底：负数/0 会让 cutoff 落在当前或未来，等于清空全部日志
+    const safeRetainDays = Number.isFinite(Number(retainDays))
+      ? Math.max(30, Number(retainDays))
+      : 180;
 
     const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - retainDays);
+    cutoffDate.setDate(cutoffDate.getDate() - safeRetainDays);
 
     const deleteResult = await prisma.auditLog.deleteMany({
       where: {

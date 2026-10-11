@@ -9,6 +9,8 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { join } from 'path';
+import { existsSync, unlinkSync, createReadStream } from 'fs';
 import { z } from 'zod';
 import { ExportFormat, exportService, TaskStatus } from '../services/export-service';
 import { authenticate, authorize } from '../middleware/auth';
@@ -17,6 +19,34 @@ import { prisma } from '../config/prisma';
 const router = Router();
 router.use(authenticate);
 router.use(authorize('teacher', 'admin'));
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 导出安全护栏（防内存打满 / 事件循环卡死）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 单次导出行数上限：超出时明确报错提示缩小范围，绝不静默截断
+const MAX_EXPORT_ROWS = 50000;
+// 日志/成绩类实体长期累积可达十万级，无显式时间筛选时默认只导出最近 N 天
+const DEFAULT_EXPORT_WINDOW_DAYS = 30;
+// 并发导出上限：同时最多 2 个导出在跑，超出直接拒绝（不排队，前端可稍后重试）
+const MAX_CONCURRENT_EXPORTS = 2;
+// 模块级在跑计数（进程内即可：导出是本服务内 CPU/内存消耗，无需跨实例锁）
+let activeExportCount = 0;
+
+/**
+ * 给日志类实体补默认时间窗口：仅当调用方未显式给出该字段筛选时才补。
+ * 需要导出更早的历史数据时，在 filters 里显式传时间范围即可覆盖。
+ */
+function withDefaultTimeWindow(
+  filters: Record<string, any> | undefined,
+  field: string,
+): Record<string, any> {
+  const f = { ...(filters || {}) };
+  if (f[field] === undefined) {
+    f[field] = { gte: new Date(Date.now() - DEFAULT_EXPORT_WINDOW_DAYS * 24 * 60 * 60 * 1000) };
+  }
+  return f;
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 1️⃣ Zod Schema 定义
@@ -32,6 +62,7 @@ const triggerExportSchema = z.object({
     'audit',       // 审计日志
     'batch',       // 批次管理
     'room',        // 考场管理
+    'gradeReview', // 批改留痕（人工复核记录，成绩存档用）
     'custom',      // 自定义数据
   ]),
   entityId: z.string().uuid().optional(),  // 可选：特定实体ID
@@ -68,12 +99,17 @@ async function fetchEntityData(
   entityId?: string,
   filters?: Record<string, any>
 ): Promise<any[]> {
+  // 统一取 MAX_EXPORT_ROWS + 1 行：多取 1 行用于在调用方检测「超限」并报错，
+  // 而不是静默截断给用户一份不完整的数据
+  const cap = MAX_EXPORT_ROWS + 1;
+
   switch (entityType) {
     case 'exam':
       return prisma.exam.findMany({
         where: entityId ? { id: entityId } : (filters || {}),
         include: { creator: { select: { realName: true, username: true } }, batch: true },
         orderBy: { createdAt: 'desc' },
+        take: cap,
       });
 
     case 'student':
@@ -84,32 +120,38 @@ async function fetchEntityData(
           email: true, department: { select: { name: true } },
         },
         orderBy: { username: 'asc' },
+        take: cap,
       });
 
     case 'submission':
       return prisma.studentSubmission.findMany({
-        where: entityId ? { examId: entityId } : (filters || {}),
+        // 无 entityId 时补默认 30 天时间窗口（submissions 长期累积可达十万级），
+        // 显式传入 filters.createdAt 可覆盖；指定 entityId（单场考试）无需窗口
+        where: entityId
+          ? { examId: entityId }
+          : withDefaultTimeWindow(filters, 'createdAt'),
         include: {
           student: { select: { realName: true, username: true, studentId: true } },
           exam: { select: { title: true } },
         },
         orderBy: { totalScore: 'desc' },
+        take: cap,
       });
 
     case 'behavior':
       return prisma.studentBehaviorLog.findMany({
-        where: filters || {},
+        where: withDefaultTimeWindow(filters, 'occurredAt'),
         include: { student: { select: { realName: true, username: true } } },
         orderBy: { occurredAt: 'desc' },
-        take: 10000, // 限制最大数量
+        take: cap,
       });
 
     case 'audit':
       return prisma.auditLog.findMany({
-        where: filters || {},
+        where: withDefaultTimeWindow(filters, 'occurredAt'),
         include: { operator: { select: { realName: true, username: true } } },
         orderBy: { occurredAt: 'desc' },
-        take: 10000,
+        take: cap,
       });
 
     case 'batch':
@@ -117,6 +159,7 @@ async function fetchEntityData(
         where: filters || {},
         include: { creator: { select: { realName: true } } },
         orderBy: { createdAt: 'desc' },
+        take: cap,
       });
 
     case 'room':
@@ -124,6 +167,31 @@ async function fetchEntityData(
         where: filters || {},
         include: { invigilators: { select: { realName: true } } },
         orderBy: { createdAt: 'desc' },
+        take: cap,
+      });
+
+    case 'gradeReview':
+      // 批改留痕：谁、何时、把哪道题从多少分改成多少分、理由是什么
+      // 支持按 examId 过滤（批改记录按考试归档），默认 90 天窗口
+      return prisma.gradeReviewLog.findMany({
+        where: withDefaultTimeWindow(filters, 'createdAt'),
+        include: {
+          detail: {
+            select: {
+              question: { select: { id: true, title: true } },
+              submission: {
+                select: {
+                  id: true,
+                  examId: true,
+                  student: { select: { realName: true, username: true } },
+                  exam: { select: { title: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: cap,
       });
 
     default:
@@ -152,17 +220,33 @@ router.post('/trigger', async (req: Request, res: Response) => {
       });
     }
 
-    // 创建 DB 任务记录（持久化：重启不丢历史）
-    const task = await prisma.exportTask.create({
-      data: {
-        userId: req.user!.userId,
-        entityType: body.entityType,
-        entityId: body.entityId || null,
-        format: body.format,
-        status: TaskStatus.PROCESSING,
-        progress: 0,
-      },
-    });
+    // 并发限制：检查 + 递增必须同步完成（中间不能有 await），
+    // 否则并发请求会同时通过检查、绕过上限
+    if (activeExportCount >= MAX_CONCURRENT_EXPORTS) {
+      return res.status(429).json({
+        success: false,
+        error: `当前已有 ${MAX_CONCURRENT_EXPORTS} 个导出任务在执行，请稍后再试`,
+      });
+    }
+    activeExportCount++;
+
+    // 创建 DB 任务记录（持久化：重启不丢历史）；创建失败需释放并发名额
+    let task: any;
+    try {
+      task = await prisma.exportTask.create({
+        data: {
+          userId: req.user!.userId,
+          entityType: body.entityType,
+          entityId: body.entityId || null,
+          format: body.format,
+          status: TaskStatus.PROCESSING,
+          progress: 0,
+        },
+      });
+    } catch (err) {
+      activeExportCount = Math.max(0, activeExportCount - 1);
+      throw err;
+    }
 
     // 执行导出逻辑（同步模式：等待完成；异步模式：后台执行）
     const executeExport = async () => {
@@ -183,12 +267,19 @@ router.post('/trigger', async (req: Request, res: Response) => {
           throw new Error('没有可导出的数据');
         }
 
+        // 行数上限：超出时明确报错让用户缩小范围，绝不静默截断
+        if (data.length > MAX_EXPORT_ROWS) {
+          throw new Error(
+            `数据量超过导出上限（${MAX_EXPORT_ROWS} 行），请缩小时间范围或筛选条件后重试`
+          );
+        }
+
         await prisma.exportTask.update({
           where: { id: task.id },
           data: { progress: 50 },
         });
 
-        // 2. 执行导出
+        // 2. 执行导出（服务内为 exceljs 流式写盘，不阻塞事件循环）
         const result = await exportService.export(data, body.format, {
           ...body.options,
           filename: body.options?.filename ||
@@ -219,13 +310,20 @@ router.post('/trigger', async (req: Request, res: Response) => {
             completedAt: new Date(),
           },
         });
+      } finally {
+        // 无论成败都要释放并发名额
+        activeExportCount = Math.max(0, activeExportCount - 1);
       }
     };
 
     // 同步或异步执行
     if (body.options?.async) {
-      // 异步模式：立即返回任务ID，后台执行
-      executeExport();
+      // 异步模式：立即返回任务ID，后台执行。
+      // .catch 兜底：executeExport 内部的 FAILED 回写若再次抛错（如 DB 抖动），
+      // 不能让未处理的 rejection 把进程打崩
+      executeExport().catch(err => {
+        console.error('异步导出任务异常:', err);
+      });
       return res.json({
         success: true,
         taskId: task.id,
@@ -578,9 +676,5 @@ router.post('/cleanup', async (req: Request, res: Response) => {
     deletedFiles: fileDeletedCount,
   });
 });
-
-// 补充缺失的导入
-import { join } from 'path';
-import { existsSync, unlinkSync, createReadStream } from 'fs';
 
 export { router as exportRouter };

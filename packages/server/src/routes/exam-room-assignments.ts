@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { rejectExamConfigMutationWhenEnded } from '../middleware/exam-lock';
+import { checkExamAccess, denyAccess } from '../middleware/exam-ownership';
 
 export const examRoomAssignmentRouter = Router();
 examRoomAssignmentRouter.use(authenticate);
@@ -22,6 +23,10 @@ const batchAssignSchema = z.object({
 // POST /api/exam-room-assignments/exams/:examId/rooms - 分配考场（含冲突检测）
 examRoomAssignmentRouter.post('/exams/:examId/rooms', async (req: Request, res: Response) => {
   try {
+    // 归属校验：教师只能操作自己创建（或监考）的考试的考场分配，admin 放行
+    const access = await checkExamAccess(req, req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const { roomId } = assignSchema.parse(req.body);
     const examId = req.params.examId;
 
@@ -93,6 +98,10 @@ examRoomAssignmentRouter.post('/exams/:examId/rooms', async (req: Request, res: 
 // GET /api/exam-room-assignments/exams/:examId/rooms - 查询某考试已分配的考场
 examRoomAssignmentRouter.get('/exams/:examId/rooms', async (req: Request, res: Response) => {
   try {
+    // 归属校验：考场/考生/监考名单属于考试敏感信息，仅创建者（或监考）与 admin 可见
+    const access = await checkExamAccess(req, req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const examId = req.params.examId;
     const assignments = await prisma.examRoomAssignment.findMany({
       where: { examId },
@@ -119,6 +128,10 @@ examRoomAssignmentRouter.get('/exams/:examId/rooms', async (req: Request, res: R
 // DELETE /api/exam-room-assignments/exams/:examId/rooms/:roomId - 取消分配
 examRoomAssignmentRouter.delete('/exams/:examId/rooms/:roomId', async (req: Request, res: Response) => {
   try {
+    // 归属校验：教师只能操作自己创建（或监考）的考试的考场分配，admin 放行
+    const access = await checkExamAccess(req, req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const { examId, roomId } = req.params;
     const assignment = await prisma.examRoomAssignment.findUnique({
       where: { examId_roomId: { examId, roomId } },
@@ -148,6 +161,10 @@ examRoomAssignmentRouter.delete('/exams/:examId/rooms/:roomId', async (req: Requ
 // POST /api/exam-room-assignments/exams/:examId/rooms/:roomId/students/batch-assign - 批量分配学生
 examRoomAssignmentRouter.post('/exams/:examId/rooms/:roomId/students/batch-assign', async (req: Request, res: Response) => {
   try {
+    // 归属校验：教师只能操作自己创建（或监考）的考试的考场分配，admin 放行
+    const access = await checkExamAccess(req, req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const { studentIds } = batchAssignSchema.parse(req.body);
     const { examId, roomId } = req.params;
 
@@ -204,6 +221,10 @@ examRoomAssignmentRouter.post('/exams/:examId/rooms/:roomId/students/batch-assig
 // DELETE /api/exam-room-assignments/exams/:examId/rooms/:roomId/students/:studentId - 移除单个学生
 examRoomAssignmentRouter.delete('/exams/:examId/rooms/:roomId/students/:studentId', async (req: Request, res: Response) => {
   try {
+    // 归属校验：教师只能操作自己创建（或监考）的考试的考场分配，admin 放行
+    const access = await checkExamAccess(req, req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const { examId, roomId, studentId } = req.params;
     const assignment = await prisma.examRoomAssignment.findUnique({
       where: { examId_roomId: { examId, roomId } },
@@ -235,6 +256,10 @@ examRoomAssignmentRouter.delete('/exams/:examId/rooms/:roomId/students/:studentI
 // POST /api/exam-room-assignments/exams/:examId/rooms/:roomId/invigilators/:userId - 分配监考老师
 examRoomAssignmentRouter.post('/exams/:examId/rooms/:roomId/invigilators/:userId', async (req: Request, res: Response) => {
   try {
+    // 归属校验：教师只能操作自己创建（或监考）的考试的考场分配，admin 放行
+    const access = await checkExamAccess(req, req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const { examId, roomId, userId } = req.params;
     const assignment = await prisma.examRoomAssignment.findUnique({
       where: { examId_roomId: { examId, roomId } },
@@ -271,6 +296,10 @@ examRoomAssignmentRouter.post('/exams/:examId/rooms/:roomId/invigilators/:userId
 // DELETE /api/exam-room-assignments/exams/:examId/rooms/:roomId/invigilators/:userId - 移除监考老师
 examRoomAssignmentRouter.delete('/exams/:examId/rooms/:roomId/invigilators/:userId', async (req: Request, res: Response) => {
   try {
+    // 归属校验：教师只能操作自己创建（或监考）的考试的考场分配，admin 放行
+    const access = await checkExamAccess(req, req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access);
+
     const { examId, roomId, userId } = req.params;
     const updated = await prisma.examRoomAssignment.update({
       where: { examId_roomId: { examId, roomId } },

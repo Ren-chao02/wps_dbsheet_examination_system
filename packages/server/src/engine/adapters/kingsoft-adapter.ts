@@ -15,6 +15,47 @@ const V7_API_BASE = 'https://openapi.wps.cn/v7/coop/dbsheet';
 const V3_API_BASE = 'https://openapi.wps.cn/kopen/office/file';
 
 // ============================================================
+// 可靠性保护：超时与翻页上限
+// ============================================================
+
+// 所有 WPS 调用都必须显式限时。为什么：Node 的 fetch 默认没有超时，
+// WPS 开放平台偶发挂起（连接不响应也不断开）时，判分 Worker（并发 3）
+// 会被永久占住、整个阅卷队列停摆；token 刷新卡死则会让全网 WPS 功能瘫痪。
+const DEFAULT_TIMEOUT_MS = 10_000;
+// 记录读取是判分主链路（大表 + 可能多页请求），给更宽裕的超时
+const RECORDS_TIMEOUT_MS = 15_000;
+
+// 翻页安全上限（可通过环境变量放大）：
+// 为什么必须有上限——若 WPS 异常返回循环/重复的 page_token，无限翻页会死循环；
+// 而对超大表格无上限拉取，会把服务器内存直接打爆。
+// 20 页 × 100 条 = 2000 条（再叠加 5000 条总量上限），对考试判分的记录类规则
+// （check_record_count / check_record_exists / check_record_value）足够。
+const RECORDS_MAX_PAGES = Number(process.env.WPS_RECORDS_MAX_PAGES || 20);
+const RECORDS_MAX_TOTAL = Number(process.env.WPS_RECORDS_MAX_TOTAL || 5000);
+
+/**
+ * 带超时的 fetch 包装：所有 WPS 请求统一走这里，保证任何调用都不会无限挂起。
+ * 若调用方传入了自己的 signal，则与超时 signal 合并（任一先触发即中止）。
+ */
+async function fetchWithTimeout(
+  input: string | URL | Request,
+  init: RequestInit = {},
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
+  try {
+    return await fetch(input, { ...init, signal });
+  } catch (err: any) {
+    // 超时中止时，把 Node 原生的 TimeoutError 转成可读的中文错误，便于路由层提示与日志排查
+    if (timeoutSignal.aborted && (err?.name === 'TimeoutError' || err?.name === 'AbortError')) {
+      throw new Error(`WPS API 请求超时（${timeoutMs / 1000}s）: ${String(input)}`);
+    }
+    throw err;
+  }
+}
+
+// ============================================================
 // 类型定义
 // ============================================================
 
@@ -296,10 +337,10 @@ export class KingsoftAdapter {
     return table.views;
   }
 
-  /** 获取记录列表 */
+  /** 获取记录列表（v7 下跟随 page_token 翻页直到取完或达到安全上限） */
   async getRecords(
     sheetId: number,
-    options?: { pageSize?: number; viewId?: string; fields?: string[] }
+    options?: { pageSize?: number; viewId?: string; fields?: string[]; maxPages?: number }
   ): Promise<RecordListResponse> {
     if (this.apiVersion === 'v7') {
       return this.getRecordsV7(sheetId, options);
@@ -317,61 +358,90 @@ export class KingsoftAdapter {
    * v7 记录列表获取 + 响应归一化
    * v7: POST /{file_id}/sheets/{sheet_id}/records
    * v3: POST /{file_id}/core/execute/record/list
+   *
+   * 跟随 page_token 翻页直到取完（或达到安全上限），返回结构保持
+   * RecordListResponse 形状不变（调用方通过 list.detail.records 消费）。
    */
   private async getRecordsV7(
     sheetId: number,
-    options?: { pageSize?: number; viewId?: string; fields?: string[] }
+    options?: { pageSize?: number; viewId?: string; fields?: string[]; maxPages?: number }
   ): Promise<RecordListResponse> {
     const baseUrl = V7_API_BASE;
     const url = `${baseUrl}/${this.fileId}/sheets/${sheetId}/records`;
+    const pageSize = options?.pageSize ?? 100;
+    // maxPages 供调用方限制翻页数：预览场景只需第一页判断 truncated，
+    // 传 1 可避免整表拉取白白消耗 WPS 配额；缺省时用全局安全上限。
+    const maxPages = options?.maxPages ?? RECORDS_MAX_PAGES;
 
     const body: Record<string, any> = {
       prefer_id: false,
       show_fields_info: true,
       text_value: 'original',
-      page_size: options?.pageSize ?? 100,
+      page_size: pageSize,
     };
     if (options?.viewId) body.view_id = options.viewId;
     if (options?.fields) body.fields = options.fields;
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
+    const allRecords: RecordInfo[] = [];
+    let fieldsSchema: { id: string; name: string; type: string }[] = [];
+    let pageToken: string | undefined;
+    let pages = 0;
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`API 请求失败 [/records]: ${response.status} ${response.statusText} - ${text}`);
-    }
+    // 翻页直到 page_token 为空（取完）或达到安全上限。
+    // 为什么必须翻页：WPS 每次只回一页，旧实现只取第一页（page_size 100），
+    // 记录类判分规则（check_record_count / check_record_exists /
+    // check_record_value）对超过 100 行的表会直接误判。
+    do {
+      pages += 1;
+      if (pageToken) body.page_token = pageToken;
 
-    const raw = await response.json() as any;
-    if (raw.code !== undefined && raw.code !== 0) {
-      throw new Error(`API 返回错误 [/records]: code=${raw.code}, msg=${raw.msg}`);
-    }
+      const response = await fetchWithTimeout(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }, RECORDS_TIMEOUT_MS);
 
-    const v7data = raw.data || {};
-    // v7 records 的 fields 可能是 JSON 字符串，需解析
-    const records: RecordInfo[] = (v7data.records || []).map((r: any) => ({
-      id: r.id,
-      fields: typeof r.fields === 'string' ? JSON.parse(r.fields) : (r.fields || {}),
-    }));
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`API 请求失败 [/records]: ${response.status} ${response.statusText} - ${text}`);
+      }
 
-    const fieldsSchema = (v7data.fields_schema || []).map((f: any) => ({
-      id: f.id,
-      name: f.name,
-      type: f.type,
-    }));
+      const raw = await response.json() as any;
+      if (raw.code !== undefined && raw.code !== 0) {
+        throw new Error(`API 返回错误 [/records]: code=${raw.code}, msg=${raw.msg}`);
+      }
+
+      const v7data = raw.data || {};
+      // v7 records 的 fields 可能是 JSON 字符串，需解析
+      const records: RecordInfo[] = (v7data.records || []).map((r: any) => ({
+        id: r.id,
+        fields: typeof r.fields === 'string' ? JSON.parse(r.fields) : (r.fields || {}),
+      }));
+      allRecords.push(...records);
+
+      // fields_schema 每页都会返回，取第一页的即可
+      if (fieldsSchema.length === 0 && Array.isArray(v7data.fields_schema)) {
+        fieldsSchema = v7data.fields_schema.map((f: any) => ({
+          id: f.id,
+          name: f.name,
+          type: f.type,
+        }));
+      }
+
+      pageToken = v7data.page_token || undefined;
+    } while (pageToken && pages < maxPages && allRecords.length < RECORDS_MAX_TOTAL);
 
     return {
       result: 0,
       detail: {
         fieldsSchema,
-        offset: v7data.page_token || '',
-        records,
+        // 兼容旧返回形状：offset 保留最后一页的 page_token
+        //（取完为空串；因安全上限提前停下时保留未消费的 token，可据此判断是否被截断）
+        offset: pageToken || '',
+        records: allRecords,
       },
     };
   }
@@ -401,7 +471,7 @@ export class KingsoftAdapter {
     const dbsheetBaseUrl = 'https://openapi.wps.cn/v7/dbsheet';
     const url = `${dbsheetBaseUrl}/${this.fileId}/sheets/${sheetId}/forms/${viewId}/fields`;
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${this.accessToken}`,
@@ -451,7 +521,7 @@ export class KingsoftAdapter {
     }
 
     const url = `${V7_API_BASE}/${this.fileId}/sheets/${sheetId}/delete`;
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -539,7 +609,7 @@ export class KingsoftAdapter {
       fetchOptions.body = JSON.stringify(params);
     }
 
-    const response = await fetch(url, fetchOptions);
+    const response = await fetchWithTimeout(url, fetchOptions);
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
@@ -565,7 +635,7 @@ export class KingsoftAdapter {
     const body = JSON.stringify({ param: params });
     const headers = this.buildV3Headers(body);
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers,
       body,

@@ -23,6 +23,50 @@ export function studentExamVisibilityOR(studentId: string): Prisma.ExamWhereInpu
 }
 
 /**
+ * 计算某位考生本人的考试截止时间（毫秒时间戳）—— 服务端唯一口径。
+ *
+ * 两种模式规则不同，必须由服务端算好下发，客户端不得自行推算
+ * （历史上前后端各算一次，是"显示剩余时间"与"实际收卷时刻"对不上的根源）：
+ *
+ * - unified（集中统一）：全体统一按 exam.endTime 截止（缺失时退化为 startTime + 时长）
+ * - flexible（随到随考）：每人从自己的 startedAt 起算，
+ *   deadline = min(startedAt + 时长, 批次 endTime)
+ *   即"开考时刻 + 考试时长"，但不越过批次窗口；尚未开考（无 startedAt）时退化为批次 endTime
+ *
+ * 返回 null 表示无法确定截止时间（无任何时间信息），调用方应视为"不自动收卷"。
+ */
+export function computeStudentDeadline(
+  exam: {
+    startTime?: Date | null;
+    endTime?: Date | null;
+    durationMinutes?: number | null;
+    batch?: { examMode?: string | null; endTime?: Date | null; examDuration?: number | null } | null;
+  },
+  submission: { startedAt?: Date | null } | null,
+): number | null {
+  const batch = exam.batch;
+  const examMode = batch?.examMode || 'unified';
+  const durationMinutes = batch?.examDuration || exam.durationMinutes || 0;
+
+  if (examMode === 'flexible') {
+    const batchEnd = batch?.endTime ? new Date(batch.endTime).getTime() : null;
+    const startedAt = submission?.startedAt ? new Date(submission.startedAt).getTime() : null;
+
+    if (startedAt && durationMinutes > 0) {
+      const byDuration = startedAt + durationMinutes * 60 * 1000;
+      return batchEnd ? Math.min(byDuration, batchEnd) : byDuration;
+    }
+    return batchEnd;
+  }
+
+  if (exam.endTime) return new Date(exam.endTime).getTime();
+  if (exam.startTime && durationMinutes > 0) {
+    return new Date(exam.startTime).getTime() + durationMinutes * 60 * 1000;
+  }
+  return null;
+}
+
+/**
  * 全局状态兜底：考试结束时强制回收所有"考试中"的提交。
  *
  * 设计约束：任何把 exam.status 变为 'ended' 的代码路径（scheduler 自动结束、

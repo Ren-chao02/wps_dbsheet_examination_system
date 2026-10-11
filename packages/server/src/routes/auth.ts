@@ -99,40 +99,24 @@ authRouter.post('/login', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/auth/register
-authRouter.post('/register', async (req: Request, res: Response) => {
-  try {
-    const data = registerSchema.parse(req.body);
-
-    const existing = await prisma.user.findUnique({ where: { username: data.username } });
-    if (existing) {
-      return res.status(409).json({ message: '用户名已存在' });
-    }
-
-    const passwordHash = await bcrypt.hash(data.password, 10);
-    const user = await prisma.user.create({
-      data: {
-        username: data.username,
-        passwordHash,
-        realName: data.realName,
-        email: data.email,
-        role: data.role,
-      },
-    });
-
-    res.status(201).json({
-      id: user.id,
-      username: user.username,
-      realName: user.realName,
-      role: user.role,
-      email: user.email,
-    });
-  } catch (err: any) {
-    if (err instanceof z.ZodError) {
-      return res.status(400).json({ message: '参数错误', errors: err.errors });
-    }
-    res.status(500).json({ message: '服务器错误' });
-  }
+/**
+ * POST /api/auth/register —— 已关闭的自助注册入口
+ *
+ * 关闭原因：原实现允许请求体自带 `role: 'teacher'`，且无验证码/邀请码/限流，
+ * 任何匿名访客一次请求即可获得教师权限（可看全校学生隐私、改他人试卷、导出成绩）。
+ *
+ * 现在的入班方式：
+ * - 学生：走班级邀请链接（GET /api/invitations/:code/info + POST /api/invitations/:code/apply，
+ *   由教师审批后建号），该链路不经过本接口；
+ * - 教师/管理员：由管理员在「账户管理」或批量导入中创建。
+ *
+ * 保留路由（而不是删除）是为了给老客户端/书签一个明确可读的失败原因。
+ */
+authRouter.post('/register', (_req: Request, res: Response) => {
+  res.status(403).json({
+    message: '系统已关闭自助注册，请通过教师提供的班级邀请链接加入；教师账号请联系管理员开通',
+    code: 'REGISTRATION_DISABLED',
+  });
 });
 
 // GET /api/auth/me

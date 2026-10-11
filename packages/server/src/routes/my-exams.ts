@@ -1,10 +1,13 @@
 import { Router, Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { hashString, shuffleWithSeed } from '../utils/helpers';
 import { isIpAllowed } from '../utils/ip-utils';
 
-import { autoEndExpiredExams, studentExamVisibilityOR } from '../utils/exam-utils';
+import { autoEndExpiredExams, studentExamVisibilityOR, computeStudentDeadline } from '../utils/exam-utils';
+import { loadTablePreview } from '../services/wps-table-service';
+import { wpsConfigService } from '../services/wps-config-service';
 
 export const myExamRouter = Router();
 myExamRouter.use(authenticate);
@@ -140,6 +143,20 @@ myExamRouter.get('/history', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * 学生视角的题目裁剪。
+ *
+ * ⚠️ 安全边界：`answerRules` 是判分规则（含标准答案/字段名/目标值），`analysis` 是解析，
+ * 二者一旦下发到学生浏览器，学生可直接读取答案。作答期间一律剥离，
+ * 仅保留作答必需的题干字段。成绩页需要的解析由 /:id/result 在判分后单独下发。
+ */
+function toStudentQuestion(q: any, extra: Record<string, unknown> = {}) {
+  const {
+    id, title, description, type, difficulty, score, hints, tags, primaryCategoryId, secondaryCategoryId,
+  } = q;
+  return { id, title, description, type, difficulty, score, hints, tags, primaryCategoryId, secondaryCategoryId, ...extra };
+}
+
 // GET /api/my-exams/:id — 考试详情（含题目）
 myExamRouter.get('/:id', async (req: Request, res: Response) => {
   try {
@@ -164,6 +181,7 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
             examMode: true,
             startTime: true,
             endTime: true,
+            examDuration: true,
             waitingTime: true,
             lateTolerance: true,
             ipLimitEnabled: true,
@@ -180,6 +198,20 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
 
     if (!exam) {
       return res.status(404).json({ message: '考试不存在' });
+    }
+
+    // 可见性校验：与考试列表、成绩查询使用同一口径（studentExamVisibilityOR）。
+    // 否则任何学生拿到一个考试 UUID 就能读到该场考试的题目（历史缺陷：
+    // 本接口曾是「知道 ID 即可读题」的越权入口）。
+    const visible = await prisma.exam.findFirst({
+      where: {
+        id: req.params.id,
+        OR: studentExamVisibilityOR(req.user!.userId),
+      },
+      select: { id: true },
+    });
+    if (!visible) {
+      return res.status(403).json({ message: '您未被分配到该考试，请联系监考老师' });
     }
 
     // Get the student's submission
@@ -222,11 +254,10 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
       examQuestions = shuffleWithSeed(examQuestions, seed);
     }
 
-    const questions = examQuestions.map(eq => ({
-      ...eq.question,
-      scoreOverride: eq.scoreOverride,
-      sortOrder: eq.sortOrder,
-    }));
+    // 学生视角裁剪：剥离 answerRules / analysis（见 toStudentQuestion 注释）
+    const questions = examQuestions.map(eq =>
+      toStudentQuestion(eq.question, { scoreOverride: eq.scoreOverride, sortOrder: eq.sortOrder }),
+    );
 
     // 查询 WPS 表格分配信息（用于 WPS 实操版界面）
     let wpsTable: { shareUrl: string; fileId: string } | null = null;
@@ -237,14 +268,72 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
           studentId: req.user!.userId,
         },
       },
+      select: { shareUrl: true, fileId: true },
     });
     if (tableAssignment?.shareUrl) {
       wpsTable = { shareUrl: tableAssignment.shareUrl, fileId: tableAssignment.fileId };
     }
 
-    res.json({ exam, submission, questions, wpsTable });
+    // 每人截止时间（随到随考模式下每人不同）：由服务端统一计算并下发，
+    // 客户端不再自行推算 —— 两端各算一次是历史上时间口径漂移的根源。
+    const deadline = computeStudentDeadline(exam, submission);
+
+    // 自愈：本人时间已到但答卷仍是 in_progress（学生关掉页面没触发自动交卷）→ 就地收卷，
+    // 否则这份卷子要等到批次结束才被兜底收集，期间教师阅卷列表里看不到它。
+    if (deadline !== null && submission && submission.status === 'in_progress' && Date.now() >= deadline) {
+      const finalized = await prisma.studentSubmission.updateMany({
+        where: { id: submission.id, status: 'in_progress' },
+        data: { status: 'submitted', submittedAt: new Date(deadline), isAutoSubmitted: true },
+      });
+      if (finalized.count > 0) {
+        submission.status = 'submitted';
+        submission.submittedAt = new Date(deadline);
+      }
+    }
+
+    res.json({ exam, submission, questions, wpsTable, deadline });
   } catch {
     res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+
+// ============================================================
+// WPS 表格辅助接口（考试页右侧面板专用，只读，不参与判分）
+//
+// 内嵌 iframe 能否显示表格取决于该链接的权限设置与浏览器三方 Cookie 策略，
+// 天然可能失败，因此提供一条不依赖浏览器登录态的只读兜底（实现见 wps-table-service）：
+//   GET /wps-preview —— 读取该考生表格的真实数据，供右侧「实时数据面板」轮询渲染，
+//   学生即便在独立窗口操作表格，主页面也能看到表格当前状态。
+// ============================================================
+
+// GET /api/my-exams/:id/wps-preview — 考生表格实时数据预览（只读）
+myExamRouter.get('/:id/wps-preview', async (req: Request, res: Response) => {
+  const { id: examId } = req.params;
+  const studentId = req.user!.userId;
+
+  try {
+    const assignment = await prisma.examTableAssignment.findUnique({
+      where: { examId_studentId: { examId, studentId } },
+      select: { fileId: true, accessToken: true },
+    });
+    if (!assignment) {
+      return res.status(404).json({ message: '本场考试尚未分配 WPS 表格，请联系监考老师' });
+    }
+
+    // 优先用系统当前（自动刷新）的 token；分配记录里的 token 是分配时的快照，会过期
+    const current = await wpsConfigService.get();
+    const payload = await loadTablePreview({
+      cacheKey: `${examId}:${studentId}`,
+      fileId: assignment.fileId,
+      accessTokens: [current?.accessToken, assignment.accessToken],
+      sheetId: typeof req.query.sheetId === 'string' ? req.query.sheetId : undefined,
+    });
+    res.json(payload);
+  } catch (err: any) {
+    // 预览失败不影响考试与判分，返回可读原因供面板提示
+    console.error('[wps-preview] 读取表格失败:', err?.message || err);
+    res.status(err?.statusCode || 502).json({ message: `读取表格失败：${err?.message || '未知错误'}` });
   }
 });
 
@@ -270,9 +359,15 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
 
     // IP 白名单校验
     if (exam.batch?.ipLimitEnabled) {
-      const clientIp = ((req.headers['x-forwarded-for'] as string) || req.ip || req.socket.remoteAddress || '')
+      // ⚠️ 必须走 req.ip（配合 app.ts 的 trust proxy 配置）而不是直接读请求头：
+      // 请求头是客户端可伪造的，直读 X-Forwarded-For 等于白名单形同虚设
+      // （学生在校外自带一个校内 IP 头即可绕过"仅限校内考试"的限制）。
+      // trust proxy 只信任反向代理追加的那一跳，伪造值会被代理覆盖或忽略。
+      const clientIp = (req.ip || req.socket.remoteAddress || '')
         .split(',')[0]
-        .trim();
+        .trim()
+        .replace(/^::ffff:/, ''); // IPv4-mapped IPv6 归一化，否则白名单匹配不上
+
       const allowed = isIpAllowed(clientIp, (exam.batch.allowedIps as string[]) || []);
       if (!allowed) {
         return res.status(403).json({
@@ -366,38 +461,90 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
     const tableSpaceId = `${assignment.fileId}:${assignment.accessToken || ''}`;
 
     if (submission) {
-      // 断点续考：保留原始 startedAt，确保剩余考试时间从首次开考时刻持续累计，
-      // 而非每次重新进入都重置为满时长（考试时间应在后台持续计算）。
-      // 仅在原先没有 startedAt（异常数据）或非续考场景下才设置当前时间。
-      submission = await prisma.studentSubmission.update({
-        where: { id: submission.id },
+      // 断点续考：条件更新，只有**仍是 in_progress** 才写回。
+      // 读检查写之间服务端可能已经收卷（到点自动交卷 / 教师结束考试 / 批次级联），
+      // 无条件 update 会把 submitted 覆盖回 in_progress —— 此后该答卷不再被任何兜底
+      // 收集（所有兜底只扫 in_progress 的"考试"，考试已 ended 就不再匹配），
+      // 教师阅卷列表（只查 submitted）也看不到它，形成永久悬空的"半死"答卷。
+      const resumed = await prisma.studentSubmission.updateMany({
+        where: { id: submission.id, status: 'in_progress' },
         data: {
-          status: 'in_progress',
+          // 保留原始 startedAt，确保剩余时间从首次开考时刻持续累计
           ...(isResuming && submission.startedAt ? {} : { startedAt: new Date() }),
           tableSpaceId,
         },
       });
-    } else {
-      submission = await prisma.studentSubmission.create({
-        data: {
-          examId: req.params.id,
-          studentId: req.user!.userId,
-          status: 'in_progress',
-          startedAt: new Date(),
-          tableSpaceId,
-          details: {
-            create: exam.examQuestions.map(eq => ({ questionId: eq.questionId })),
+      if (resumed.count === 0) {
+        return res.status(400).json({ message: '答卷已提交，无法重新进入考试' });
+      }
+      submission = await prisma.studentSubmission.findUnique({ where: { id: submission.id } });
+      if (!submission) return res.status(500).json({ message: '服务器错误' });
+
+      // 补建缺失的监考会话（历史上创建失败后没有补建路径，导致监考场次记录缺失）
+      const session = await prisma.examSession.findFirst({
+        where: { studentId: req.user!.userId, examId: req.params.id },
+        select: { id: true },
+      });
+      if (!session) {
+        await prisma.examSession.create({
+          data: {
+            submissionId: submission.id,
+            studentId: req.user!.userId,
+            examId: req.params.id,
+            ipAddress: req.ip || req.socket.remoteAddress || null,
           },
-        },
-      });
-      await prisma.examSession.create({
-        data: {
-          submissionId: submission.id,
-          studentId: req.user!.userId,
-          examId: req.params.id,
-          ipAddress: req.ip || req.socket.remoteAddress || null,
-        },
-      });
+        }).catch(() => { /* 会话仅用于监考展示，失败不阻断入场 */ });
+      }
+    } else {
+      try {
+        submission = await prisma.$transaction(async (tx) => {
+          // 事务内重查考试状态：避免"入场校验通过 → 落库前考试已被结束"的竞态。
+          // 结束时 finalize 只收已存在的答卷，新建的答卷会永久悬空在 in_progress。
+          const fresh = await tx.exam.findUnique({
+            where: { id: req.params.id },
+            select: { status: true },
+          });
+          if (!fresh || (fresh.status !== 'published' && fresh.status !== 'in_progress')) {
+            throw Object.assign(new Error('考试已结束，无法开始作答'), { statusCode: 400 });
+          }
+
+          const created = await tx.studentSubmission.create({
+            data: {
+              examId: req.params.id,
+              studentId: req.user!.userId,
+              status: 'in_progress',
+              startedAt: new Date(),
+              tableSpaceId,
+              details: {
+                create: exam.examQuestions.map(eq => ({ questionId: eq.questionId })),
+              },
+            },
+          });
+          // 会话仅用于监考展示：失败不阻断入场（没有它学生仍在正常答卷）
+          await tx.examSession.create({
+            data: {
+              submissionId: created.id,
+              studentId: req.user!.userId,
+              examId: req.params.id,
+              ipAddress: req.ip || req.socket.remoteAddress || null,
+            },
+          }).catch(() => { /* 同上 */ });
+          return created;
+        });
+      } catch (err: any) {
+        // 双击/双标签同时入场：唯一约束 @@unique([examId, studentId]) 会拦下后到者，
+        // 这不是错误，直接复用已创建的那份答卷
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          submission = await prisma.studentSubmission.findUnique({
+            where: { examId_studentId: { examId: req.params.id, studentId: req.user!.userId } },
+          });
+          if (!submission) return res.status(500).json({ message: '服务器错误' });
+        } else {
+          return res.status(err?.statusCode || 500).json({
+            message: err?.statusCode ? err.message : '服务器错误',
+          });
+        }
+      }
     }
 
     res.json({
@@ -411,11 +558,11 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
         totalScore: exam.totalScore,
         passScore: exam.passScore,
       },
-      questions: exam.examQuestions.map(eq => ({
-        ...eq.question,
-        scoreOverride: eq.scoreOverride,
-        sortOrder: eq.sortOrder,
-      })),
+      // 学生视角裁剪：同样剥离 answerRules / analysis（详见 toStudentQuestion 注释）
+      questions: exam.examQuestions.map(eq =>
+        toStudentQuestion(eq.question, { scoreOverride: eq.scoreOverride, sortOrder: eq.sortOrder }),
+      ),
+      deadline: computeStudentDeadline(exam, submission),
     });
   } catch {
     res.status(500).json({ message: '服务器错误' });
@@ -426,11 +573,13 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
 myExamRouter.post('/:id/heartbeat', async (req: Request, res: Response) => {
   try {
     const { tabSwitchCount } = req.body;
+    const examId = req.params.id;
+    const studentId = req.user!.userId;
 
     const session = await prisma.examSession.findFirst({
       where: {
-        studentId: req.user!.userId,
-        examId: req.params.id,
+        studentId,
+        examId,
       },
     });
 
@@ -444,6 +593,29 @@ myExamRouter.post('/:id/heartbeat', async (req: Request, res: Response) => {
           ipAddress: req.ip || req.socket.remoteAddress || null,
         },
       });
+    } else {
+      // 归属校验：session 不存在时不能直接放行 —— 任何学生拿到一个考试 UUID 就能伪造心跳，
+      // 污染监考数据。心跳是高频接口（每人每 10 秒一次），不能复用重型的三层关系过滤
+      // （studentExamVisibilityOR），这里只查该生自己的参与痕迹：
+      // 答卷（studentSubmission）、考场座位（examRoomStudent）、表格分配（examTableAssignment），
+      // 均为单行索引点查，命中其一即视为归属该考试。
+      const [sub, seat, table] = await Promise.all([
+        prisma.studentSubmission.findUnique({
+          where: { examId_studentId: { examId, studentId } },
+          select: { id: true },
+        }),
+        prisma.examRoomStudent.findFirst({
+          where: { studentId, assignment: { examId } },
+          select: { id: true },
+        }),
+        prisma.examTableAssignment.findUnique({
+          where: { examId_studentId: { examId, studentId } },
+          select: { id: true },
+        }),
+      ]);
+      if (!sub && !seat && !table) {
+        return res.status(403).json({ message: '您未被分配到该考试，心跳已忽略' });
+      }
     }
 
     res.json({ ok: true });
@@ -467,33 +639,40 @@ myExamRouter.post('/:id/submit', async (req: Request, res: Response) => {
     if (!submission) {
       return res.status(404).json({ message: '未找到答题记录，请先开始答题' });
     }
-    if (submission.status === 'submitted' || submission.status === 'graded') {
-      return res.status(400).json({ message: '已提交，无法重复提交' });
+
+    // 状态机只允许 in_progress → submitted。
+    // ⚠️ 必须把 grading 视为"已交卷"：教师在自动阅卷后答卷会进入 grading（待复核），
+    // 此时学生端的任何一次重试（手点交卷/到点自动交卷/网络重发）都不能把它打回 submitted，
+    // 否则答卷会从教师待复核列表消失，已写入的判分明细与状态不一致。
+    if (submission.status !== 'in_progress') {
+      return res.status(400).json({
+        message: '已提交，无法重复提交',
+        status: submission.status,
+      });
     }
 
-    // Server-side time validation
-    const exam = await prisma.exam.findUnique({ where: { id: req.params.id } });
-    if (exam?.durationMinutes && submission.startedAt) {
-      const deadline = new Date(submission.startedAt).getTime() + exam.durationMinutes * 60 * 1000;
-      const grace = 60 * 1000; // 1 minute grace period
-      if (Date.now() > deadline + grace) {
-        // Time expired, but still allow submission (auto-submit scenario)
-      }
-    }
-
-    const updated = await prisma.studentSubmission.update({
-      where: { id: submission.id },
+    // 条件更新：只有仍是 in_progress 才写入。
+    // 手点交卷、到点自动交卷、服务端收卷三者并发时，后到者 count=0 即视为"已提交"，
+    // 避免把服务端已收的卷子或教师正在复核的卷子覆盖回 submitted（含提交时间被改写）。
+    const result = await prisma.studentSubmission.updateMany({
+      where: { id: submission.id, status: 'in_progress' },
       data: {
         status: 'submitted',
         submittedAt: new Date(),
+        isAutoSubmitted: false,
       },
     });
+
+    if (result.count === 0) {
+      return res.status(400).json({ message: '已提交，无法重复提交' });
+    }
 
     // 自动判分已关闭，改为教师通过"阅卷管理→自动阅卷"手动触发
     // gradeSubmission(submission.id).catch(err => {
     //   console.error(`[my-exams] 自动判分失败: ${submission.id}`, err);
     // });
 
+    const updated = await prisma.studentSubmission.findUnique({ where: { id: submission.id } });
     res.json(updated);
   } catch {
     res.status(500).json({ message: '服务器错误' });

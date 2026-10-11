@@ -48,15 +48,21 @@ userRouter.get('/', async (req: Request, res: Response) => {
         skip,
         take,
         orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          username: true,
-          realName: true,
-          role: true,
-          email: true,
-          avatarUrl: true,
-          createdAt: true,
-        },
+        // 脱敏：教师侧只能拿到轻量列表（用于学生/教师下拉选择），
+        // 不返回 email/avatarUrl 等敏感字段 —— 历史上任意教师可列出全系统用户（含管理员邮箱）。
+        // studentId 保留：考务向导选择学生时用于展示学号（见 ExamWizard Transfer）。
+        // admin 保留完整字段（用户管理页需要邮箱等信息）。
+        select: req.user!.role === 'teacher'
+          ? { id: true, username: true, realName: true, studentId: true }
+          : {
+              id: true,
+              username: true,
+              realName: true,
+              role: true,
+              email: true,
+              avatarUrl: true,
+              createdAt: true,
+            },
       }),
       prisma.user.count({ where }),
     ]);

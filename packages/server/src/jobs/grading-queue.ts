@@ -88,6 +88,41 @@ export async function enqueueGrading(submissionId: string): Promise<GradingResul
 }
 
 /**
+ * 批量入队（**不等待结果**）：每份答卷一个任务，由 Worker 并行消费。
+ *
+ * 为什么不复用 enqueueExamGrading：那个任务在 Worker 里仍是串行遍历，
+ * 且 waitForJob 会让 HTTP 请求一直挂着。几千人规模的判分必须
+ * 「立即返回 + 进度可查」，否则教师端只会看到请求超时而服务端还在跑。
+ *
+ * @returns 队列不可用时返回 null，调用方需回退同步执行
+ */
+export async function enqueueExamGradingBatch(
+  examId: string,
+  submissionIds: string[],
+): Promise<{ queued: number } | null> {
+  const queue = getGradingQueue();
+  if (!queue) return null;
+
+  // addBulk：一次网络往返写入全部任务，避免 3000 次 add 的往返开销
+  await queue.addBulk(
+    submissionIds.map(submissionId => ({
+      name: 'grade',
+      data: { submissionId },
+      opts: {
+        attempts: 3,
+        backoff: { type: 'exponential' as const, delay: 2000 },
+        removeOnComplete: 200,
+        removeOnFail: 100,
+        jobId: `grade-${submissionId}`, // 同份答卷重复入队时去重（BullMQ 会忽略已存在的 jobId）
+      },
+    })),
+  );
+
+  console.log(`[Queue] exam ${examId}: queued ${submissionIds.length} grading jobs`);
+  return { queued: submissionIds.length };
+}
+
+/**
  * 将整场考试批量判分任务加入队列。
  */
 export async function enqueueExamGrading(examId: string): Promise<{ jobId: string } | { syncResult: any }> {
@@ -151,7 +186,10 @@ export function startGradingWorkers(): void {
       console.log(`[Worker] 判分完成: submission=${data.submissionId}, score=${result.totalScore}/${result.maxScore}`);
       return result;
     },
-    { connection: conn, concurrency: 3 }
+    // 并发可调：判分瓶颈在 WPS 开放平台的限流，不是本机 CPU。
+    // 3 太慢（3000 份 × 约 2s ≈ 33 分钟），默认提到 6；
+    // 若 WPS 侧开始返回 429，把这个值调小即可（无需改代码）。
+    { connection: conn, concurrency: Number(process.env.GRADING_CONCURRENCY) || 6 }
   );
 
   examGradingWorker = new Worker(

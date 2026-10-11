@@ -47,8 +47,32 @@ import { errorHandler } from './middleware/error-handler';
 export function createApp() {
   const app = express();
 
+  // ⚠️ trust proxy 必须在任何读取 req.ip 的逻辑之前设置。
+  // 生产环境应用端口只绑定 127.0.0.1（见 docker-compose），只有同机反向代理能访问，
+  // 因此信任 1 跳是安全的；不设置的话 req.ip 一律是代理 IP，IP 白名单会全部失效。
+  // 通过 TRUST_PROXY 环境变量可覆盖（多级代理填跳数、直连填 false）。
+  const trustProxyEnv = process.env.TRUST_PROXY;
+  app.set(
+    'trust proxy',
+    trustProxyEnv !== undefined
+      ? (trustProxyEnv === 'false' ? false : (Number(trustProxyEnv) || trustProxyEnv))
+      : (process.env.NODE_ENV === 'production' ? 1 : false),
+  );
+
   // Middleware
-  app.use(cors());
+  // CORS：默认放开（前后端同源部署，浏览器本不需要跨域；放开是为了兼容内网穿透域名）。
+  // 如需收紧，设置 CORS_ORIGINS（逗号分隔白名单）即可，无需改代码。
+  const corsOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean);
+  app.use(cors(corsOrigins.length > 0 ? { origin: corsOrigins } : {}));
+
+  // 批量分配 WPS 表格的请求体很大：每名学生一条 { studentId, shareUrl, accessToken }，
+  // accessToken 是长 JWT（约 1KB），3000 人 ≈ 3MB，远超 express.json() 默认的 100KB。
+  // ⚠️ 必须挂在全局解析器**之前**：Express 按注册顺序执行，全局解析器先跑的话，
+  // 超限请求在路由层拿到控制权之前就已经 413 了（路由内再挂一个 limit 也没用）。
+  app.use('/api/exam-table-assignments', express.json({ limit: '10mb' }));
   app.use(express.json());
   // ✅ Phase 3.2: 全局审计中间件（自动记录CRUD操作）
   app.use(auditMiddleware);

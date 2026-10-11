@@ -15,6 +15,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { evaluateRules, type AnswerRule, type RuleResult, type SchemaResponse, type RecordData } from '../engine/rule-engine';
 import { createAdapterFromSpaceId } from '../engine/adapters/kingsoft-adapter';
+import { wpsConfigService } from './wps-config-service';
 
 // ============================================================
 // 类型定义
@@ -160,10 +161,18 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
     }
   }
 
-  // 如果外部传入了 accessToken，注入到 spaceId 中
-  if (accessToken && effectiveSpaceId) {
+  // Token 取用顺序：显式传入 > 系统当前（自动刷新）> tableSpaceId 里的历史快照。
+  //
+  // ⚠️ 这里曾经只用「显式传入」和「快照」两个来源：前端不传 token 时就会拿
+  // 分配当时的快照去调 WPS —— 那个 token 24 小时即失效，表现为"判分报 token 过期，
+  // 但 WPS Token 管理里明明是好的"。系统当前 token 由 wps-config-service 定时刷新，
+  // 是唯一可靠的来源，必须优先取用。
+  if (effectiveSpaceId) {
     const fileId = effectiveSpaceId.split(':')[0];
-    effectiveSpaceId = `${fileId}:${accessToken}`;
+    const liveToken = accessToken || (await wpsConfigService.getValidAccessToken()) || undefined;
+    if (liveToken) {
+      effectiveSpaceId = `${fileId}:${liveToken}`;
+    }
   }
 
   const adapter = createAdapterFromSpaceId(effectiveSpaceId);
@@ -235,6 +244,8 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
     rows: Prisma.VerificationResultCreateManyInput[];
     score: number | null;
     isCorrect: boolean | null;
+    /** 判分时的规则快照（存档用）：题目规则日后被改也能复现"当时按什么规则判的" */
+    gradedWith: Prisma.InputJsonValue;
   }> = [];
   let totalScore = 0;
   let maxScore = 0;
@@ -277,6 +288,14 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
 
     detailWrites.push({
       detailId: detail.id,
+      gradedWith: {
+        gradedAt: new Date().toISOString(),
+        source: 'auto',
+        // 题目规则快照：只存判分需要的字段，避免把整个 question 塞进 JSON
+        rules: rules.map(r => ({ id: r.id, action: r.action, params: r.params, score: r.score })),
+        ruleScoreTotal: qMaxScore,
+        questionScore: qMaxPoints,
+      } as Prisma.InputJsonValue,
       rows: results.map(r => ({
         submissionDetailId: detail.id,
         submissionId: submission.id,
@@ -311,7 +330,7 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
       await tx.verificationResult.createMany({ data: w.rows });
       await tx.submissionDetail.update({
         where: { id: w.detailId },
-        data: { score: w.score, isCorrect: w.isCorrect },
+        data: { score: w.score, isCorrect: w.isCorrect, gradedWith: w.gradedWith },
       });
     }
 
