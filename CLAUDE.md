@@ -23,9 +23,17 @@ npm test -w packages/client           # vitest run
 npx vitest run src/routes/__tests__/wps-preview.test.ts   # 单文件（在对应 package 目录下执行）
 npx vitest run -t "用例名"                                 # 单用例
 
-# 类型检查（没有配置 lint，不要假设存在）
-cd packages/server && npx tsc --noEmit -p tsconfig.json
-cd packages/client && npx tsc --noEmit -p tsconfig.json
+# 质量门禁（根目录执行；CI 会跑同一套，见 .github/workflows/ci.yml）
+npm run lint                 # ESLint，当前 0 error / 若干 warning（warning 不阻断）
+npm run lint:fix
+npm run typecheck            # 两端 tsc --noEmit
+npm test                     # 两端 vitest
+npm run test:coverage        # 后端覆盖率（判分引擎是重点观察对象）
+npm run e2e                  # Playwright 端到端（需前后端已在跑；见 e2e/）
+npm run e2e:ui               # 带界面调试
+
+# 并发压测（k6，见 tests/load/README.md；需要一场可开考的测试考试）
+k6 run tests/load/exam-load.js -e BASE_URL=... -e EXAM_ID=... -e STUDENT_FROM=... -e PASSWORD=... -e VUS=200
 
 # 运维诊断脚本（在 packages/server 目录下执行，跑的是当前 .env 指向的库/表格）
 npx tsx scripts/probe-practice-reset.ts   # WPS fileId+token 哪种鉴权组合可用（只读）
@@ -96,6 +104,10 @@ Socket.IO 在 `index.ts` 里 `initSocketIO(httpServer)`（监考推送 + 通知�
 ## 约定与注意
 
 - 注释与文档用中文，注释解释「为什么」而非「做了什么」，现有代码风格是密集的行内解释 + 关键取舍说明。
+- **新代码用 `utils/logger.ts` 的 `logger`，不要再加 `console.log`**（存量 console 可逐步替换）。logger 已配置凭据脱敏，`tableSpaceId`/`accessToken`/`password` 等字段会被打成 `[已脱敏]`。
+- **错误上报默认关闭**：没配 `SENTRY_DSN` 时 Sentry 完全不初始化、不发任何请求。其 `dataCollection` 已在代码里显式收紧（关掉请求头/请求体/用户信息/cookie）——那些位置分别是 JWT、学生答案与身份，不要图省事整体打开。
+- **提交前会跑 gitleaks**（husky 钩子 + CI）。误报不要改 `.gitleaks.toml` 的 allowlist——实测其 `paths` 与 `regexes` 是 OR 语义，写 `paths` 等于整个文件放行；应往 `.gitleaksignore` 加一条 `提交:文件:规则:行号` 指纹。
+- ESLint 的分级原则：`error` 只放「几乎一定是 bug」的规则（no-floating-promises / rules-of-hooks / no-misused-promises 等），整洁度类（未使用导入、case 块声明）降为 `warn`。**新增 error 级规则前先确认全库能清零**，否则 CI 会常年红灯没人看。
 - 测试统一用 vitest + supertest，路由测试通过 `vi.mock` 替换 `middleware/auth`（免 JWT）、`config/prisma`（免 DB）、外部适配器（免网络），可参考 `routes/__tests__/exam-ended-lock.test.ts`、`wps-preview.test.ts`。
 - Prisma client 生成在**根** `node_modules/.prisma/client`，临时脚本里要用绝对路径 require；Model 字段名以 `schema.prisma` 为准（例如用户状态是 `accountStatus` 不是 `status`）。
 - `config/index.ts` 用 `dotenv.config()` 按**进程 cwd** 加载 `.env`：从根目录跑脚本读到的是根 `.env`，从 `packages/server` 跑读到的是 `packages/server/.env`——两者内容可能不同（尤其 `JWT_SECRET`），调试接口鉴权失败时先确认这一点。生产环境弱 `JWT_SECRET` 会 fail-fast 拒绝启动。

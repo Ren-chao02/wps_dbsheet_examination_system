@@ -262,26 +262,43 @@ npm run docker:down  # 停止并移除容器
 │       │   ├── data/capabilities/  # 能力域 / 能力点模型（66 项，兼作知识点）
 │       │   └── middleware/         # 鉴权、考试归属校验、审计、考试锁定
 │       └── prisma/                 # Schema、迁移与种子数据
+├── e2e/                            # Playwright 端到端测试（登录 → 作答 → 交卷）
+├── tests/load/                     # k6 并发压测脚本与说明
 ├── docs/                           # 项目文档（见下方文档索引）
 ├── assets/screenshots/             # README 演示截图
 ├── docker-compose.yml              # PostgreSQL / Redis / App 编排
+├── docker-compose.monitoring.yml   # 可选监控栈（Uptime Kuma），独立启停
 ├── Dockerfile                      # 应用镜像（多阶段构建）
 ├── docker-entrypoint.sh            # 容器入口：等待 DB → 迁移 → 首次种子 → 启动
 ├── DEPLOYMENT.md                   # 部署与服务器迁移指南
 ├── CLAUDE.md                       # 面向开发者的代码库导览
+├── eslint.config.mjs               # ESLint 扁平配置（前后端一份）
 └── package.json                    # Monorepo 根配置与统一脚本
 ```
 
 ---
 
-## 🧪 测试
+## 🧪 测试与质量门禁
 
-使用 [Vitest](https://vitest.dev/) 进行单元测试，覆盖判分引擎、答案还原 / 提案逻辑、SSE 流式解析、AI 提案应用等核心模块：
+推送即触发 [CI](.github/workflows/ci.yml)：Lint → 类型检查 → 单测 → 构建 → 密钥扫描。
 
 ```bash
-npm test -w packages/server
-npm test -w packages/client
+npm run lint          # ESLint（正确性优先，格式不参与）
+npm run typecheck     # 两端 tsc --noEmit
+npm test              # Vitest：判分引擎、答案还原、SSE 解析、AI 提案等
+npm run test:coverage # 覆盖率报告
+
+npm run e2e           # Playwright 端到端：登录 → 入场 → 作答 → 交卷
+k6 run tests/load/exam-load.js ...   # k6 并发压测，见 tests/load/README.md
 ```
+
+> 📌 **压测是上线前最该做的一件事**：现有测试覆盖了纯逻辑，但没有回答「几千个学生
+> 同时开考会怎样」。最危险的不是稳态，而是开考瞬间——每人都要生成一份卷子快照并落库。
+> 用法与要准备的账号见 [tests/load/README.md](tests/load/README.md)。
+
+> 🔒 提交前会由 husky 钩子跑 [gitleaks](https://github.com/gitleaks/gitleaks) 扫描密钥。
+> 这不是形式主义：本项目的 `tableSpaceId` 形如 `fileId:accessToken`，凭据很容易被
+> 顺带写进调试脚本或日志。
 
 ---
 
