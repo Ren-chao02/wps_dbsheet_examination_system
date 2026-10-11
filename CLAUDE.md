@@ -39,12 +39,33 @@ cd packages/client && npx tsc --noEmit -p tsconfig.json
 
 客户端请求默认走 `services/api.ts`（axios，baseURL `/api`，自动附 JWT，401 跳登录）；唯一例外是 AI 辅助出题的 SSE 流式接口 `services/coachingApi.ts`（裸 `fetch` + `services/sse-parser.ts`）。Vite 把 `/api` 与 `/socket.io` 代理到 `:3002`（Socket.IO 走代理是为了内网穿透域名下 WebSocket 也能连上）。
 
-### 判分核心：引擎是纯函数
-`engine/rule-engine.ts` 是判分核心，**不依赖数据库、不发网络请求**，只接收 `SchemaResponse`（+ 可选 `RecordData`）与题目的 `answerRules`。规则是 `{ action, params, score }`，处理器注册在 `ruleHandlers: Record<string, RuleHandler>`（29 个 action，另有 `getActionLabel()` 维护中文标签）。
+### 判分核心：两条并列的纯函数路径
+按题型分流，两条路径互不影响，入口在 `services/grading-service.ts`：
+
+| 路径 | 文件 | 输入 | 适用 |
+| --- | --- | --- | --- |
+| 规则引擎 | `engine/rule-engine.ts` | WPS `SchemaResponse` + 题目 `answerRules` | 实操题（5 种） |
+| 客观题判分器 | `engine/objective-grader.ts` | 题目 `objectiveAnswer` + 学生作答 | 单选/多选/判断 |
+
+两者都**不依赖数据库、不发网络请求**，输入齐了就出结果。判分入口先判 `isObjectiveType(type)` 决定走哪条。
+
+`rule-engine` 的规则是 `{ action, params, score }`，处理器注册在 `ruleHandlers: Record<string, RuleHandler>`（29 个 action，另有 `getActionLabel()` 维护中文标签）。
 
 - 新增验证器 = 往 `ruleHandlers` 加一个 handler + 在 `getActionLabel` 补标签，`params` 用 `rule.params` 取。
 - 无法从 Schema 完整判定的规则返回 `needsReview: true`，前端标为「待复核」交人工阅卷，**不要**为了自动化硬判。
 - `engine/adapters/kingsoft-adapter.ts` 负责把 WPS 数据转成引擎可吃的 Schema/RecordData；`engine/demo-schemas.ts` 提供离线样例，`engine/__tests__` 里的测试不碰网络。
+
+### 抽题组卷（每生一份卷子）
+`services/paper-generator.ts` 是执行端：开考时按考试的**题位**为该考生生成卷子快照。
+
+- 题位模型：`PaperQuestion`/`ExamQuestion` 都有 `slotType`（`fixed` 固定题 / `rule` 抽题）与 `rule`（知识点/难度/题型/schemaRefs）。绑定试卷时规则会一起拷到考试上。
+- 快照落库：`StudentExamQuestion`（`@@unique([examId, studentId, slotIndex])` 保证幂等）。**必须落库**——题库会变，靠种子重算会让历史答卷对不上"他当时做的是哪道题"。
+- 等值替换：同题位的候选必须「同知识点 + 同难度 + 同题型 + 同分值 + 同 `schemaRefs`」，并按**已分配次数最少**优先取材（纯随机在候选少时会让两个学生撞题）。
+- `schemaRefs` 是硬约束：实操题题面会写"在「员工信息表」中把「入职日期」改为日期格式"，变体题引用别的表/字段的话，学生打开自己的表格根本找不到那张表。
+- 组卷页用 `POST /api/papers/slot-preview` 显示每个题位的候选数，**只有 1 道候选时必须警告**（否则"每生不同"会静默退化成"全员同题"）。
+- 客观题：`Question.objectiveAnswer`（选项+正确项），学生端只下发 `options`（`toStudentQuestion` 白名单裁剪，`correct` 绝不下发）。作答存 `SubmissionDetail.answerJson.answer`，接口 `PUT /my-exams/:id/answers`。
+- 纯客观题考试不需要 WPS 表格：`start-wps` 只在卷内含实操题时强制要求分配表，判分也会跳过 WPS 读取。
+- 练习（`/api/practice/*`）只支持实操题（判分依赖 WPS Schema），抽题时会排除客观题。
 
 ### 出题辅助链路（能力图谱驱动）
 `data/capabilities/*.ts`（tables/fields/field-props/views/forms/records）是静态 TS 常量构成的能力图谱 `capability-graph.ts`。链路：勾选能力点 → `engine/skeleton-generator.ts` 生成题目骨架 + 标准答案表 → 教师导入标准答案 → `engine/answer-reverser.ts` 从真实 Schema 反向解析出 `answerRules`（`POST /api/questions/skeleton`、`/reverse-rules`）。`coaching/`（AI 辅助出题）同样依赖 `answerReverser.groundProposal` 把 LLM 提案落到真实字段上，改规则结构时要同步这条链路。
