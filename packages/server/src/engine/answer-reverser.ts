@@ -341,7 +341,7 @@ class FieldPropMatcher implements CapabilityMatcher {
     const matches: Match[] = [];
     for (const sheet of schema.detail.sheets) {
       for (const field of sheet.fields || []) {
-        const match = this.tryMatch(capabilityId, field, sheet, schema);
+        const match = this.tryMatch(capabilityId, field, sheet);
         if (match) matches.push(match);
       }
     }
@@ -352,7 +352,6 @@ class FieldPropMatcher implements CapabilityMatcher {
     capabilityId: string,
     field: any,
     sheet: any,
-    schema: SchemaResponse,
   ): Match | null {
     const base: Match = {
       sheetId: sheet.id,
@@ -408,7 +407,6 @@ class ViewMatcher implements CapabilityMatcher {
     if (!cap || cap.domain !== 'views') return [];
 
     const matches: Match[] = [];
-    const viewType = cap.wpsConcept; // 'Grid' | 'Kanban' | ... | 'View'（通用）
 
     for (const sheet of schema.detail.sheets) {
       for (const view of sheet.views || []) {

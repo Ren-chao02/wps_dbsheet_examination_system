@@ -131,7 +131,9 @@ export function auditMiddleware(req: Request, res: Response, next: NextFunction)
     try {
       // 仅在成功时记录（状态码2xx）
       if (res.statusCode >= 200 && res.statusCode < 300 && responseData) {
-        writeAuditLog(req, res, action, responseData);
+        // writeAuditLog 内部自带 try/catch 兜底，这里用 void 明确「有意不等待」：
+        // 审计写入不该拖慢响应，也不该因为失败影响业务
+        void writeAuditLog(req, res, action, responseData);
       }
     } catch (err) {
       console.error('写入审计日志失败:', err);
@@ -158,7 +160,7 @@ async function writeAuditLog(
     const userRole = (req as any).user?.role;
 
     // 准备变更数据
-    let oldData = null;
+    const oldData = null; // eslint 的 prefer-const 命中过这里，保持 const
     let newData = null;
     let changedFields = null;
 

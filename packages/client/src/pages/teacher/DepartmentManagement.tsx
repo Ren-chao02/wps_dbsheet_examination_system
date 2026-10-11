@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Card, Row, Col, Tree, Input, Button, Form, Empty, message, Popconfirm,
-  Space, Divider, Spin, Tag,
+  Space, Spin, Tag,
 } from 'antd';
 import {
   PlusOutlined, BankOutlined, BookOutlined, TeamOutlined,
@@ -104,10 +104,6 @@ export default function DepartmentManagement() {
 
   // ---------- Selected node helpers ----------
   const findDepartment = (id: string) => departments.find(d => d.id === id);
-  const findMajor = (deptId: string, majorId: string) =>
-    departments.find(d => d.id === deptId)?.majors?.find(m => m.id === majorId);
-  const findClassRoom = (deptId: string, majorId: string, classId: string) =>
-    departments.find(d => d.id === deptId)?.majors?.find(m => m.id === majorId)?.classRooms?.find(c => c.id === classId);
 
   const resolveNode = useCallback((type: NodeType, id: string): Department | Major | ClassRoom | undefined => {
     if (type === 'dept') return findDepartment(id);
@@ -221,7 +217,6 @@ export default function DepartmentManagement() {
   // ---------- Title render ----------
   const titleRender = (nodeData: DataNode) => {
     const { type, id } = parseNodeKey(nodeData.key as string);
-    const data = resolveNode(type, id);
 
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, Statistic, Row, Col, Table, Tag, Spin, message, Button, Space, Tabs } from 'antd';
-import { TrophyOutlined, TeamOutlined, RiseOutlined, DownloadOutlined, RadarChartOutlined, UserOutlined } from '@ant-design/icons';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
+import { TrophyOutlined, TeamOutlined, RiseOutlined, DownloadOutlined, UserOutlined } from '@ant-design/icons';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import api from '../../services/api';
 import { useNavigate } from 'react-router-dom';
 import type { ExamStatistics } from '../../types';
@@ -14,19 +14,10 @@ export function StatisticsPage() {
   const navigate = useNavigate();
   const [stats, setStats] = useState<ExamStatistics | null>(null);
   const [loading, setLoading] = useState(true);
-  const [studentStats, setStudentStats] = useState<any[]>([]);
 
   useEffect(() => {
     api.get(`/statistics/exam/${id}`).then(res => {
       setStats(res.data);
-      // Load individual student stats for radar chart
-      if (res.data.submissions?.length > 0) {
-        const studentData = res.data.submissions.map((s: any) => ({
-          name: s.studentName,
-          score: s.score,
-        }));
-        setStudentStats(studentData);
-      }
     }).catch(() => message.error('加载失败')).finally(() => setLoading(false));
   }, [id]);
 

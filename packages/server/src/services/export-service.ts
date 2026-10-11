@@ -235,7 +235,7 @@ class ExportService {
     const processedData = this.processData(data, options);
 
     // 生成简单的HTML转PDF思路（实际项目建议用puppeteer或pdfkit）
-    let htmlContent = `
+    const htmlContent = `
       <!DOCTYPE html>
       <html>
       <head>
@@ -333,7 +333,7 @@ class ExportService {
     filePath: string,
     recordCount: number,
     format: ExportFormat,
-    startTime: number
+    _startTime: number
   ): ExportResult {
     const stats = require('fs').statSync(filePath);
     const relativePath = filePath.replace(process.cwd(), '');

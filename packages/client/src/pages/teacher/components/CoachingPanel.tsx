@@ -22,7 +22,7 @@ import { coachingApi } from '../../../services/coachingApi';
 import { ProposalCard, type ProposalStatus } from './ProposalCard';
 import type { Proposal, CoachingMessage, QuestionState } from '../../../types';
 
-const { Text, Paragraph } = Typography;
+const { Paragraph } = Typography;
 
 interface CoachingPanelProps {
   /** 每轮发送前从表单现场拼装的题目状态 */

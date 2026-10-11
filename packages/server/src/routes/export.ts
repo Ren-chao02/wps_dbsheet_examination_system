@@ -499,7 +499,6 @@ router.get('/download', async (req: Request, res: Response) => {
       });
     }
 
-    const fs = require('fs');
     if (!existsSync(safePath)) {
       return res.status(404).json({
         success: false,

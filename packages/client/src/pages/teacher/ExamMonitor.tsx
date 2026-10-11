@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { Table, Tag, Card, Statistic, Row, Col, Spin, message, Badge } from 'antd';
 import { UserOutlined, CheckCircleOutlined, ClockCircleOutlined, WarningOutlined } from '@ant-design/icons';
-import { io, Socket } from 'socket.io-client';
+import { Socket } from 'socket.io-client';
 import api from '../../services/api';
 import { createAuthedSocket } from '../../config/socket-url';
 
@@ -173,8 +173,6 @@ export function ExamMonitor() {
     return () => clearInterval(interval);
   }, [id]);
 
-  if (loading) return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>;
-
   const counts = {
     total: submissions.length,
     inProgress: submissions.filter((s: any) => s.status === 'in_progress').length,
@@ -196,6 +194,12 @@ export function ExamMonitor() {
     }),
     [submissions, liveStudents],
   );
+
+  // ⚠️ 提前 return 必须留在所有 Hook 之后。
+  // 放到 useMemo 之前的话：loading=true 的首帧不调用 useMemo，loading 变 false 的
+  // 那一帧 Hook 数量突然变多，React 会抛 "Rendered more hooks than during the
+  // previous render" 直接白屏。
+  if (loading) return <div style={{ textAlign: 'center', padding: 100 }}><Spin size="large" /></div>;
 
   return (
     <div className="page-container">

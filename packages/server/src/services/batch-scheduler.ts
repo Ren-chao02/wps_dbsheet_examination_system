@@ -9,8 +9,9 @@ class BatchScheduler {
   start(intervalMs: number = 60_000): void {
     if (this.timer) return;
     console.log(`[BatchScheduler] started, interval=${intervalMs / 1000}s`);
-    this.runOnce(); // 启动时立即执行一次
-    this.timer = setInterval(() => this.runOnce(), intervalMs);
+    // void：runOnce 内部已 catch 住所有异常，这里是启动时的立即执行，有意不等待
+    void this.runOnce();
+    this.timer = setInterval(() => void this.runOnce(), intervalMs);
   }
 
   stop(): void {

@@ -16,14 +16,6 @@ const loginSchema = z.object({
   captchaText: z.string().min(1, '请输入验证码'),
 });
 
-const registerSchema = z.object({
-  username: z.string().min(2).max(64),
-  password: z.string().min(6),
-  realName: z.string().optional(),
-  email: z.string().email().optional(),
-  role: z.enum(['teacher', 'student']).default('student'),
-});
-
 // GET /api/auth/captcha - 获取验证码
 authRouter.get('/captcha', (_req: Request, res: Response) => {
   try {
