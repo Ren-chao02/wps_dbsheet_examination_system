@@ -190,11 +190,14 @@ statisticsRouter.get('/exam/:examId', async (req: Request, res: Response) => {
 
     // Per-question stats
     const questionStats = await Promise.all(
-      exam.examQuestions.map(async eq => {
+      // 只统计有固定题目的题位：抽题题位（rule）每人拿到的题不同，
+      // 按"题位"聚合没有意义，需要按 StudentExamQuestion 里的实际题目聚合
+      // （见文件末尾 TODO：抽题组卷的题目级统计）
+      exam.examQuestions.filter(eq => !!eq.questionId && !!eq.question).map(async eq => {
         const details = await prisma.submissionDetail.findMany({
           where: {
             submission: { examId: exam.id, status: 'graded' },
-            questionId: eq.questionId,
+            questionId: eq.questionId!,
           },
         });
 
@@ -204,10 +207,10 @@ statisticsRouter.get('/exam/:examId', async (req: Request, res: Response) => {
           : 0;
 
         return {
-          questionId: eq.questionId,
-          title: eq.question.title,
-          type: eq.question.type,
-          maxScore: eq.scoreOverride ?? eq.question.score,
+          questionId: eq.questionId!,
+          title: eq.question!.title,
+          type: eq.question!.type,
+          maxScore: eq.scoreOverride ?? eq.question!.score,
           answerCount: details.length,
           correctCount,
           correctRate: details.length > 0
@@ -324,12 +327,15 @@ statisticsRouter.get('/exam/:examId/export', async (req: Request, res: Response)
     };
 
     // 每题配置：满分 = scoreOverride ?? question.score
-    const questionCols = exam.examQuestions.map(eq => ({
-      questionId: eq.questionId,
-      title: eq.question.title,
-      type: QUESTION_TYPE_LABELS[eq.question.type] || eq.question.type,
-      maxScore: eq.scoreOverride ?? eq.question.score,
-    }));
+    // 同上：抽题题位没有固定题目，跳过（其题目级统计需按实际抽到的题聚合）
+    const questionCols = exam.examQuestions
+      .filter(eq => !!eq.questionId && !!eq.question)
+      .map(eq => ({
+        questionId: eq.questionId!,
+        title: eq.question!.title,
+        type: QUESTION_TYPE_LABELS[eq.question!.type] || eq.question!.type,
+        maxScore: eq.scoreOverride ?? eq.question!.score,
+      }));
 
     // 题目统计（口径与页面「题目分析」一致，均基于已评分答卷）
     const questionStats = questionCols.map(qc => {

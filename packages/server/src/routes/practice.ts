@@ -8,6 +8,9 @@ import { wpsConfigService } from '../services/wps-config-service';
 import { loadTablePreview } from '../services/wps-table-service';
 
 export const practiceRouter = Router();
+
+/** 练习支持的题型：仅实操题（判分依赖 WPS 表格 Schema） */
+const PRACTICE_QUESTION_TYPES = ['create_table', 'add_field', 'config_view', 'create_form', 'comprehensive'];
 practiceRouter.use(authenticate);
 practiceRouter.use(authorize('student'));
 
@@ -163,6 +166,9 @@ practiceRouter.post('/start', async (req: Request, res: Response) => {
     // 个人题集再练：按指定题目抽取（去重、保持传入顺序）；否则按分类/难度随机抽题
     const requestedIds = questionIds ? Array.from(new Set(questionIds)) : null;
     const where: any = { status: 'published' };
+    // 练习判分完全依赖 WPS 表格 Schema，只支持实操题：
+    // 客观题混进来会因"没有判分规则"而被静默判 0 分，必须在抽题阶段就排除
+    where.type = { in: PRACTICE_QUESTION_TYPES };
     if (requestedIds) {
       where.id = { in: requestedIds };
     } else {
@@ -179,6 +185,13 @@ practiceRouter.post('/start', async (req: Request, res: Response) => {
     let selected: typeof pool;
     if (requestedIds) {
       if (pool.length !== requestedIds.length) {
+        // 可能是"不存在/已下线"，也可能是"选中了客观题"（练习不支持）
+        const found = await prisma.question.count({ where: { id: { in: requestedIds } } });
+        if (found === requestedIds.length) {
+          return res.status(400).json({
+            message: '所选题目中包含客观题，题库练习目前只支持 WPS 实操题，请重新选择',
+          });
+        }
         return res.status(400).json({ message: '部分题目不存在或已下线，请刷新个人题集后再试' });
       }
       const byId = new Map(pool.map((q) => [q.id, q]));

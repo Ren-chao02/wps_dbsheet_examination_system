@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { skeletonGenerator } from '../engine/skeleton-generator';
@@ -32,13 +33,57 @@ const questionSchema = z.object({
   // 保留现有字段
   title: z.string().min(1).max(512),
   description: z.string().optional(),
-  // type字段已移除，统一默认为实操题(comprehensive)
+  // 题型：不传默认实操综合题（兼容旧客户端）
+  type: z.enum([
+    'create_table', 'add_field', 'config_view', 'create_form', 'comprehensive',
+    'single_choice', 'multiple_choice', 'true_false',
+  ]).optional(),
   difficulty: z.enum(['easy', 'medium', 'hard']).default('medium'),
   score: z.number().int().min(0).default(10),
   answerRules: z.array(answerRuleSchema).default([]),
+  /** 知识点：能力点 id（抽题组卷按它做同知识点等值替换） */
+  capabilityIds: z.array(z.string().min(1)).default([]),
+  /** 客观题答案：选项 + 正确项（与 answerRules 互斥） */
+  objectiveAnswer: z.object({
+    options: z.array(z.object({ key: z.string().min(1), text: z.string().min(1) })).min(2, '至少 2 个选项').max(26),
+    correct: z.array(z.string().min(1)).min(1, '至少要指定 1 个正确选项'),
+  }).nullable().optional(),
+  /** 实操题引用的表名/字段名声明（抽题等值校验用） */
+  schemaRefs: z.object({
+    tables: z.array(z.string()).optional(),
+    fields: z.array(z.string()).optional(),
+  }).nullable().optional(),
   hints: z.string().optional(),
   tags: z.array(z.string()).default([]),
 });
+
+const OBJECTIVE_TYPES = ['single_choice', 'multiple_choice', 'true_false'] as const;
+
+/** 可选 JSON 字段 → Prisma 输入类型：显式 null 用 JsonNull（写入 SQL NULL） */
+function toJsonInput(v: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return Prisma.JsonNull;
+  return v as Prisma.InputJsonValue;
+}
+
+/**
+ * 客观题答案校验（在入库前拦下配置错误）。
+ *
+ * 这些校验的意义在于：配错的题一旦进了考试，学生是按错误答案被扣分的，
+ * 事后只能靠人工复核挽救 —— 所以在保存时就拦住。
+ */
+function validateObjectiveAnswer(type: string | undefined, answer: { options: { key: string }[]; correct: string[] } | null | undefined) {
+  if (!type || !OBJECTIVE_TYPES.includes(type as any)) return null; // 实操题不校验
+  if (!answer) return '客观题必须配置正确答案';
+  const keys = answer.options.map(o => o.key);
+  if (new Set(keys).size !== keys.length) return '选项标识不能重复';
+  const unknown = answer.correct.filter(c => !keys.includes(c));
+  if (unknown.length > 0) return `正确选项 ${unknown.join('、')} 不在选项列表中`;
+  if ((type === 'single_choice' || type === 'true_false') && answer.correct.length !== 1) {
+    return type === 'true_false' ? '判断题只能有一个正确选项' : '单选题只能有一个正确选项';
+  }
+  return null;
+}
 
 // GET /api/questions - 支持高级筛选（9个维度）
 questionRouter.get('/', async (req: Request, res: Response) => {
@@ -167,11 +212,18 @@ questionRouter.post('/', authorize('teacher', 'admin'), async (req: Request, res
   try {
     const data = questionSchema.parse(req.body);
 
-    // ✅ 自动填充元数据，统一设置为实操题
+    const objectiveError = validateObjectiveAnswer(data.type, data.objectiveAnswer as any);
+    if (objectiveError) {
+      return res.status(400).json({ message: objectiveError });
+    }
+
+    // ✅ 自动填充元数据；题型不传时默认实操综合题（兼容旧客户端）
     const question = await prisma.question.create({
       data: {
         ...data,
-        type: 'comprehensive',
+        type: data.type || 'comprehensive',
+        objectiveAnswer: toJsonInput(data.objectiveAnswer),
+        schemaRefs: toJsonInput(data.schemaRefs),
         createdBy: req.user!.userId,
         // 如果未提供teacherName，使用当前用户姓名
         teacherName: data.teacherName || req.user?.realName || undefined,
@@ -224,12 +276,27 @@ questionRouter.put('/:id', authorize('teacher', 'admin'), async (req: Request, r
 
     const data = questionSchema.parse(req.body);
 
+    const nextType = data.type || existingQuestion.type;
+    const objectiveError = validateObjectiveAnswer(nextType, (data.objectiveAnswer ?? existingQuestion.objectiveAnswer) as any);
+    if (objectiveError) {
+      return res.status(400).json({ message: objectiveError });
+    }
+
+    // 规则/答案发生变化 → 版本号自增。
+    // 判分快照 gradedWith 里记录了这个版本号，历史答卷据此可追溯到"当时用的是哪一版规则"。
+    const answerChanged =
+      JSON.stringify(data.answerRules ?? []) !== JSON.stringify(existingQuestion.answerRules ?? []) ||
+      JSON.stringify(data.objectiveAnswer ?? null) !== JSON.stringify(existingQuestion.objectiveAnswer ?? null);
+
     // ✅ 自动填充更新人
     const updated = await prisma.question.update({
       where: { id: req.params.id },
       data: {
         ...data,
-        type: 'comprehensive',
+        type: nextType,
+        objectiveAnswer: toJsonInput(data.objectiveAnswer),
+        schemaRefs: toJsonInput(data.schemaRefs),
+        ...(answerChanged ? { version: { increment: 1 } } : {}),
         updatedBy: req.user?.realName || undefined,
       },
       include: {

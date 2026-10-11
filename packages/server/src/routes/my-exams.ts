@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { hashString, shuffleWithSeed } from '../utils/helpers';
@@ -8,6 +9,7 @@ import { isIpAllowed } from '../utils/ip-utils';
 import { autoEndExpiredExams, studentExamVisibilityOR, computeStudentDeadline } from '../utils/exam-utils';
 import { loadTablePreview } from '../services/wps-table-service';
 import { wpsConfigService } from '../services/wps-config-service';
+import { generateStudentPaper } from '../services/paper-generator';
 
 export const myExamRouter = Router();
 myExamRouter.use(authenticate);
@@ -143,6 +145,9 @@ myExamRouter.get('/history', async (req: Request, res: Response) => {
   }
 });
 
+/** 判分不依赖 WPS 表格的题型（客观题） */
+const OBJECTIVE_QUESTION_TYPES = ['single_choice', 'multiple_choice', 'true_false'];
+
 /**
  * 学生视角的题目裁剪。
  *
@@ -154,7 +159,18 @@ function toStudentQuestion(q: any, extra: Record<string, unknown> = {}) {
   const {
     id, title, description, type, difficulty, score, hints, tags, primaryCategoryId, secondaryCategoryId,
   } = q;
-  return { id, title, description, type, difficulty, score, hints, tags, primaryCategoryId, secondaryCategoryId, ...extra };
+
+  // 客观题：**选项要发给学生（不然没得选），正确答案绝不能发**。
+  // objectiveAnswer 里同时存着 options 与 correct，这里只取 options。
+  const options = Array.isArray(q?.objectiveAnswer?.options)
+    ? q.objectiveAnswer.options.map((o: any) => ({ key: String(o?.key ?? ''), text: String(o?.text ?? '') }))
+    : undefined;
+
+  return {
+    id, title, description, type, difficulty, score, hints, tags, primaryCategoryId, secondaryCategoryId,
+    ...(options ? { options } : {}),
+    ...extra,
+  };
 }
 
 // GET /api/my-exams/:id — 考试详情（含题目）
@@ -240,24 +256,47 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
       },
     });
 
-    // Get exam questions (for the exam doing page to load questions on resume)
-    let examQuestions = await prisma.examQuestion.findMany({
+    // ── 题目下发 ─────────────────────────────────────────────
+    // 有卷子快照（已开考）→ 下发该生**实际拿到**的题目；
+    // 没有快照（还没开考，如入场须知页）→ 只下发固定题位，
+    // 题量另行用 questionCount 告知（rule 题位此刻还没抽题，不能凭空生成）。
+    const settings = (exam?.settings || {}) as any;
+    const shuffle = <T,>(arr: T[]): T[] =>
+      settings.shuffleQuestions ? shuffleWithSeed(arr, hashString(req.params.id + req.user!.userId)) : arr;
+
+    const paperRows = submission
+      ? await prisma.studentExamQuestion.findMany({
+          where: { examId: req.params.id, studentId: req.user!.userId },
+          include: { question: true },
+          orderBy: { sortOrder: 'asc' },
+        })
+      : [];
+
+    const examSlots = await prisma.examQuestion.findMany({
       where: { examId: req.params.id },
       include: { question: true },
-      orderBy: { sortOrder: 'asc' },
+      orderBy: [{ slotIndex: 'asc' }, { sortOrder: 'asc' }],
     });
 
-    // Shuffle questions if exam settings has shuffleQuestions
-    const settings = (exam?.settings || {}) as any;
-    if (settings.shuffleQuestions) {
-      const seed = hashString(req.params.id + req.user!.userId);
-      examQuestions = shuffleWithSeed(examQuestions, seed);
+    let questions;
+    if (paperRows.length > 0) {
+      questions = shuffle(paperRows).map(row =>
+        toStudentQuestion(row.question, { scoreOverride: null, sortOrder: row.sortOrder, score: row.score }),
+      );
+    } else {
+      // 未开考：只给固定题位（题面本身不泄题），题量用 questionCount 表达
+      const fixed = examSlots.filter(eq => eq.slotType !== 'rule' && eq.questionId && eq.question);
+      questions = shuffle(fixed).map(eq =>
+        toStudentQuestion(eq.question, {
+          scoreOverride: eq.scoreOverride,
+          sortOrder: eq.sortOrder,
+          score: eq.scoreOverride ?? eq.question!.score,
+        }),
+      );
     }
 
-    // 学生视角裁剪：剥离 answerRules / analysis（见 toStudentQuestion 注释）
-    const questions = examQuestions.map(eq =>
-      toStudentQuestion(eq.question, { scoreOverride: eq.scoreOverride, sortOrder: eq.sortOrder }),
-    );
+    // 该生卷子的题位总数（含尚未抽题的 rule 题位），供入场页展示"共 N 题"
+    const questionCount = paperRows.length > 0 ? paperRows.length : examSlots.length;
 
     // 查询 WPS 表格分配信息（用于 WPS 实操版界面）
     let wpsTable: { shareUrl: string; fileId: string } | null = null;
@@ -291,7 +330,7 @@ myExamRouter.get('/:id', async (req: Request, res: Response) => {
       }
     }
 
-    res.json({ exam, submission, questions, wpsTable, deadline });
+    res.json({ exam, submission, questions, questionCount, wpsTable, deadline });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
@@ -452,13 +491,19 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
       },
     });
 
-    if (!assignment) {
+    // 纯客观题考试不需要 WPS 表格：只有卷子里确实含实操题题位时才强制要求分配，
+    // 否则"只考选择题"的考试会因为没配表格而根本开不了考。
+    const hasHandsOnSlot = exam.examQuestions.some(
+      eq => !!eq.question && !OBJECTIVE_QUESTION_TYPES.includes(eq.question.type as any),
+    );
+    if (!assignment && hasHandsOnSlot) {
       return res.status(400).json({ message: '尚未分配 WPS 表格，请联系教师' });
     }
 
     let submission = existingSubmission;
 
-    const tableSpaceId = `${assignment.fileId}:${assignment.accessToken || ''}`;
+    // 没有实操题时表空间留空：判分链路会跳过 WPS 读取
+    const tableSpaceId = assignment ? `${assignment.fileId}:${assignment.accessToken || ''}` : '';
 
     if (submission) {
       // 断点续考：条件更新，只有**仍是 in_progress** 才写回。
@@ -508,6 +553,23 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
             throw Object.assign(new Error('考试已结束，无法开始作答'), { statusCode: 400 });
           }
 
+          // 先生成该生专属卷子快照（fixed 题位直接用、rule 题位按知识点抽题），
+          // 再按快照建答题明细 —— 明细必须引用「该生实际拿到的题」，
+          // 而不是考试题位（rule 题位本来就没有固定题目）
+          const paper = await generateStudentPaper(req.params.id, req.user!.userId, tx);
+          if (paper.unfilledSlots.length > 0) {
+            console.warn(
+              `[start-wps] exam=${req.params.id} student=${req.user!.userId} 有 ${paper.unfilledSlots.length} 个题位无候选题:`,
+              JSON.stringify(paper.unfilledSlots),
+            );
+          }
+
+          const paperRows = await tx.studentExamQuestion.findMany({
+            where: { examId: req.params.id, studentId: req.user!.userId },
+            orderBy: { sortOrder: 'asc' },
+            select: { questionId: true },
+          });
+
           const created = await tx.studentSubmission.create({
             data: {
               examId: req.params.id,
@@ -516,7 +578,7 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
               startedAt: new Date(),
               tableSpaceId,
               details: {
-                create: exam.examQuestions.map(eq => ({ questionId: eq.questionId })),
+                create: paperRows.map(r => ({ questionId: r.questionId })),
               },
             },
           });
@@ -547,10 +609,18 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
       }
     }
 
+    // 下发该生**实际拿到**的卷子（刚生成的快照），而不是考试题位：
+    // 抽题题位没有固定题目，按题位返回会少给题目、与详情接口口径不一致
+    const paperQuestions = await prisma.studentExamQuestion.findMany({
+      where: { examId: req.params.id, studentId: req.user!.userId },
+      include: { question: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+
     res.json({
       submission,
-      shareUrl: assignment.shareUrl,
-      fileId: assignment.fileId,
+      shareUrl: assignment?.shareUrl ?? null,
+      fileId: assignment?.fileId ?? null,
       exam: {
         id: exam.id,
         title: exam.title,
@@ -558,14 +628,16 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
         totalScore: exam.totalScore,
         passScore: exam.passScore,
       },
-      // 学生视角裁剪：同样剥离 answerRules / analysis（详见 toStudentQuestion 注释）
-      questions: exam.examQuestions.map(eq =>
-        toStudentQuestion(eq.question, { scoreOverride: eq.scoreOverride, sortOrder: eq.sortOrder }),
+      questions: paperQuestions.map(row =>
+        toStudentQuestion(row.question, { scoreOverride: null, sortOrder: row.sortOrder, score: row.score }),
       ),
+      questionCount: paperQuestions.length,
       deadline: computeStudentDeadline(exam, submission),
     });
-  } catch {
-    res.status(500).json({ message: '服务器错误' });
+  } catch (err: any) {
+    // 这里原先静默返回 500，线上只看到"服务器错误"，无从定位。开考是关键路径，必须留日志。
+    console.error('[start-wps] 开考失败 exam=%s student=%s:', req.params.id, req.user?.userId, err);
+    res.status(err?.statusCode || 500).json({ message: err?.statusCode ? err.message : '服务器错误' });
   }
 });
 
@@ -620,6 +692,61 @@ myExamRouter.post('/:id/heartbeat', async (req: Request, res: Response) => {
 
     res.json({ ok: true });
   } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// PUT /api/my-exams/:id/answers — 保存客观题作答（自动保存，可反复调用）
+//
+// 客观题在页面内直接作答，必须随时落库：机房断电、浏览器崩溃、误刷新都不该丢答案。
+// 只允许写「该生卷子里确实有的题」，且只在 in_progress 期间可写
+// （交卷后作答不能再被改动，否则成绩可被事后篡改）。
+myExamRouter.put('/:id/answers', async (req: Request, res: Response) => {
+  try {
+    const examId = req.params.id;
+    const studentId = req.user!.userId;
+
+    const payload = z.object({
+      answers: z.array(z.object({
+        questionId: z.string().uuid(),
+        answer: z.union([z.string(), z.array(z.string()), z.null()]),
+      })).max(200),
+    }).parse(req.body);
+
+    const submission = await prisma.studentSubmission.findUnique({
+      where: { examId_studentId: { examId, studentId } },
+      select: { id: true, status: true },
+    });
+    if (!submission) {
+      return res.status(404).json({ message: '未找到答题记录，请先开始答题' });
+    }
+    if (submission.status !== 'in_progress') {
+      return res.status(400).json({ message: '答卷已提交，无法再修改作答' });
+    }
+
+    // 该生实际拿到的题目（抽题组卷下每人不同，不能用考试题位校验）
+    const paper = await prisma.studentExamQuestion.findMany({
+      where: { examId, studentId },
+      select: { questionId: true },
+    });
+    const allowed = new Set(paper.map(p => p.questionId));
+    const rejected = payload.answers.filter(a => !allowed.has(a.questionId)).map(a => a.questionId);
+    if (rejected.length > 0) {
+      return res.status(403).json({ message: '作答中包含不属于本场考试的题目', rejected });
+    }
+
+    const now = new Date();
+    const writes = payload.answers.map(a => prisma.submissionDetail.updateMany({
+      where: { submissionId: submission.id, questionId: a.questionId },
+      data: { answerJson: { answer: a.answer } as any },
+    }));
+    if (writes.length > 0) await prisma.$transaction(writes);
+
+    res.json({ saved: payload.answers.length, savedAt: now.toISOString() });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ message: '参数错误', errors: err.errors });
+    }
     res.status(500).json({ message: '服务器错误' });
   }
 });

@@ -21,6 +21,10 @@ enum QuestionType {
   config_view
   create_form
   comprehensive
+  // ── 客观题（与实操题并存于同一题库、同一张卷子）──
+  single_choice // 单选
+  multiple_choice // 多选
+  true_false // 判断
 }
 
 enum Difficulty {
@@ -57,27 +61,27 @@ enum ExamStatus {
 }
 
 enum BatchStatus {
-  draft       // 草稿
-  active      // 进行中
-  completed   // 已完成
-  archived    // 已归档
+  draft // 草稿
+  active // 进行中
+  completed // 已完成
+  archived // 已归档
 }
 
 enum BatchExamMode {
-  unified     // 集中统一
-  flexible    // 随到随考
+  unified // 集中统一
+  flexible // 随到随考
 }
 
 enum ExamRoomStatus {
-  available   
-  maintenance 
+  available
+  maintenance
 }
 
 enum AssignmentStatus {
-  scheduled   
-  in_progress 
-  completed   
-  cancelled   
+  scheduled
+  in_progress
+  completed
+  cancelled
 }
 
 enum SubmissionStatus {
@@ -119,60 +123,61 @@ enum TaskStatus {
 }
 
 model User {
-  id           String  @id @default(uuid()) @db.Uuid
-  username     String  @unique @db.VarChar(64)
-  passwordHash String  @map("password_hash") @db.VarChar(255)
-  realName     String? @map("real_name") @db.VarChar(128)
-  role         UserRole
-  email        String? @db.VarChar(255)
-  avatarUrl    String? @map("avatar_url") @db.VarChar(512)
-  studentId    String? @unique @map("student_id") @db.VarChar(64)
-  employeeId   String? @unique @map("employee_id") @db.VarChar(64)
-  gender       Gender?
-  phoneNumber  String? @map("phone_number") @db.VarChar(32)
+  id            String        @id @default(uuid()) @db.Uuid
+  username      String        @unique @db.VarChar(64)
+  passwordHash  String        @map("password_hash") @db.VarChar(255)
+  realName      String?       @map("real_name") @db.VarChar(128)
+  role          UserRole
+  email         String?       @db.VarChar(255)
+  avatarUrl     String?       @map("avatar_url") @db.VarChar(512)
+  studentId     String?       @unique @map("student_id") @db.VarChar(64)
+  employeeId    String?       @unique @map("employee_id") @db.VarChar(64)
+  gender        Gender?
+  phoneNumber   String?       @map("phone_number") @db.VarChar(32)
   accountStatus AccountStatus @default(ENABLED) @map("account_status")
-  remark       String?       @db.VarChar(512)
-  systemRoleId String?       @map("system_role_id") @db.Uuid
-  lastLoginAt  DateTime? @map("last_login_at")
-  departmentId String? @map("department_id")
-  majorId      String? @map("major_id")
-  classRoomId  String? @map("class_room_id")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  remark        String?       @db.VarChar(512)
+  systemRoleId  String?       @map("system_role_id") @db.Uuid
+  lastLoginAt   DateTime?     @map("last_login_at")
+  departmentId  String?       @map("department_id")
+  majorId       String?       @map("major_id")
+  classRoomId   String?       @map("class_room_id")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
 
   // Relations
-  createdQuestions      Question[]           @relation("QuestionCreator")
-  createdExams         Exam[]               @relation("ExamCreator")
-  createdPapers        Paper[]              @relation("PaperCreator")
-  createdBatches       ExamBatch[]          @relation("BatchCreator") // ✅ 新增：批次创建者
-  submissions          StudentSubmission[]
-  gradedSubmissions    StudentSubmission[]  @relation("Grader")
-  examSessions         ExamSession[]
-  invigilatedRooms     ExamRoom[]           @relation("RoomInvigilators") // ✅ 新增：监考的考场
-  roomAssignments      ExamRoomStudent[]    // ✅ 新增：考场座位分配
-  assignmentInvigilations ExamRoomAssignment[] @relation("AssignmentInvigilators") // ✅ 新增：分配监考
-  department           Department?          @relation(fields: [departmentId], references: [id])
-  major                Major?               @relation(fields: [majorId], references: [id])
-  classRoom            ClassRoom?           @relation(fields: [classRoomId], references: [id])
-  systemRole           SystemRole?          @relation(fields: [systemRoleId], references: [id])
-  createdInvitations   Invitation[]         @relation("InvitationCreator")
-  reviewedApplications StudentApplication[] @relation("ApplicationReviewer")
-  createdImportTasks   ImportTask[]         @relation("ImportTaskCreator")
-  behaviorLogs         StudentBehaviorLog[] @relation("StudentBehavior") // ✅ Phase 3: 行为日志
-  behaviorReports      BehaviorAnalysisReport[] @relation("StudentReport") // ✅ Phase 3: 分析报告
-  auditLogs            AuditLog[] @relation("AuditOperator") // ✅ Phase 3.2: 审计日志
-  notifications        Notification[] @relation("UserNotifications") // ✅ Phase 3.4: 通知消息
-  notificationPreference NotificationPreference? @relation("UserNotificationPrefs") // ✅ Phase 3.4: 偏好设置
-  notificationTemplates NotificationTemplate[] @relation("NotificationTemplateCreator") // ✅ 通知模板
-  practiceRecords      PracticeRecord[]
-  practiceTableAssignment PracticeTableAssignment?
-  wrongQuestions       WrongQuestion[]
-  favoriteQuestions    FavoriteQuestion[]
-  questionFeedback     QuestionFeedback[]
-  tableAssignmentsAsStudent  ExamTableAssignment[] @relation("ExamTableAssignmentStudent") // ✅ 作为考生的表格分配
-  tableAssignmentsAsAssigner ExamTableAssignment[] @relation("ExamTableAssignmentAssigner") // ✅ 作为分配人的表格分配
-  teachingClasses            TeacherClass[]   @relation("TeacherClasses") // ✅ 教师负责的班级（多对多）
-  exportTasks                ExportTask[]     @relation("ExportTaskOwner") // ✅ 统一导出中心任务（持久化）
+  createdQuestions           Question[]               @relation("QuestionCreator")
+  createdExams               Exam[]                   @relation("ExamCreator")
+  createdPapers              Paper[]                  @relation("PaperCreator")
+  createdBatches             ExamBatch[]              @relation("BatchCreator") // ✅ 新增：批次创建者
+  submissions                StudentSubmission[]
+  gradedSubmissions          StudentSubmission[]      @relation("Grader")
+  examSessions               ExamSession[]
+  invigilatedRooms           ExamRoom[]               @relation("RoomInvigilators") // ✅ 新增：监考的考场
+  roomAssignments            ExamRoomStudent[] // ✅ 新增：考场座位分配
+  assignmentInvigilations    ExamRoomAssignment[]     @relation("AssignmentInvigilators") // ✅ 新增：分配监考
+  department                 Department?              @relation(fields: [departmentId], references: [id])
+  major                      Major?                   @relation(fields: [majorId], references: [id])
+  classRoom                  ClassRoom?               @relation(fields: [classRoomId], references: [id])
+  systemRole                 SystemRole?              @relation(fields: [systemRoleId], references: [id])
+  createdInvitations         Invitation[]             @relation("InvitationCreator")
+  reviewedApplications       StudentApplication[]     @relation("ApplicationReviewer")
+  createdImportTasks         ImportTask[]             @relation("ImportTaskCreator")
+  behaviorLogs               StudentBehaviorLog[]     @relation("StudentBehavior") // ✅ Phase 3: 行为日志
+  behaviorReports            BehaviorAnalysisReport[] @relation("StudentReport") // ✅ Phase 3: 分析报告
+  auditLogs                  AuditLog[]               @relation("AuditOperator") // ✅ Phase 3.2: 审计日志
+  notifications              Notification[]           @relation("UserNotifications") // ✅ Phase 3.4: 通知消息
+  notificationPreference     NotificationPreference?  @relation("UserNotificationPrefs") // ✅ Phase 3.4: 偏好设置
+  notificationTemplates      NotificationTemplate[]   @relation("NotificationTemplateCreator") // ✅ 通知模板
+  practiceRecords            PracticeRecord[]
+  practiceTableAssignment    PracticeTableAssignment?
+  wrongQuestions             WrongQuestion[]
+  favoriteQuestions          FavoriteQuestion[]
+  questionFeedback           QuestionFeedback[]
+  tableAssignmentsAsStudent  ExamTableAssignment[]    @relation("ExamTableAssignmentStudent") // ✅ 作为考生的表格分配
+  tableAssignmentsAsAssigner ExamTableAssignment[]    @relation("ExamTableAssignmentAssigner") // ✅ 作为分配人的表格分配
+  examPapers                 StudentExamQuestion[]    @relation("StudentExamPaperOwner") // ✅ 每生卷子快照
+  teachingClasses            TeacherClass[]           @relation("TeacherClasses") // ✅ 教师负责的班级（多对多）
+  exportTasks                ExportTask[]             @relation("ExportTaskOwner") // ✅ 统一导出中心任务（持久化）
 
   @@index([role, classRoomId])
   @@index([role, departmentId])
@@ -180,27 +185,27 @@ model User {
 }
 
 model QuestionCategory {
-  id        String    @id @default(uuid()) @db.Uuid
-  name      String    @db.VarChar(128)
-  
+  id   String @id @default(uuid()) @db.Uuid
+  name String @db.VarChar(128)
+
   // ✅ 基础树形结构
-  parentId  String?   @map("parent_id") @db.Uuid
-  sortOrder Int       @default(0) @map("sort_order")
-  
+  parentId  String? @map("parent_id") @db.Uuid
+  sortOrder Int     @default(0) @map("sort_order")
+
   // ✅ 扩展性字段：支持多级分类体系
-  description String?     @db.VarChar(512)           // 分类描述
-  icon        String?     @db.VarChar(64)            // 图标标识
-  status      CategoryStatus @default(ACTIVE)         // 启用/禁用状态
-  level       Int          @default(1)               // 层级深度（1=一级，2=二级，3+=扩展）
-  path        String?      @map("path") @db.VarChar(1024)  // 完整路径 "rootId/parentId/currentId"
-  metadata    Json         @default("{}")             // 扩展元数据（JSON格式，支持自定义属性）
-  
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at")
+  description String?        @db.VarChar(512) // 分类描述
+  icon        String?        @db.VarChar(64) // 图标标识
+  status      CategoryStatus @default(ACTIVE) // 启用/禁用状态
+  level       Int            @default(1) // 层级深度（1=一级，2=二级，3+=扩展）
+  path        String?        @map("path") @db.VarChar(1024) // 完整路径 "rootId/parentId/currentId"
+  metadata    Json           @default("{}") // 扩展元数据（JSON格式，支持自定义属性）
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
   // Relations
-  parent           QuestionCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
-  children         QuestionCategory[] @relation("CategoryTree")
+  parent   QuestionCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children QuestionCategory[] @relation("CategoryTree")
 
   // 两级分类的反向关联
   primaryQuestions   Question[] @relation("QuestionPrimaryCategory")
@@ -214,48 +219,61 @@ model QuestionCategory {
 
 // ✅ 新增枚举：分类状态
 enum CategoryStatus {
-  ACTIVE    // 正常使用
-  INACTIVE  // 已禁用（保留历史数据引用）
+  ACTIVE // 正常使用
+  INACTIVE // 已禁用（保留历史数据引用）
 }
 
 model Question {
-  id                    String           @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
 
   // ✅ 新增字段：两级分类体系
-  primaryCategoryId     String?          @map("primary_category_id") @db.Uuid
-  secondaryCategoryId   String?          @map("secondary_category_id") @db.Uuid
-  
+  primaryCategoryId   String? @map("primary_category_id") @db.Uuid
+  secondaryCategoryId String? @map("secondary_category_id") @db.Uuid
+
   // ✅ 新增字段：元数据信息
-  teacherName           String?          @map("teacher_name") @db.VarChar(64)
-  updatedBy             String?          @map("updated_by") @db.VarChar(64)
+  teacherName String? @map("teacher_name") @db.VarChar(64)
+  updatedBy   String? @map("updated_by") @db.VarChar(64)
 
   // 保留现有字段（不变）
-  title                 String           @db.VarChar(512)
-  description           String?          @db.Text
-  type                  QuestionType     @default(comprehensive)
-  difficulty            Difficulty       @default(medium)
-  score                 Int              @default(10)
-  answerRules           Json             @default("[]") @map("answer_rules")
-  hints                 String?          @db.Text
-  analysis              String?          @db.Text   // 教师手写解析（题库练习用）
-  tags                  String[]         @default([])
-  status                QuestionStatus   @default(published)
-  createdBy             String?          @map("created_by") @db.Uuid
-  createdAt             DateTime         @default(now()) @map("created_at")
-  updatedAt             DateTime         @updatedAt @map("updated_at")
+  title           String         @db.VarChar(512)
+  description     String?        @db.Text
+  type            QuestionType   @default(comprehensive)
+  difficulty      Difficulty     @default(medium)
+  score           Int            @default(10)
+  answerRules     Json           @default("[]") @map("answer_rules")
+  /// 知识点：能力点 id 列表（来自 data/capabilities 的 66 项能力图谱）。
+  /// 抽题组卷按它做「同知识点等值替换」，因此必须落库（此前只在生成骨架时用过一次）
+  capabilityIds   String[]       @default([]) @map("capability_ids")
+  /// 客观题答案：{ options: [{key, text}], correct: string[] }
+  /// 与 answerRules 互斥：客观题用它、实操题用 answerRules。绝不下发给学生
+  objectiveAnswer Json?          @map("objective_answer")
+  /// 实操题引用的表名/字段名声明：{ tables: string[], fields: string[] }
+  /// 抽题时用于「同题位候选题必须引用同一份结构」的等值校验——
+  /// 否则学生打开自己的表格会找不到题目里说的那张表
+  schemaRefs      Json?          @map("schema_refs")
+  /// 版本号：规则/答案变更时自增，判分快照 gradedWith 会记录它
+  version         Int            @default(1)
+  hints           String?        @db.Text
+  analysis        String?        @db.Text // 教师手写解析（题库练习用）
+  tags            String[]       @default([])
+  status          QuestionStatus @default(published)
+  createdBy       String?        @map("created_by") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
 
   // ✅ 新增关联关系：两级分类
-  primaryCategory       QuestionCategory? @relation("QuestionPrimaryCategory", fields: [primaryCategoryId], references: [id])
-  secondaryCategory     QuestionCategory? @relation("QuestionSecondaryCategory", fields: [secondaryCategoryId], references: [id])
+  primaryCategory   QuestionCategory? @relation("QuestionPrimaryCategory", fields: [primaryCategoryId], references: [id])
+  secondaryCategory QuestionCategory? @relation("QuestionSecondaryCategory", fields: [secondaryCategoryId], references: [id])
 
   // 保留现有关联（不变）
-  creator               User?            @relation("QuestionCreator", fields: [createdBy], references: [id])
-  examQuestions         ExamQuestion[]
-  submissionDetails     SubmissionDetail[]
-  paperQuestions        PaperQuestion[]
-  wrongQuestions        WrongQuestion[]
-  favoriteQuestions     FavoriteQuestion[]
-  questionFeedback      QuestionFeedback[]
+  creator              User?                 @relation("QuestionCreator", fields: [createdBy], references: [id])
+  examQuestions        ExamQuestion[]
+  submissionDetails    SubmissionDetail[]
+  paperQuestions       PaperQuestion[]
+  studentExamQuestions StudentExamQuestion[] @relation("StudentExamPaperQuestion")
+  wrongQuestions       WrongQuestion[]
+  favoriteQuestions    FavoriteQuestion[]
+  questionFeedback     QuestionFeedback[]
 
   @@index([status, primaryCategoryId])
   @@index([status, secondaryCategoryId])
@@ -264,34 +282,44 @@ model Question {
 }
 
 model Paper {
-  id          String    @id @default(uuid()) @db.Uuid
-  name        String    @db.VarChar(256)
-  description String?   @db.Text
-  source      String    @default("local") @db.VarChar(32)
-  difficulty  String?   @db.VarChar(32)
-  passScore   Int?      @map("pass_score")
-  totalScore  Int       @default(0) @map("total_score")
-  createdBy   String?   @map("created_by") @db.Uuid
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(256)
+  description String?  @db.Text
+  source      String   @default("local") @db.VarChar(32)
+  difficulty  String?  @db.VarChar(32)
+  passScore   Int?     @map("pass_score")
+  totalScore  Int      @default(0) @map("total_score")
+  createdBy   String?  @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
-  creator       User?           @relation("PaperCreator", fields: [createdBy], references: [id])
-  paperQuestions PaperQuestion[]
-  exams         Exam[]
+  creator         User?            @relation("PaperCreator", fields: [createdBy], references: [id])
+  paperQuestions  PaperQuestion[]
+  exams           Exam[]
   practiceRecords PracticeRecord[]
 
   @@map("papers")
 }
 
+/// 试卷题位：既可以是「就考这道题」（fixed），也可以是「按知识点抽 1 道」（rule）。
+/// rule 题位在开考时按 studentId 从候选池抽题，落进 StudentExamQuestion 快照。
 model PaperQuestion {
   id         String  @id @default(uuid()) @db.Uuid
   paperId    String  @map("paper_id") @db.Uuid
-  questionId String  @map("question_id") @db.Uuid
+  /// fixed 题位必填；rule 题位为空（候选池在运行时决定）
+  questionId String? @map("question_id") @db.Uuid
   sortOrder  Int     @default(0) @map("sort_order")
   score      Int     @default(10)
 
-  paper    Paper    @relation(fields: [paperId], references: [id], onDelete: Cascade)
-  question Question @relation(fields: [questionId], references: [id])
+  /// fixed = 固定题位；rule = 抽题题位
+  slotType String @default("fixed") @map("slot_type") @db.VarChar(16)
+  /// rule 题位的抽取条件：{ capabilityIds: string[], difficulty?: string, type?: string }
+  /// 候选池 = 满足「知识点命中 + 难度/题型匹配 + 分值一致 + schemaRefs 一致」的已发布题目
+  rule     Json?  @map("rule")
+
+  paper    Paper     @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  // Restrict：题目被试卷引用时不允许删除，避免"删一道题把整套卷子的题位清空"
+  question Question? @relation(fields: [questionId], references: [id], onDelete: Restrict)
 
   @@unique([paperId, questionId])
   @@map("paper_questions")
@@ -313,20 +341,21 @@ model Exam {
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")
 
-  paperId         String?    @map("paper_id") @db.Uuid
-  batchId         String?    @map("batch_id") @db.Uuid // 关联批次
+  paperId String? @map("paper_id") @db.Uuid
+  batchId String? @map("batch_id") @db.Uuid // 关联批次
 
   // Relations
-  creator       User?               @relation("ExamCreator", fields: [createdBy], references: [id])
-  paper         Paper?              @relation(fields: [paperId], references: [id])
-  batch         ExamBatch?          @relation(fields: [batchId], references: [id]) // 批次关联
-  examQuestions ExamQuestion[]
-  submissions   StudentSubmission[]
-  sessions      ExamSession[]
-  assignments   ExamRoomAssignment[] @relation("ExamRoomAssignments")
-  behaviorLogs  StudentBehaviorLog[] @relation("ExamBehavior") // ✅ Phase 3: 行为日志
-  behaviorReports BehaviorAnalysisReport[] @relation("ExamReport") // ✅ Phase 3: 分析报告
-  tableAssignments ExamTableAssignment[] @relation("ExamTableAssignments") // ✅ 考试表格分配
+  creator          User?                    @relation("ExamCreator", fields: [createdBy], references: [id])
+  paper            Paper?                   @relation(fields: [paperId], references: [id])
+  batch            ExamBatch?               @relation(fields: [batchId], references: [id]) // 批次关联
+  examQuestions    ExamQuestion[]
+  submissions      StudentSubmission[]
+  sessions         ExamSession[]
+  assignments      ExamRoomAssignment[]     @relation("ExamRoomAssignments")
+  behaviorLogs     StudentBehaviorLog[]     @relation("ExamBehavior") // ✅ Phase 3: 行为日志
+  behaviorReports  BehaviorAnalysisReport[] @relation("ExamReport") // ✅ Phase 3: 分析报告
+  tableAssignments ExamTableAssignment[]    @relation("ExamTableAssignments") // ✅ 考试表格分配
+  studentPapers    StudentExamQuestion[]    @relation("ExamStudentPapers") // ✅ 每生卷子快照
 
   @@index([batchId])
   @@index([status, endTime])
@@ -336,32 +365,32 @@ model Exam {
 
 // ✅ 批次管理模型 - 统一管理多场考试的公共参数
 model ExamBatch {
-  id               String       @id @default(uuid()) @db.Uuid
-  name             String       @db.VarChar(256)           // 批次名称（如：2026春季期末考试）
-  description      String?      @db.Text                   // 批次说明
+  id               String        @id @default(uuid()) @db.Uuid
+  name             String        @db.VarChar(256) // 批次名称（如：2026春季期末考试）
+  description      String?       @db.Text // 批次说明
   examMode         BatchExamMode @default(unified) @map("exam_mode") // 考试模式：unified(集中统一) | flexible(随到随考)
-  startTime        DateTime?    @map("start_time")          // 批次开始时间
-  endTime          DateTime?    @map("end_time")            // 批次结束时间
-  examDuration     Int          @map("exam_duration")       // 考试时长（分钟），所有考试统一时长
-  waitingTime      Int          @map("waiting_time")        // 候考时间（分钟）
-  lateTolerance    Int          @map("late_tolerance")      // 迟到容忍（分钟）
-  ipLimitEnabled   Boolean      @default(false) @map("ip_limit_enabled") // 是否启用IP限制
-  allowedIps       Json         @default("[]") @map("allowed_ips") // CIDR白名单列表，如 ["192.168.1.0/24", "10.0.0.5"]
-  freezeMinutes    Int          @default(30) @map("freeze_minutes") // 考生自主交卷后的冻结时间（分钟）
-  exitPolicy       String       @default("finite") @map("exit_policy") @db.VarChar(32) // 中途退出处理：finite(有限续考) | unlimited(无限续考) | none(不可续考)
-  exitMaxCount     Int          @default(10) @map("exit_max_count") // 退出次数上限
-  exitMaxMinutes   Int          @default(20) @map("exit_max_minutes") // 单次退出时间上限（分钟）
-  rulesContent     String?      @map("rules_content") @db.Text // 考试须知内容
-  rulesReadSeconds Int          @default(15) @map("rules_read_seconds") // 考试须知强制阅读时长（秒）
-  status           BatchStatus  @default(draft)             // 批次状态
-  settings         Json         @default("{}")              // 扩展配置
-  createdBy        String       @map("created_by") @db.Uuid
-  createdAt        DateTime     @default(now()) @map("created_at")
-  updatedAt        DateTime     @updatedAt @map("updated_at")
+  startTime        DateTime?     @map("start_time") // 批次开始时间
+  endTime          DateTime?     @map("end_time") // 批次结束时间
+  examDuration     Int           @map("exam_duration") // 考试时长（分钟），所有考试统一时长
+  waitingTime      Int           @map("waiting_time") // 候考时间（分钟）
+  lateTolerance    Int           @map("late_tolerance") // 迟到容忍（分钟）
+  ipLimitEnabled   Boolean       @default(false) @map("ip_limit_enabled") // 是否启用IP限制
+  allowedIps       Json          @default("[]") @map("allowed_ips") // CIDR白名单列表，如 ["192.168.1.0/24", "10.0.0.5"]
+  freezeMinutes    Int           @default(30) @map("freeze_minutes") // 考生自主交卷后的冻结时间（分钟）
+  exitPolicy       String        @default("finite") @map("exit_policy") @db.VarChar(32) // 中途退出处理：finite(有限续考) | unlimited(无限续考) | none(不可续考)
+  exitMaxCount     Int           @default(10) @map("exit_max_count") // 退出次数上限
+  exitMaxMinutes   Int           @default(20) @map("exit_max_minutes") // 单次退出时间上限（分钟）
+  rulesContent     String?       @map("rules_content") @db.Text // 考试须知内容
+  rulesReadSeconds Int           @default(15) @map("rules_read_seconds") // 考试须知强制阅读时长（秒）
+  status           BatchStatus   @default(draft) // 批次状态
+  settings         Json          @default("{}") // 扩展配置
+  createdBy        String        @map("created_by") @db.Uuid
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
 
   // Relations
-  creator User    @relation("BatchCreator", fields: [createdBy], references: [id])
-  exams   Exam[]  // 该批次下的所有考试
+  creator User   @relation("BatchCreator", fields: [createdBy], references: [id])
+  exams   Exam[] // 该批次下的所有考试
 
   @@index([status, createdAt])
   @@map("exam_batches")
@@ -369,19 +398,19 @@ model ExamBatch {
 
 // ✅ 考场管理模型 - 管理物理考场信息
 model ExamRoom {
-  id        String          @id @default(uuid()) @db.Uuid
-  code      String          @unique @db.VarChar(64)    // 考场编码（如：A101、B203）
-  name      String          @db.VarChar(128)            // 考场名称（如：第一机房、第二实验室）
-  capacity  Int                                        // 容纳人数上限
-  location  String?         @db.VarChar(256)            // 物理位置描述
-  equipment Json            @default("[]")              // 设备列表（电脑编号等）
-  status    ExamRoomStatus  @default(available)         // 考场状态
-  createdAt DateTime        @default(now()) @map("created_at")
-  updatedAt DateTime        @updatedAt @map("updated_at")
+  id        String         @id @default(uuid()) @db.Uuid
+  code      String         @unique @db.VarChar(64) // 考场编码（如：A101、B203）
+  name      String         @db.VarChar(128) // 考场名称（如：第一机房、第二实验室）
+  capacity  Int // 容纳人数上限
+  location  String?        @db.VarChar(256) // 物理位置描述
+  equipment Json           @default("[]") // 设备列表（电脑编号等）
+  status    ExamRoomStatus @default(available) // 考场状态
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
 
   // Relations
-  assignments  ExamRoomAssignment[]    @relation("ExamRoomAssignmentRoom")
-  invigilators User[]                  @relation("RoomInvigilators") // 监考老师
+  assignments  ExamRoomAssignment[] @relation("ExamRoomAssignmentRoom")
+  invigilators User[]               @relation("RoomInvigilators") // 监考老师
 
   @@index([status])
   @@map("exam_rooms")
@@ -389,17 +418,17 @@ model ExamRoom {
 
 // ✅ 考场分配模型 - 考场的考试时间段分配（资源池预约模式）
 model ExamRoomAssignment {
-  id        String            @id @default(uuid()) @db.Uuid
-  examId    String            @map("exam_id") @db.Uuid
-  roomId    String            @map("room_id") @db.Uuid
-  status    AssignmentStatus  @default(scheduled)
-  createdAt DateTime          @default(now()) @map("created_at")
-  updatedAt DateTime          @updatedAt @map("updated_at")
+  id        String           @id @default(uuid()) @db.Uuid
+  examId    String           @map("exam_id") @db.Uuid
+  roomId    String           @map("room_id") @db.Uuid
+  status    AssignmentStatus @default(scheduled)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
 
-  exam        Exam                @relation("ExamRoomAssignments", fields: [examId], references: [id], onDelete: Cascade)
-  room        ExamRoom            @relation("ExamRoomAssignmentRoom", fields: [roomId], references: [id])
-  students    ExamRoomStudent[]
-  invigilators User[]              @relation("AssignmentInvigilators")
+  exam         Exam              @relation("ExamRoomAssignments", fields: [examId], references: [id], onDelete: Cascade)
+  room         ExamRoom          @relation("ExamRoomAssignmentRoom", fields: [roomId], references: [id])
+  students     ExamRoomStudent[]
+  invigilators User[]            @relation("AssignmentInvigilators")
 
   @@unique([examId, roomId])
   @@index([roomId, status])
@@ -409,15 +438,15 @@ model ExamRoomAssignment {
 
 // ✅ 考场-学生关联表 - 支持批量分配
 model ExamRoomStudent {
-  id            String @id @default(uuid()) @db.Uuid
-  assignmentId  String @map("assignment_id") @db.Uuid
-  studentId     String @map("student_id") @db.Uuid
-  seatNumber    Int    @map("seat_number") // 座位号
-  assignedAt    DateTime @default(now()) @map("assigned_at")
+  id           String   @id @default(uuid()) @db.Uuid
+  assignmentId String   @map("assignment_id") @db.Uuid
+  studentId    String   @map("student_id") @db.Uuid
+  seatNumber   Int      @map("seat_number") // 座位号
+  assignedAt   DateTime @default(now()) @map("assigned_at")
 
   // Relations
-  assignment    ExamRoomAssignment @relation(fields: [assignmentId], references: [id])
-  student       User                @relation(fields: [studentId], references: [id])
+  assignment ExamRoomAssignment @relation(fields: [assignmentId], references: [id])
+  student    User               @relation(fields: [studentId], references: [id])
 
   @@unique([assignmentId, studentId])
   @@unique([assignmentId, seatNumber])
@@ -425,43 +454,80 @@ model ExamRoomStudent {
 }
 
 model ExamQuestion {
-  id            String @id @default(uuid()) @db.Uuid
-  examId        String @map("exam_id") @db.Uuid
-  questionId    String @map("question_id") @db.Uuid
-  sortOrder     Int    @default(0) @map("sort_order")
-  scoreOverride Int?   @map("score_override")
+  id            String  @id @default(uuid()) @db.Uuid
+  examId        String  @map("exam_id") @db.Uuid
+  /// fixed 题位必填；rule 题位为空
+  questionId    String? @map("question_id") @db.Uuid
+  sortOrder     Int     @default(0) @map("sort_order")
+  scoreOverride Int?    @map("score_override")
+
+  /// 与 PaperQuestion 同构：fixed / rule
+  slotType  String @default("fixed") @map("slot_type") @db.VarChar(16)
+  rule      Json?  @map("rule")
+  /// 题位序号：每生卷子快照按它对齐（sortOrder 可能重复，不能当唯一键）
+  slotIndex Int    @default(0) @map("slot_index")
 
   // Relations
-  exam     Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
-  question Question @relation(fields: [questionId], references: [id])
+  exam     Exam      @relation(fields: [examId], references: [id], onDelete: Cascade)
+  question Question? @relation(fields: [questionId], references: [id], onDelete: Restrict)
 
   @@unique([examId, questionId])
+  @@index([examId, slotIndex])
   @@map("exam_questions")
 }
 
+/// 每生卷子快照：开考时按题位为该考生生成（fixed 直接用，rule 从候选池抽）。
+///
+/// 为什么必须落库而不是"判分时按种子重算"：
+/// 题库是会变的（教师改题、加题、下线题）。重算路径下，历史答卷对不上"他当时
+/// 做的是哪道题"，学生申诉时无法复现。快照一旦生成即固化，与题库变更解耦。
+///
+/// @@unique([examId, studentId, slotIndex]) 保证并发/重试下幂等（开考瞬间的重试、
+/// 双标签进入都不会生成两套卷子）。
+model StudentExamQuestion {
+  id         String   @id @default(uuid()) @db.Uuid
+  examId     String   @map("exam_id") @db.Uuid
+  studentId  String   @map("student_id") @db.Uuid
+  slotIndex  Int      @map("slot_index")
+  questionId String   @map("question_id") @db.Uuid
+  score      Int
+  sortOrder  Int      @default(0) @map("sort_order")
+  /// 来源题位类型：fixed（固定题）/ rule（抽题），便于统计与排查
+  source     String   @default("fixed") @db.VarChar(16)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  exam     Exam     @relation("ExamStudentPapers", fields: [examId], references: [id], onDelete: Cascade)
+  student  User     @relation("StudentExamPaperOwner", fields: [studentId], references: [id])
+  question Question @relation("StudentExamPaperQuestion", fields: [questionId], references: [id])
+
+  @@unique([examId, studentId, slotIndex])
+  @@index([examId, studentId])
+  @@map("student_exam_questions")
+}
+
 model StudentSubmission {
-  id            String           @id @default(uuid()) @db.Uuid
-  examId        String           @map("exam_id") @db.Uuid
-  studentId     String           @map("student_id") @db.Uuid
-  tableSpaceId  String?          @map("table_space_id") @db.Text
-  status        SubmissionStatus @default(pending)
-  startedAt     DateTime?        @map("started_at")
-  submittedAt   DateTime?        @map("submitted_at")
-  gradedAt      DateTime?        @map("graded_at")
-  totalScore    Int?             @map("total_score")
-  graderComment String?          @map("grader_comment") @db.Text
-  gradedBy      String?          @map("graded_by") @db.Uuid
-  createdAt     DateTime         @default(now()) @map("created_at")
-  isAutoSubmitted Boolean        @default(false) @map("is_auto_submitted")
+  id              String           @id @default(uuid()) @db.Uuid
+  examId          String           @map("exam_id") @db.Uuid
+  studentId       String           @map("student_id") @db.Uuid
+  tableSpaceId    String?          @map("table_space_id") @db.Text
+  status          SubmissionStatus @default(pending)
+  startedAt       DateTime?        @map("started_at")
+  submittedAt     DateTime?        @map("submitted_at")
+  gradedAt        DateTime?        @map("graded_at")
+  totalScore      Int?             @map("total_score")
+  graderComment   String?          @map("grader_comment") @db.Text
+  gradedBy        String?          @map("graded_by") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at")
+  isAutoSubmitted Boolean          @default(false) @map("is_auto_submitted")
 
   // Relations
-  exam             Exam                 @relation(fields: [examId], references: [id])
-  student          User                 @relation(fields: [studentId], references: [id])
-  grader           User?                @relation("Grader", fields: [gradedBy], references: [id])
-  details          SubmissionDetail[]
+  exam                Exam                 @relation(fields: [examId], references: [id])
+  student             User                 @relation(fields: [studentId], references: [id])
+  grader              User?                @relation("Grader", fields: [gradedBy], references: [id])
+  details             SubmissionDetail[]
   verificationResults VerificationResult[]
-  session          ExamSession?
-  behaviorLogs     StudentBehaviorLog[] @relation("SubmissionBehavior") // ✅ Phase 3: 行为日志
+  session             ExamSession?
+  behaviorLogs        StudentBehaviorLog[] @relation("SubmissionBehavior") // ✅ Phase 3: 行为日志
 
   @@unique([examId, studentId])
   @@index([studentId, status])
@@ -470,16 +536,16 @@ model StudentSubmission {
 }
 
 model SubmissionDetail {
-  id           String    @id @default(uuid()) @db.Uuid
-  submissionId String    @map("submission_id") @db.Uuid
-  questionId   String    @map("question_id") @db.Uuid
-  answerJson   Json      @default("{}") @map("answer_json")
+  id           String   @id @default(uuid()) @db.Uuid
+  submissionId String   @map("submission_id") @db.Uuid
+  questionId   String   @map("question_id") @db.Uuid
+  answerJson   Json     @default("{}") @map("answer_json")
   score        Int?
-  isCorrect    Boolean?  @map("is_correct")
-  createdAt    DateTime  @default(now()) @map("created_at")
+  isCorrect    Boolean? @map("is_correct")
+  createdAt    DateTime @default(now()) @map("created_at")
   /// 判分时所用规则的快照：{ questionVersion, rules: [...], gradedAt, source }
   /// 题目规则日后被修改，仍可据此复现"当时是按什么规则判的分"（申诉/复核依据）
-  gradedWith   Json?     @map("graded_with")
+  gradedWith   Json?    @map("graded_with")
 
   // Relations
   submission          StudentSubmission    @relation(fields: [submissionId], references: [id], onDelete: Cascade)
@@ -516,21 +582,21 @@ model GradeReviewLog {
 }
 
 model VerificationResult {
-  id                   String   @id @default(uuid()) @db.Uuid
-  submissionDetailId   String   @map("submission_detail_id") @db.Uuid
-  submissionId         String   @map("submission_id") @db.Uuid
-  ruleId               String   @map("rule_id") @db.VarChar(64)
-  action               String   @db.VarChar(64)
-  expected             Json?
-  actual               Json?
-  passed               Boolean
-  score                Int      @default(0)
-  errorMessage         String?  @map("error_message") @db.Text
-  needsReview          Boolean  @default(false) @map("needs_review")
-  verifiedAt           DateTime @default(now()) @map("verified_at")
+  id                 String   @id @default(uuid()) @db.Uuid
+  submissionDetailId String   @map("submission_detail_id") @db.Uuid
+  submissionId       String   @map("submission_id") @db.Uuid
+  ruleId             String   @map("rule_id") @db.VarChar(64)
+  action             String   @db.VarChar(64)
+  expected           Json?
+  actual             Json?
+  passed             Boolean
+  score              Int      @default(0)
+  errorMessage       String?  @map("error_message") @db.Text
+  needsReview        Boolean  @default(false) @map("needs_review")
+  verifiedAt         DateTime @default(now()) @map("verified_at")
 
   // Relations
-  submissionDetail SubmissionDetail @relation(fields: [submissionDetailId], references: [id], onDelete: Cascade)
+  submissionDetail SubmissionDetail  @relation(fields: [submissionDetailId], references: [id], onDelete: Cascade)
   submission       StudentSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
 
   @@index([submissionId])
@@ -559,81 +625,81 @@ model ExamSession {
 }
 
 model Department {
-  id          String    @id @default(uuid())
-  name        String    @unique
-  code        String    @unique
+  id          String   @id @default(uuid())
+  name        String   @unique
+  code        String   @unique
   description String?
-  sortOrder   Int       @default(0)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  majors      Major[]
-  classRooms  ClassRoom[]
-  users       User[]
+  majors     Major[]
+  classRooms ClassRoom[]
+  users      User[]
 }
 
 model Major {
-  id           String    @id @default(uuid())
+  id           String   @id @default(uuid())
   name         String
   code         String
   departmentId String
   description  String?
-  sortOrder    Int       @default(0)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-  classRooms   ClassRoom[]
-  users        User[]
+  department Department  @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  classRooms ClassRoom[]
+  users      User[]
 
   @@unique([departmentId, code])
 }
 
 model ClassRoom {
-  id           String    @id @default(uuid())
+  id           String   @id @default(uuid())
   name         String
-  code         String    @unique
+  code         String   @unique
   academicYear String
-  gradeLevel   Int       @default(1)
+  gradeLevel   Int      @default(1)
   departmentId String
   majorId      String
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  department   Department @relation(fields: [departmentId], references: [id])
-  major        Major      @relation(fields: [majorId], references: [id], onDelete: Cascade)
-  students     User[]
-  invitations  Invitation[]
+  department     Department     @relation(fields: [departmentId], references: [id])
+  major          Major          @relation(fields: [majorId], references: [id], onDelete: Cascade)
+  students       User[]
+  invitations    Invitation[]
   teacherClasses TeacherClass[] @relation("TeacherClassRooms") // ✅ 负责该班级的教师（多对多）
 }
 
 // ==================== WPS Token 配置 (单例) ====================
 model WpsConfig {
-  id                String   @id @default("wps_config")
-  accessToken       String   @map("access_token")
-  refreshToken      String   @map("refresh_token")
-  expiresAt         BigInt   @map("expires_at")
-  refreshExpiresAt  BigInt   @map("refresh_expires_at")
+  id               String   @id @default("wps_config")
+  accessToken      String   @map("access_token")
+  refreshToken     String   @map("refresh_token")
+  expiresAt        BigInt   @map("expires_at")
+  refreshExpiresAt BigInt   @map("refresh_expires_at")
   // 金山开放平台应用凭据（前端可配置，持久化到 DB，容器重建不丢）
-  clientId          String?  @map("client_id")
-  clientSecret      String?  @map("client_secret")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  clientId         String?  @map("client_id")
+  clientSecret     String?  @map("client_secret")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("wps_config")
 }
 
 // ==================== LLM 大模型配置 (单例，前端可编辑) ====================
 model LlmConfig {
-  id               String   @id @default("llm_config")
-  provider         String   @default("deepseek")     // deepseek | qwen | glm | sensenova | ollama
-  apiKey           String   @map("api_key")           // 加密存储的 API Key
-  baseURL          String   @default("") @map("base_url")
-  model            String   @default("deepseek-chat")
-  temperature      Float    @default(0.4)
-  maxTokens        Int      @default(2048) @map("max_tokens")
-  timeoutMs        Int      @default(60000) @map("timeout_ms")
-  rateLimitPerMin  Int      @default(20) @map("rate_limit_per_min")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  id              String   @id @default("llm_config")
+  provider        String   @default("deepseek") // deepseek | qwen | glm | sensenova | ollama
+  apiKey          String   @map("api_key") // 加密存储的 API Key
+  baseURL         String   @default("") @map("base_url")
+  model           String   @default("deepseek-chat")
+  temperature     Float    @default(0.4)
+  maxTokens       Int      @default(2048) @map("max_tokens")
+  timeoutMs       Int      @default(60000) @map("timeout_ms")
+  rateLimitPerMin Int      @default(20) @map("rate_limit_per_min")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   @@map("llm_config")
 }
@@ -642,15 +708,15 @@ model Invitation {
   id          String           @id @default(uuid())
   code        String           @unique
   classRoomId String
-  createdBy   String   @db.Uuid
+  createdBy   String           @db.Uuid
   expiresAt   DateTime
   maxUses     Int              @default(0)
   usedCount   Int              @default(0)
   status      InvitationStatus @default(ACTIVE)
   createdAt   DateTime         @default(now())
 
-  classRoom    ClassRoom @relation(fields: [classRoomId], references: [id])
-  creator      User      @relation("InvitationCreator", fields: [createdBy], references: [id])
+  classRoom    ClassRoom            @relation(fields: [classRoomId], references: [id])
+  creator      User                 @relation("InvitationCreator", fields: [createdBy], references: [id])
   applications StudentApplication[]
 }
 
@@ -662,31 +728,31 @@ model StudentApplication {
   phoneNumber  String?
   gender       Gender?
   status       ApplicationStatus @default(PENDING)
-  reviewedBy   String?  @db.Uuid
+  reviewedBy   String?           @db.Uuid
   reviewedAt   DateTime?
   rejectReason String?
   createdAt    DateTime          @default(now())
 
-  invitation   Invitation @relation(fields: [invitationId], references: [id])
-  reviewer     User?      @relation("ApplicationReviewer", fields: [reviewedBy], references: [id])
+  invitation Invitation @relation(fields: [invitationId], references: [id])
+  reviewer   User?      @relation("ApplicationReviewer", fields: [reviewedBy], references: [id])
 }
 
 model ImportTask {
-  id          String       @id @default(uuid())
+  id          String     @id @default(uuid())
   type        String
   fileName    String
-  taskName    String?      @map("task_name") @db.VarChar(256)
-  totalRows   Int          @default(0)
-  successRows Int          @default(0)
-  failedRows  Int          @default(0)
-  status      TaskStatus   @default(PENDING)
+  taskName    String?    @map("task_name") @db.VarChar(256)
+  totalRows   Int        @default(0)
+  successRows Int        @default(0)
+  failedRows  Int        @default(0)
+  status      TaskStatus @default(PENDING)
   errorFile   String?
-  downloadUrl String?      @map("download_url") @db.VarChar(512)
-  createdBy   String   @db.Uuid
-  createdAt   DateTime     @default(now())
+  downloadUrl String?    @map("download_url") @db.VarChar(512)
+  createdBy   String     @db.Uuid
+  createdAt   DateTime   @default(now())
   completedAt DateTime?
 
-  creator     User @relation("ImportTaskCreator", fields: [createdBy], references: [id])
+  creator User @relation("ImportTaskCreator", fields: [createdBy], references: [id])
 }
 
 model SystemRole {
@@ -712,7 +778,7 @@ model SystemRolePermission {
   roleId     String @map("role_id") @db.Uuid
   moduleCode String @map("module_code") @db.VarChar(64)
 
-  role       SystemRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  role SystemRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@unique([roleId, moduleCode])
   @@map("system_role_permissions")
@@ -724,43 +790,43 @@ model SystemRolePermission {
 
 // 枚举：行为类型
 enum BehaviorType {
-  TAB_SWITCH       // 切屏/离开页面
-  COPY_PASTE       // 复制粘贴操作
-  WINDOW_BLUR      // 窗口失焦（可能切换应用）
-  FULLSCREEN_EXIT  // 退出全屏模式
+  TAB_SWITCH // 切屏/离开页面
+  COPY_PASTE // 复制粘贴操作
+  WINDOW_BLUR // 窗口失焦（可能切换应用）
+  FULLSCREEN_EXIT // 退出全屏模式
   KEYBOARD_SHORTCUT // 可疑快捷键（如PrintScreen）
   MOUSE_SUSPICIOUS // 异常鼠标行为（如频繁点击）
   QUESTION_NAVIGATE // 题目跳转（正常行为）
-  ANSWER_SUBMIT    // 提交答案（正常行为）
-  EXAM_START       // 开始考试
-  EXAM_END         // 结束考试/提交试卷
+  ANSWER_SUBMIT // 提交答案（正常行为）
+  EXAM_START // 开始考试
+  EXAM_END // 结束考试/提交试卷
 }
 
 // 枚举：风险等级
 enum RiskLevel {
-  LOW        // 低风险（正常操作）
-  MEDIUM     // 中等风险（需关注）
-  HIGH       // 高风险（疑似作弊）
-  CRITICAL   // 严重违规（明确作弊）
+  LOW // 低风险（正常操作）
+  MEDIUM // 中等风险（需关注）
+  HIGH // 高风险（疑似作弊）
+  CRITICAL // 严重违规（明确作弊）
 }
 
 // 模型：考生行为日志表
 model StudentBehaviorLog {
-  id            String      @id @default(uuid()) @db.Uuid
-  studentId     String      @map("student_id") @db.Uuid
-  examId        String      @map("exam_id") @db.Uuid
-  submissionId  String?     @map("submission_id") @db.Uuid
+  id           String  @id @default(uuid()) @db.Uuid
+  studentId    String  @map("student_id") @db.Uuid
+  examId       String  @map("exam_id") @db.Uuid
+  submissionId String? @map("submission_id") @db.Uuid
 
-  behaviorType  BehaviorType @map("behavior_type")
-  riskLevel     RiskLevel    @map("risk_level") @default(LOW)
-  metadata      Json         @default("{}")
+  behaviorType BehaviorType @map("behavior_type")
+  riskLevel    RiskLevel    @default(LOW) @map("risk_level")
+  metadata     Json         @default("{}")
 
-  occurredAt    DateTime    @map("occurred_at") @default(now())
-  createdAt     DateTime    @default(now()) @map("created_at")
+  occurredAt DateTime @default(now()) @map("occurred_at")
+  createdAt  DateTime @default(now()) @map("created_at")
 
-  student       User        @relation("StudentBehavior", fields: [studentId], references: [id])
-  exam          Exam        @relation("ExamBehavior", fields: [examId], references: [id])
-  submission     StudentSubmission? @relation("SubmissionBehavior", fields: [submissionId], references: [id])
+  student    User               @relation("StudentBehavior", fields: [studentId], references: [id])
+  exam       Exam               @relation("ExamBehavior", fields: [examId], references: [id])
+  submission StudentSubmission? @relation("SubmissionBehavior", fields: [submissionId], references: [id])
 
   @@index([studentId, examId, behaviorType])
   @@index([examId, riskLevel])
@@ -770,28 +836,28 @@ model StudentBehaviorLog {
 
 // 模型：行为分析报告（聚合统计）
 model BehaviorAnalysisReport {
-  id              String   @id @default(uuid()) @db.Uuid
-  examId          String   @map("exam_id") @db.Uuid
-  studentId       String   @map("student_id") @db.Uuid
+  id        String @id @default(uuid()) @db.Uuid
+  examId    String @map("exam_id") @db.Uuid
+  studentId String @map("student_id") @db.Uuid
 
-  totalBehaviors Int      @map("total_behaviors")
-  tabSwitchCount  Int      @map("tab_switch_count") @default(0)
-  copyPasteCount Int      @map("copy_paste_count") @default(0)
-  blurCount       Int      @map("blur_count") @default(0)
-  highRiskCount   Int      @map("high_risk_count") @default(0)
-  criticalCount   Int      @map("critical_count") @default(0)
+  totalBehaviors Int @map("total_behaviors")
+  tabSwitchCount Int @default(0) @map("tab_switch_count")
+  copyPasteCount Int @default(0) @map("copy_paste_count")
+  blurCount      Int @default(0) @map("blur_count")
+  highRiskCount  Int @default(0) @map("high_risk_count")
+  criticalCount  Int @default(0) @map("critical_count")
 
-  suspiciousScore Float    @map("suspicious_score") @default(0)
-  conclusion      String?  @map("conclusion")
-  reviewedBy      String?  @map("reviewed_by") @db.Uuid
+  suspiciousScore Float     @default(0) @map("suspicious_score")
+  conclusion      String?   @map("conclusion")
+  reviewedBy      String?   @map("reviewed_by") @db.Uuid
   reviewedAt      DateTime? @map("reviewed_at")
-  reviewNote      String?  @map("review_note")
+  reviewNote      String?   @map("review_note")
 
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  exam            Exam     @relation("ExamReport", fields: [examId], references: [id])
-  student         User     @relation("StudentReport", fields: [studentId], references: [id])
+  exam    Exam @relation("ExamReport", fields: [examId], references: [id])
+  student User @relation("StudentReport", fields: [studentId], references: [id])
 
   @@unique([examId, studentId])
   @@index([examId, suspiciousScore])
@@ -804,45 +870,45 @@ model BehaviorAnalysisReport {
 
 // 枚举：操作类型
 enum AuditAction {
-  CREATE    // 创建
-  UPDATE    // 更新
-  DELETE    // 删除
-  LOGIN     // 登录
-  LOGOUT    // 登出
-  EXPORT    // 导出
-  IMPORT    // 导入
-  REVIEW    // 审核
+  CREATE // 创建
+  UPDATE // 更新
+  DELETE // 删除
+  LOGIN // 登录
+  LOGOUT // 登出
+  EXPORT // 导出
+  IMPORT // 导入
+  REVIEW // 审核
 }
 
 // 模型：操作审计日志表
 model AuditLog {
-  id          String      @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
 
   // 操作信息
-  action      AuditAction @map("action")           // 操作类型
-  entityType  String      @map("entity_type") @db.VarChar(128) // 实体类型（如Exam, User, Batch）
-  entityId    String?     @map("entity_id") @db.Uuid // 实体ID（可选，用于关联具体记录）
+  action     AuditAction @map("action") // 操作类型
+  entityType String      @map("entity_type") @db.VarChar(128) // 实体类型（如Exam, User, Batch）
+  entityId   String?     @map("entity_id") @db.Uuid // 实体ID（可选，用于关联具体记录）
 
   // 变更数据（JSON快照）
-  oldData     Json?       @map("old_data")         // 变更前数据（UPDATE/DELETE时）
-  newData     Json?       @map("new_data")         // 变更后数据（CREATE/UPDATE时）
-  changedFields String?   @map("changed_fields")   // 变更字段列表（JSON数组）
+  oldData       Json?   @map("old_data") // 变更前数据（UPDATE/DELETE时）
+  newData       Json?   @map("new_data") // 变更后数据（CREATE/UPDATE时）
+  changedFields String? @map("changed_fields") // 变更字段列表（JSON数组）
 
   // 操作者信息
-  userId      String?     @map("user_id") @db.Uuid // 操作人ID
-  username    String?     @map("username") @db.VarChar(64) // 操作人用户名（冗余存储）
-  userRole    String?     @map("user_role") @db.VarChar(32) // 操作人角色
+  userId   String? @map("user_id") @db.Uuid // 操作人ID
+  username String? @map("username") @db.VarChar(64) // 操作人用户名（冗余存储）
+  userRole String? @map("user_role") @db.VarChar(32) // 操作人角色
 
   // 环境信息
-  ipAddress   String?     @map("ip_address") @db.VarChar(45) // IPv4/IPv6地址
-  userAgent   String?     @map("user_agent") @db.Text // 浏览器UA
-  requestUrl  String?     @map("request_url") @db.VarChar(512) // 请求URL
+  ipAddress  String? @map("ip_address") @db.VarChar(45) // IPv4/IPv6地址
+  userAgent  String? @map("user_agent") @db.Text // 浏览器UA
+  requestUrl String? @map("request_url") @db.VarChar(512) // 请求URL
 
   // 时间戳
-  occurredAt  DateTime    @map("occurred_at") @default(now())
+  occurredAt DateTime @default(now()) @map("occurred_at")
 
   // 关联
-  operator    User?       @relation("AuditOperator", fields: [userId], references: [id])
+  operator User? @relation("AuditOperator", fields: [userId], references: [id])
 
   @@index([action, entityType, entityId])
   @@index([userId, occurredAt])
@@ -857,53 +923,53 @@ model AuditLog {
 
 // 枚举：通知类型
 enum NotificationType {
-  SYSTEM       // 系统公告
-  EXAM         // 考试相关（开始、结束、异常）
-  GRADE        // 成绩发布
-  ALERT        // 告警提醒（行为异常、系统告警）
-  AUDIT        // 审计通知（操作审核结果）
+  SYSTEM // 系统公告
+  EXAM // 考试相关（开始、结束、异常）
+  GRADE // 成绩发布
+  ALERT // 告警提醒（行为异常、系统告警）
+  AUDIT // 审计通知（操作审核结果）
 }
 
 // 枚举：通知优先级
 enum NotificationPriority {
-  LOW          // 低优先级（普通信息）
-  MEDIUM       // 中等（需要关注）
-  HIGH         // 高（重要事项）
-  URGENT       // 紧急（需立即处理）
+  LOW // 低优先级（普通信息）
+  MEDIUM // 中等（需要关注）
+  HIGH // 高（重要事项）
+  URGENT // 紧急（需立即处理）
 }
 
 // 模型：通知消息表
 model Notification {
-  id            String               @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
 
   // 基本信息
-  type          NotificationType     @map("type")
-  priority      NotificationPriority @map("priority") @default(MEDIUM)
-  title         String               @db.VarChar(256)
-  content       String?              @db.Text
+  type     NotificationType     @map("type")
+  priority NotificationPriority @default(MEDIUM) @map("priority")
+  title    String               @db.VarChar(256)
+  content  String?              @db.Text
 
   // 接收者
-  userId        String               @map("user_id") @db.Uuid
-  isRead        Boolean              @map("is_read") @default(false)
+  userId String  @map("user_id") @db.Uuid
+  isRead Boolean @default(false) @map("is_read")
 
   // 发送者
-  senderId      String?              @map("sender_id") @db.Uuid
+  senderId String? @map("sender_id") @db.Uuid
 
   // 关联数据（可选）
-  entityType    String?              @map("entity_type") @db.VarChar(128) // 关联实体类型
-  entityId      String?              @map("entity_id") @db.Uuid // 关联实体ID
-  actionUrl     String?              @map("action_url") @db.VarChar(512) // 点击跳转链接
+  entityType String? @map("entity_type") @db.VarChar(128) // 关联实体类型
+  entityId   String? @map("entity_id") @db.Uuid // 关联实体ID
+  actionUrl  String? @map("action_url") @db.VarChar(512) // 点击跳转链接
 
   // 发送渠道记录
-  sentViaWeb    Boolean              @map("sent_via_web") @default(false)
-  sentViaEmail  Boolean              @map("sent_via_email") @default(false)
+  sentViaWeb   Boolean @default(false) @map("sent_via_web")
+  sentViaEmail Boolean @default(false) @map("sent_via_email")
 
   // 时间戳
-  createdAt     DateTime             @default(now()) @map("created_at")
-  readAt        DateTime?            @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  readAt    DateTime? @map("read_at")
 
   // 关联
-  user          User                 @relation("UserNotifications", fields: [userId], references: [id])
+  user User @relation("UserNotifications", fields: [userId], references: [id])
 
   @@index([userId, isRead, createdAt])
   @@index([userId, type, createdAt])
@@ -913,26 +979,26 @@ model Notification {
 
 // 模型：用户通知偏好设置表
 model NotificationPreference {
-  id            String               @id @default(uuid()) @db.Uuid
-  userId        String               @map("user_id") @unique @db.Uuid
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
 
   // 全局开关
-  enableWebPush Boolean              @map("enable_web_push") @default(true)
-  enableEmail   Boolean              @map("enable_email") @default(false)
+  enableWebPush Boolean @default(true) @map("enable_web_push")
+  enableEmail   Boolean @default(false) @map("enable_email")
 
   // 分类开关
-  enableSystem  Boolean              @map("enable_system") @default(true)
-  enableExam    Boolean              @map("enable_exam") @default(true)
-  enableGrade   Boolean              @map("enable_grade") @default(true)
-  enableAlert   Boolean              @map("enable_alert") @default(true)
-  enableAudit   Boolean              @map("enable_audit") @default(true)
+  enableSystem Boolean @default(true) @map("enable_system")
+  enableExam   Boolean @default(true) @map("enable_exam")
+  enableGrade  Boolean @default(true) @map("enable_grade")
+  enableAlert  Boolean @default(true) @map("enable_alert")
+  enableAudit  Boolean @default(true) @map("enable_audit")
 
   // 邮件频率控制
-  emailFrequency String              @map("email_frequency") @default("realtime") @db.VarChar(32) // realtime/daily/hourly
+  emailFrequency String @default("realtime") @map("email_frequency") @db.VarChar(32) // realtime/daily/hourly
 
-  updatedAt     DateTime             @updatedAt @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  user          User                 @relation("UserNotificationPrefs", fields: [userId], references: [id])
+  user User @relation("UserNotificationPrefs", fields: [userId], references: [id])
 
   @@map("notification_preferences")
 }
@@ -948,7 +1014,7 @@ model NotificationTemplate {
   createdAt DateTime         @default(now()) @map("created_at")
   updatedAt DateTime         @updatedAt @map("updated_at")
 
-  creator   User             @relation("NotificationTemplateCreator", fields: [createdBy], references: [id])
+  creator User @relation("NotificationTemplateCreator", fields: [createdBy], references: [id])
 
   @@map("notification_templates")
 }
@@ -1062,10 +1128,10 @@ model PracticeTableAssignment {
 
 // ✅ 教师负责的班级（多对多中间表）
 model TeacherClass {
-  id        String    @id @default(uuid()) @db.Uuid
-  teacherId String    @map("teacher_id") @db.Uuid
-  classId   String    @map("class_id") // ClassRoom.id 为 text 类型，不加 @db.Uuid
-  createdAt DateTime  @default(now()) @map("created_at")
+  id        String   @id @default(uuid()) @db.Uuid
+  teacherId String   @map("teacher_id") @db.Uuid
+  classId   String   @map("class_id") // ClassRoom.id 为 text 类型，不加 @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
 
   teacher   User      @relation("TeacherClasses", fields: [teacherId], references: [id], onDelete: Cascade)
   classRoom ClassRoom @relation("TeacherClassRooms", fields: [classId], references: [id], onDelete: Cascade)
@@ -1075,24 +1141,22 @@ model TeacherClass {
   @@map("teacher_classes")
 }
 
-
-
 // ✅ 统一导出中心任务（持久化：服务重启不丢历史；文件本体仍在磁盘 exports/ 目录）
 model ExportTask {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @map("user_id") @db.Uuid
-  entityType  String   @map("entity_type") @db.VarChar(32)
-  entityId    String?  @map("entity_id") @db.Uuid
-  format      String   @db.VarChar(16)
-  status      String   @default("processing") @db.VarChar(16) // pending|processing|completed|failed
-  progress    Int      @default(0)
-  error       String?  @db.Text
-  fileName    String?  @map("file_name") @db.VarChar(255)
-  fileSize    Int?     @map("file_size")
-  recordCount Int?     @map("record_count")
-  downloadUrl String?  @map("download_url") @db.VarChar(512)
-  filePath    String?  @map("file_path") @db.Text // 内部使用：下载授权与文件清理反查
-  createdAt   DateTime @default(now()) @map("created_at")
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  entityType  String    @map("entity_type") @db.VarChar(32)
+  entityId    String?   @map("entity_id") @db.Uuid
+  format      String    @db.VarChar(16)
+  status      String    @default("processing") @db.VarChar(16) // pending|processing|completed|failed
+  progress    Int       @default(0)
+  error       String?   @db.Text
+  fileName    String?   @map("file_name") @db.VarChar(255)
+  fileSize    Int?      @map("file_size")
+  recordCount Int?      @map("record_count")
+  downloadUrl String?   @map("download_url") @db.VarChar(512)
+  filePath    String?   @map("file_path") @db.Text // 内部使用：下载授权与文件清理反查
+  createdAt   DateTime  @default(now()) @map("created_at")
   completedAt DateTime? @map("completed_at")
 
   user User @relation("ExportTaskOwner", fields: [userId], references: [id], onDelete: Cascade)

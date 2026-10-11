@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
+import { previewSlotCandidates } from '../services/paper-generator';
 import { authenticate, authorize } from '../middleware/auth';
 
 export const paperRouter = Router();
@@ -14,12 +15,36 @@ const paperSchema = z.object({
   passScore: z.number().int().min(0).nullable().optional(),
 });
 
+/**
+ * 试卷题位：
+ * - fixed：就考这道题（questionId 必填）
+ * - rule ：按知识点抽题（rule 必填，开考时按学生抽 1 道同构题）
+ * 两者的 score 都必填 —— 抽题等值替换要求同题位候选题目分值一致。
+ */
+const slotRuleSchema = z.object({
+  capabilityIds: z.array(z.string().min(1)).optional(),
+  difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
+  type: z.enum([
+    'create_table', 'add_field', 'config_view', 'create_form', 'comprehensive',
+    'single_choice', 'multiple_choice', 'true_false',
+  ]).optional(),
+  schemaRefs: z.object({
+    tables: z.array(z.string()).optional(),
+    fields: z.array(z.string()).optional(),
+  }).optional(),
+});
+
 const paperQuestionSchema = z.object({
   questionIds: z.array(z.object({
-    questionId: z.string().uuid(),
+    questionId: z.string().uuid().nullable().optional(),
     sortOrder: z.number().int().min(0).default(0),
     score: z.number().int().min(0).default(10),
-  })),
+    slotType: z.enum(['fixed', 'rule']).default('fixed'),
+    rule: slotRuleSchema.nullable().optional(),
+  })).refine(
+    items => items.every(i => (i.slotType === 'rule' ? !!i.rule : !!i.questionId)),
+    { message: '固定题位必须指定题目；抽题题位必须给出抽题条件' },
+  ),
 });
 
 // GET /api/papers
@@ -186,9 +211,11 @@ paperRouter.put('/:id/questions', async (req: Request, res: Response) => {
         ? [prisma.paperQuestion.createMany({
             data: questionIds.map(q => ({
               paperId: req.params.id,
-              questionId: q.questionId,
+              questionId: q.slotType === 'rule' ? null : (q.questionId ?? null),
               sortOrder: q.sortOrder,
               score: q.score,
+              slotType: q.slotType,
+              rule: (q.rule ?? undefined) as any,
             })),
           })]
         : []),
@@ -205,6 +232,29 @@ paperRouter.put('/:id/questions', async (req: Request, res: Response) => {
     ]);
 
     res.json(updated);
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ message: '参数错误', errors: err.errors });
+    }
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+/**
+ * POST /api/papers/slot-preview — 抽题题位的候选池预览
+ *
+ * 组卷界面必须让教师看到每个题位有多少候选题：
+ * 候选题只有 1 道时"每生不同"会静默退化成"全员同题"，教师毫不知情。
+ */
+paperRouter.post('/slot-preview', async (req: Request, res: Response) => {
+  try {
+    const { rule, score } = z.object({
+      rule: slotRuleSchema,
+      score: z.number().int().min(0),
+    }).parse(req.body);
+
+    const result = await previewSlotCandidates(rule as any, score);
+    res.json(result);
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({ message: '参数错误', errors: err.errors });

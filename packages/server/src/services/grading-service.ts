@@ -14,6 +14,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { evaluateRules, type AnswerRule, type RuleResult, type SchemaResponse, type RecordData } from '../engine/rule-engine';
+import { gradeObjectiveQuestion, isObjectiveType } from '../engine/objective-grader';
 import { createAdapterFromSpaceId } from '../engine/adapters/kingsoft-adapter';
 import { wpsConfigService } from './wps-config-service';
 
@@ -52,6 +53,33 @@ export interface QuestionGradingResult {
 /**
  * 对单份答卷执行自动判分
  */
+
+/**
+ * 取「该生实际拿到的卷子条目」（questionId + 该题分值）。
+ *
+ * 优先级：每生卷子快照 > 考试题位。
+ * 后者是给本轮抽题组卷上线**之前**已开考的答卷兜底（那时没有快照），
+ * rule 题位没有固定题目，跳过。
+ */
+async function loadStudentPaperItems(
+  examId: string,
+  studentId: string,
+): Promise<Array<{ questionId: string; score: number }>> {
+  const paper = await prisma.studentExamQuestion.findMany({
+    where: { examId, studentId },
+    select: { questionId: true, score: true },
+  });
+  if (paper.length > 0) return paper;
+
+  const slots = await prisma.examQuestion.findMany({
+    where: { examId },
+    select: { questionId: true, scoreOverride: true, question: { select: { score: true } } },
+  });
+  return slots
+    .filter(s => !!s.questionId && !!s.question)
+    .map(s => ({ questionId: s.questionId as string, score: s.scoreOverride ?? s.question!.score }));
+}
+
 export async function gradeSubmission(submissionId: string, accessToken?: string): Promise<GradingResult> {
   // 1. 加载答卷及关联数据
   const submission = await prisma.studentSubmission.findUnique({
@@ -66,6 +94,8 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
               type: true,
               score: true,
               answerRules: true,
+              // 客观题判分要用标准答案（判分服务端内部使用，不会下发学生）
+              objectiveAnswer: true,
             },
           },
         },
@@ -83,43 +113,28 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
   // 落库前需按题目分值换算，否则会出现"每题 10 分却记 100 分"的错误总分。
   const examMaxPoints = new Map<string, number>();
   {
-    const eqMax = await prisma.examQuestion.findMany({
-      where: { examId: submission.examId },
-      select: { questionId: true, scoreOverride: true, question: { select: { score: true } } },
-    });
-    for (const eq of eqMax) {
-      examMaxPoints.set(eq.questionId, eq.scoreOverride ?? eq.question.score);
+    // 以「该生实际拿到的卷子」为准：抽题组卷下每人题目不同、分值也不同，
+    // 用考试题位算会算错别人的卷子分
+    for (const row of await loadStudentPaperItems(submission.examId, submission.studentId)) {
+      examMaxPoints.set(row.questionId, row.score);
     }
   }
 
   // 1.5 WPS 实操考试可能没有提交答题详情，自动基于考试题目创建
   let details = submission.details;
   if (!details || details.length === 0) {
-    const examQuestions = await prisma.examQuestion.findMany({
-      where: { examId: submission.examId },
-      include: {
-        question: {
-          select: {
-            id: true,
-            title: true,
-            type: true,
-            score: true,
-            answerRules: true,
-          },
-        },
-      },
-      orderBy: { sortOrder: 'asc' },
-    });
-
-    if (examQuestions.length > 0) {
+    // 同样按该生卷子快照补建明细（而不是按考试题位——题位可能没有固定题目）
+    const paperItems = await loadStudentPaperItems(submission.examId, submission.studentId);
+    if (paperItems.length > 0) {
       await prisma.submissionDetail.createMany({
-        data: examQuestions.map(eq => ({
+        data: paperItems.map(item => ({
           submissionId: submission.id,
-          questionId: eq.questionId,
+          questionId: item.questionId,
           answerJson: {},
           score: null,
           isCorrect: null,
         })),
+        skipDuplicates: true,
       });
 
       details = await prisma.submissionDetail.findMany({
@@ -132,6 +147,8 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
               type: true,
               score: true,
               answerRules: true,
+              // 客观题判分要用标准答案（判分服务端内部使用，不会下发学生）
+              objectiveAnswer: true,
             },
           },
         },
@@ -175,20 +192,30 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
     }
   }
 
-  const adapter = createAdapterFromSpaceId(effectiveSpaceId);
+  // 卷子里是否含实操题：**只考客观题的考试不该要求 WPS 表格**，
+  // 也不该因为"没有表格/没有 token"而判不了分（客观题判分完全离线）。
+  const hasHandsOn = details.some(d => !isObjectiveType(d.question.type));
 
-  if (!adapter) {
-    const tableSpaceIdParts = (effectiveSpaceId || '').split(':');
-    const hasToken = tableSpaceIdParts.length >= 2 && tableSpaceIdParts[1];
-    const reason = hasToken
-      ? 'WPS API 连接失败，无法创建适配器'
-      : '缺少有效的 WPS access_token，无法获取考生多维表格数据';
-    throw new Error(reason);
+  let adapter: ReturnType<typeof createAdapterFromSpaceId> = null;
+  if (hasHandsOn) {
+    adapter = createAdapterFromSpaceId(effectiveSpaceId);
+    if (!adapter) {
+      const tableSpaceIdParts = (effectiveSpaceId || '').split(':');
+      const hasToken = tableSpaceIdParts.length >= 2 && tableSpaceIdParts[1];
+      const reason = hasToken
+        ? 'WPS API 连接失败，无法创建适配器'
+        : '缺少有效的 WPS access_token，无法获取考生多维表格数据';
+      throw new Error(reason);
+    }
+
+    // 真实 API 模式
+    schema = await adapter.getSchema();
+    autoGraded = true;
+  } else {
+    // 纯客观题：给一个空 Schema 占位（客观题分支不读它），避免下游 null 判断散落各处
+    schema = { result: 0, detail: { sheets: [] } };
+    autoGraded = true;
   }
-
-  // 真实 API 模式
-  schema = await adapter.getSchema();
-  autoGraded = true;
 
   // 检查是否有记录类规则，若有则预获取记录数据
   const allRules = details.flatMap(
@@ -202,7 +229,7 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
     }
   }
 
-  if (tablesNeedingRecords.size > 0) {
+  if (tablesNeedingRecords.size > 0 && adapter) {
     recordData = {};
     for (const tableName of tablesNeedingRecords) {
       const result = await adapter.getRecordsByTableName(tableName);
@@ -227,7 +254,8 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
         if (targetForm) {
           const cacheKey = `${rule.params.tableName}:${targetForm.id}`;
           if (!formFieldsData.has(cacheKey)) {
-            const fields = await adapter.getFormFields(sheet.id, targetForm.id);
+            // 该分支只在有实操题时进入（hasHandsOn 为真则 adapter 必非空）
+            const fields = await adapter!.getFormFields(sheet.id, targetForm.id);
             formFieldsData.set(cacheKey, fields);
           }
           // 将表单字段数据注入规则params中，供rule-engine使用
@@ -252,6 +280,52 @@ export async function gradeSubmission(submissionId: string, accessToken?: string
   let totalNeedsReview = 0;
 
   for (const detail of details) {
+    const qMaxPointsForType = examMaxPoints.get(detail.question.id) ?? detail.question.score ?? 0;
+
+    // ── 客观题：走独立判分器（不读 WPS 表格、不依赖规则引擎）──
+    if (isObjectiveType(detail.question.type)) {
+      // 学生作答存在 SubmissionDetail.answerJson.answer（单选/判断为 string，多选为 string[]）
+      const rawAnswer = (detail.answerJson as any)?.answer;
+      const obj = gradeObjectiveQuestion(
+        detail.question.type,
+        detail.question.objectiveAnswer as any,
+        rawAnswer,
+        qMaxPointsForType,
+      );
+
+      questionResults.push({
+        detailId: detail.id,
+        questionId: detail.question.id,
+        questionTitle: detail.question.title,
+        score: obj.score,
+        maxScore: obj.maxScore,
+        isCorrect: obj.isCorrect,
+        ruleResults: obj.ruleResults,
+        needsReviewCount: obj.ruleResults.filter((r) => r.needsReview).length,
+      });
+
+      totalScore += obj.score;
+      maxScore += obj.maxScore;
+      if (obj.ruleResults.some((r) => r.needsReview)) totalNeedsReview += 1;
+
+      detailWrites.push({
+        detailId: detail.id,
+        gradedWith: {
+          gradedAt: new Date().toISOString(),
+          source: 'objective',
+          questionType: detail.question.type,
+          correct: (detail.question.objectiveAnswer as any)?.correct ?? null,
+          note: obj.note ?? null,
+        } as Prisma.InputJsonValue,
+        // 客观题不产生 VerificationResult（那是规则引擎逐规则比对的产物），
+        // 判分依据完整写在 gradedWith 里
+        rows: [],
+        score: obj.score,
+        isCorrect: obj.isCorrect,
+      });
+      continue;
+    }
+
     const rules = detail.question.answerRules as unknown as AnswerRule[];
     if (!rules || rules.length === 0) continue;
 
