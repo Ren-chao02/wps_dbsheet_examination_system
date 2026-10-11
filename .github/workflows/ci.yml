@@ -1,0 +1,67 @@
+name: CI
+
+# 这个项目经常有多个会话/多人并行改同一份代码，靠人自觉跑测试是靠不住的：
+# 这里把「类型检查 / Lint / 单测 / 构建」做成推送即跑，改坏了立刻能看到。
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+# 同一分支连续推送时取消上一次未跑完的任务：省额度，也避免"旧的失败结果"
+# 盖住最新一次推送的结论。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 类型检查 · Lint · 单测 · 构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      # 必须显式生成：Prisma Client 落在根 node_modules/.prisma，而 schema 在
+      # packages/server/prisma —— workspaces 提升依赖后，@prisma/client 自带的
+      # postinstall 找不到 schema，不跑这步后面 tsc 会全线报"找不到 @prisma/client"
+      - name: 生成 Prisma Client
+        run: npx prisma generate --schema packages/server/prisma/schema.prisma
+
+      - name: Lint
+        run: npm run lint
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      # 后端测试全程 mock 掉 prisma 与外部适配器，不需要真的起 PostgreSQL/Redis
+      - name: 单元测试
+        run: npm test
+
+      - name: 构建
+        run: npm run build
+
+  secrets:
+    name: 密钥扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks 要扫全量历史，浅克隆会让它只能看到最后一次提交
+          fetch-depth: 0
+
+      # 这条存在的理由很具体：本项目多处把 fileId 与 access_token 拼成
+      # `fileId:token` 的形式（tableSpaceId），调试脚本一不小心就会把整条凭据
+      # 打进日志或提交。本地还有一道 husky pre-commit 钩子挡同样的东西。
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
