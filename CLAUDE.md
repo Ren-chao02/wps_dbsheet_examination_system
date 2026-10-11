@@ -26,6 +26,11 @@ npx vitest run -t "用例名"                                 # 单用例
 # 类型检查（没有配置 lint，不要假设存在）
 cd packages/server && npx tsc --noEmit -p tsconfig.json
 cd packages/client && npx tsc --noEmit -p tsconfig.json
+
+# 运维诊断脚本（在 packages/server 目录下执行，跑的是当前 .env 指向的库/表格）
+npx tsx scripts/probe-practice-reset.ts   # WPS fileId+token 哪种鉴权组合可用（只读）
+npx tsx scripts/diag-missing-table.ts     # 判分报「找不到表」时，打印练习记录 + 实时读表格清单
+npx tsx scripts/probe-v7-delete.ts        # 探测 v7 sheet 删除接口形态（一律用不存在的 sheetId，不删真实数据）
 ```
 
 本地依赖：PostgreSQL 15 + Redis 7（`docker compose up -d postgres redis` 即可，均只绑定 127.0.0.1）。
@@ -95,4 +100,5 @@ Socket.IO 在 `index.ts` 里 `initSocketIO(httpServer)`（监考推送 + 通知�
 - Prisma client 生成在**根** `node_modules/.prisma/client`，临时脚本里要用绝对路径 require；Model 字段名以 `schema.prisma` 为准（例如用户状态是 `accountStatus` 不是 `status`）。
 - `config/index.ts` 用 `dotenv.config()` 按**进程 cwd** 加载 `.env`：从根目录跑脚本读到的是根 `.env`，从 `packages/server` 跑读到的是 `packages/server/.env`——两者内容可能不同（尤其 `JWT_SECRET`），调试接口鉴权失败时先确认这一点。生产环境弱 `JWT_SECRET` 会 fail-fast 拒绝启动。
 - `docs/`、`.qoder/`、`.trae/`、`.playwright-mcp/`、`test_screenshots/` 都在 `.gitignore` 中（本地参考资料，不会入库）；`docs/kingsoft-api-reference.md` 是多维表格 API 速查，`docs/superpowers/specs/*.md` 是各模块设计文档。
+- `packages/server/scripts/` 在 `.gitignore` 里是**白名单**（`packages/server/scripts/*` + 逐条 `!` 放行）：新写的临时脚本不会自动入库，要入库得先加一条 `!` 规则。别改成裸 `scripts/`，那会连带挡住整个目录且没有任何提示。
 - 生产构建产物由 server 托管（`NODE_ENV=production` 时 `app.ts` 静态托管 `packages/client/dist` 并做 SPA fallback）。

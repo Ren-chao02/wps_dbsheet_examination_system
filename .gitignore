@@ -14,13 +14,24 @@ uploads/
 .trae/
 mockups/
 test_screenshots/
-scripts/
 
 # 说明：docs/ 不再整体忽略 —— 里面的 API 参考、知识点清单、设计稿与实施计划
 # 是项目的一部分，交付/迁移/交接时应当随代码一起走（此前被整体忽略，
 # 换台机器 clone 下来就只剩代码、看不到设计来龙去脉）。
-# 仍被忽略的本地目录：.qoder/ .trae/ mockups/ test_screenshots/ scripts/
-# （分别是 AI 工具产物、本地原型、本地截图、本地小脚本）
+# 仍被忽略的本地目录：.qoder/ .trae/ mockups/ test_screenshots/
+# （分别是 AI 工具产物、本地原型、本地截图）
+
+# 后端 scripts/：只挡临时探针脚本，正式脚本用 ! 逐条放行。
+# 注意不要写成裸 `scripts/` —— 那条会匹配任意层级的 scripts 目录，
+# 新加的脚本会"写完就静默不进库"（既不报错也不出现在 git status 里）。
+packages/server/scripts/*
+!packages/server/scripts/import-question-bank.ts
+!packages/server/scripts/init-categories.ts
+!packages/server/scripts/update-question-type.ts
+!packages/server/scripts/diag-missing-table.ts
+!packages/server/scripts/probe-practice-reset.ts
+!packages/server/scripts/probe-v7-delete.ts
+
 demo-wps-embed.html
 
 
@@ -39,11 +50,15 @@ debug-*
 packages/client/vite.config.js
 packages/client/vite.config.d.ts
 
-# 本地截图
+# 本地随手截图不入库（test_screenshots/ 已单独忽略，这里挡住散落在别处的）
+# 例外：正式的仓库配图目录放行 —— 否则往 README 加一张 png 会"加不进去也没提示"。
+# 现有配图统一是 .webp（体积小），加新图时建议先转 webp 再放进去。
 *.png
 *.jpg
 *.jpeg
 *.gif
+!assets/**
+!packages/client/public/**
 
 # Playwright MCP 调试产物
 .playwright-mcp/
