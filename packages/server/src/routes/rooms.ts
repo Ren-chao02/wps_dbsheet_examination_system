@@ -190,7 +190,7 @@ roomRouter.get('/:id', async (req: Request, res: Response) => {
 });
 
 // POST /api/rooms - 创建单个考场
-roomRouter.post('/', async (req: Request, res: Response) => {
+roomRouter.post('/', authorize('admin'), async (req: Request, res: Response) => {
   try {
     const data = roomCreateSchema.parse(req.body);
 
@@ -213,7 +213,7 @@ roomRouter.post('/', async (req: Request, res: Response) => {
 });
 
 // POST /api/rooms/bulk-import - 批量导入考场（核心功能✨）
-roomRouter.post('/bulk-import', async (req: Request, res: Response) => {
+roomRouter.post('/bulk-import', authorize('admin'), async (req: Request, res: Response) => {
   try {
     const { rooms } = bulkImportSchema.parse(req.body);
 
@@ -264,7 +264,7 @@ roomRouter.post('/bulk-import', async (req: Request, res: Response) => {
 });
 
 // PUT /api/rooms/:id - 更新考场信息
-roomRouter.put('/:id', async (req: Request, res: Response) => {
+roomRouter.put('/:id', authorize('admin'), async (req: Request, res: Response) => {
   try {
     const existing = await prisma.examRoom.findUnique({ where: { id: req.params.id } });
     if (!existing) {
@@ -297,7 +297,7 @@ roomRouter.put('/:id', async (req: Request, res: Response) => {
 });
 
 // DELETE /api/rooms/:id - 删除考场
-roomRouter.delete('/:id', async (req: Request, res: Response) => {
+roomRouter.delete('/:id', authorize('admin'), async (req: Request, res: Response) => {
   try {
     const existing = await prisma.examRoom.findUnique({
       where: { id: req.params.id },
