@@ -96,9 +96,11 @@ departmentRouter.get('/', async (req: Request, res: Response) => {
                 _count: undefined,
               })),
           }))
-          .filter(major => major.classRooms.length > 0),
+          // 空节点剪枝只对教师生效：admin 新建的院系（暂无专业）/专业（暂无班级）
+          // 若也被剪掉，管理端「新建院系 → 加专业 → 加班级」的下一步就选不中节点了
+          .filter(major => !visibleClassIds || major.classRooms.length > 0),
       }))
-      .filter(dept => dept.majors.length > 0);
+      .filter(dept => !visibleClassIds || dept.majors.length > 0);
 
     res.json({ data: shaped });
   } catch {
