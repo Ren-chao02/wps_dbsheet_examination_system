@@ -52,6 +52,7 @@ export interface SubMenuItem {
   label: string;         // 显示名称
   icon: React.ReactNode; // 图标
   permission?: string;   // 所需权限 (可选，用于细粒度控制)
+  roles?: string[];      // 角色限定 (可选，如 ['admin']；不配置则所有角色可见)
   hidden?: boolean;      // 是否隐藏 (可选)
   description?: string;  // 功能描述 (用于Tooltip)
 }
@@ -268,6 +269,11 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
         label: '院系架构',
         icon: <BankOutlined />,
         permission: 'STUDENT_MANAGEMENT',
+        // 仅校级管理员：P1 数据范围收口后教师看到的院系树只剩自己任教的班级、且整页只读，
+        // 该页对教师已无价值；但它是全系统唯一能建「院系/专业/班级」的界面，对管理员不可替代，
+        // 因此只藏入口（这里）+ 页面内直链守卫（DepartmentManagement），不删页面。
+        // 未来若出现「院系管理员」角色，在此 roles 数组追加即可恢复入口。
+        roles: ['admin'],
       },
       {
         key: '/teacher/students',
@@ -408,13 +414,21 @@ export function findSubMenuItem(pathname: string): SubMenuItem | undefined {
 }
 
 // ✅ 工具函数：过滤用户有权限访问的模块
+//
+// role 用于「角色限定项」（如「院系架构」仅校级管理员，见 SubMenuItem.roles）：
+// - 不传 role 时完全不做角色过滤 → 向后兼容既有调用方（含历史测试）
+// - 模块级显示判定与实际下发的两个子项过滤必须用同一套条件，否则会出现
+//   「模块因某个角色限定项而显示、但下发时又被剥光」的空菜单
 export function filterAccessibleModules(
-  hasPermission: (perm: string) => boolean
+  hasPermission: (perm: string) => boolean,
+  role?: string
 ): TopModuleItem[] {
   return MODULE_NAVIGATION_CONFIG.filter(module => {
     // 先计算可访问的子项（隐藏项不计入）
     const accessibleSubItems = module.subItems.filter(subItem => {
       if (subItem.hidden) return false; // 隐藏的子项不计入
+      // 角色限定项（如「院系架构」仅校级管理员）：role 未传时不做角色过滤（向后兼容）
+      if (subItem.roles && role && !subItem.roles.includes(role)) return false;
       if (!subItem.permission) return true; // 无权限要求的子项
       return hasPermission(subItem.permission);
     });
@@ -428,9 +442,11 @@ export function filterAccessibleModules(
     return accessibleSubItems.length > 0;
   }).map(module => ({
     ...module,
-    // 过滤掉隐藏和无权限的子项
+    // 过滤掉隐藏、无权限与角色不符的子项
     subItems: module.subItems.filter(subItem => {
       if (subItem.hidden) return false;
+      // 角色限定项（如「院系架构」仅校级管理员）：role 未传时不做角色过滤（向后兼容）
+      if (subItem.roles && role && !subItem.roles.includes(role)) return false;
       if (!subItem.permission) return true;
       return hasPermission(subItem.permission);
     }),

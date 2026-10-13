@@ -173,8 +173,9 @@ export function TeacherLayout() {
   const [activeTopModuleKey, setActiveTopModuleKey] = useState<string>('dashboard');
 
   const accessibleModules = useMemo(() => {
-    return filterAccessibleModules(hasPermission);
-  }, [hasPermission]);
+    // 传 role 以过滤「角色限定」菜单项（如「院系架构」仅校级管理员可见）
+    return filterAccessibleModules(hasPermission, user?.role);
+  }, [hasPermission, user?.role]);
 
   const currentModuleSubItems = useMemo((): TopModuleItem['subItems'] => {
     const module = accessibleModules.find(m => m.key === activeTopModuleKey);
@@ -196,9 +197,11 @@ export function TeacherLayout() {
   const handleTopModuleChange = (moduleKey: string) => {
     setActiveTopModuleKey(moduleKey);
     const targetModule = accessibleModules.find(m => m.key === moduleKey);
-    if (targetModule?.defaultSubKey) {
-      navigate(targetModule.defaultSubKey);
-    }
+    if (!targetModule?.defaultSubKey) return;
+    // defaultSubKey 可能被过滤掉（如教师看不到「院系架构」，而它恰是「学生管理」的默认子项）：
+    // 回退到第一个可见子项，否则点顶栏 Tab 会把教师直接送进 403 守卫页
+    const defaultVisible = targetModule.subItems.some(item => item.key === targetModule.defaultSubKey);
+    navigate(defaultVisible ? targetModule.defaultSubKey : targetModule.subItems[0].key);
   };
 
   const userMenu = {
