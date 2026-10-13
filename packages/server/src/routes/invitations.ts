@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
+import { scopeCtxOf, myClassIds } from '../services/data-scope';
 
 export const invitationRouter = Router();
 export const applicationRouter = Router();
@@ -174,6 +175,14 @@ invitationRouter.post(
     try {
       const data = createInvitationSchema.parse(req.body);
 
+      // 教师只能为自己任教的班级创建邀请（数据范围 P1；admin 不限）
+      if (req.user!.role === 'teacher') {
+        const classIds = await myClassIds(scopeCtxOf(req));
+        if (!classIds.includes(data.classRoomId)) {
+          return res.status(403).json({ message: '只能为自己任教的班级创建邀请' });
+        }
+      }
+
       // 验证班级存在
       const classRoom = await prisma.classRoom.findUnique({
         where: { id: data.classRoomId },
@@ -327,10 +336,14 @@ applicationRouter.get('/', async (req: Request, res: Response) => {
     const skip = (Number(page) - 1) * Number(pageSize);
     const take = Number(pageSize);
 
-    const where: any = {};
-    if (status) {
-      where.status = String(status);
-    }
+    const scope = scopeCtxOf(req);
+    // 数据范围：教师只看自己任教班级的申请；admin 全部（设计 §3.1）
+    const scopeCondition = scope.isAdmin
+      ? {}
+      : { invitation: { classRoomId: { in: await myClassIds(scope) } } };
+    const conditions: any[] = [scopeCondition];
+    if (status) conditions.push({ status: String(status) });
+    const where: any = { AND: conditions };
 
     const [applications, total] = await Promise.all([
       prisma.studentApplication.findMany({
