@@ -95,6 +95,9 @@ npx tsx scripts/probe-v7-delete.ts        # 探测 v7 sheet 删除接口形态�
 - 作答界面靠 iframe 嵌入 kdocs 分享链接，但**能否显示取决于该文档的分享权限与浏览器三方 Cookie 策略**（实测同一批分配表里有的匿名可渲染、有的直接跳 WPS 登录页）。因此 `components/wps/WpsTablePanel.tsx` 提供两种展示方式（内嵌 / 独立窗口工作台），并配 `WpsLivePreview` + `/wps-preview` 接口从服务端读表格数据兜底——改这块时不要退回「只靠 iframe」。
 - **`/schema/query` 不返回视图的筛选条件**（2026-10-11 在真实表格上验证：界面上配了筛选，接口里一个字都没有）。排序 `sort`、分组 `group`、字段显隐 `fields_attribute` 都返回，唯独 `filter` 不返回。因此 `check_view_filter` 拿不到数据，已改成**转人工复核**——改这条规则前先跑 `scripts/probe-view-data.ts` 确认接口有没有补上；代码里是前置守卫，接口一旦支持会自动恢复自动判定。
 - 字段的配置项都在 `data` 里（`unique_value` / `formula` / `number_format` / `default_value` / `default_value_type`），顶层只有 `name/type/id/data`。给适配器加字段映射时必须 `f.x ?? d.x` 两边都看——`required` 曾经只看了顶层，导致「必填」那条规则永远判不过。
+- **分配表格时会校验链接可用性**（`services/table-health-service.ts`）：读一次 Schema，读不到就当场拒绝保存并说明原因。没有这道校验时，老师贴一个已删除的链接会看到「分配保存成功」，学生坐到考场上却是「文档已删除」，而且判分读不到表格、答卷会一直卡在「已交卷」——这个坑真实发生过（一份失效表格被 3 场考试引用，卡住 3 份答卷）。
+  - ⚠️ **不要**改成「匿名请求分享链接、看返回什么」来判断：分享链接对匿名访客总是 302 到 `account.kdocs.cn/passport`（那是静默登录流程的一部分），真实浏览器执行 JS 后会回到文档。拿 curl 的 302 去判定会**误杀所有正常表格**。
+  - ⚠️ 校验时**实时 token 优先、分配快照 token 兜底**（`ExamTableAssignment.accessToken` 24 小时即失效）。顺序反了会把正常表格误判成「已删除」。
 - 独立窗口打开期间要豁免切屏计数（`useExamSession.setTabSwitchExempt`）并挂起全屏守护（`FullscreenGuard suspended`），否则学生每看一次表格就被记一次违规。
 
 ### 前端结构

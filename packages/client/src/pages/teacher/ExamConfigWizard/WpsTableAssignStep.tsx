@@ -134,8 +134,15 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
 
     setSaving(true);
     try {
-      await api.post(`/exam-table-assignments/${exam.id}/bulk`, { items });
-      message.success('分配保存成功');
+      const res = await api.post(`/exam-table-assignments/${exam.id}/bulk`, { items });
+      // 后端会先确认每个表格都读得到（失效链接当场拒绝，走下面的 error 分支）。
+      // 只有"一次分配太多、没来得及全查"时才会带 warning 回来 —— 这种情况放行，
+      // 但必须让老师知道，不能假装一切正常。
+      if (res.data?.warning) {
+        message.warning(res.data.warning, 8);
+      } else {
+        message.success('分配保存成功');
+      }
       onSaved();
     } catch (err: any) {
       message.error(err.response?.data?.message || '保存失败');
