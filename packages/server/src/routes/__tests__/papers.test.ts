@@ -103,6 +103,10 @@ describe('POST /api/papers/:id/duplicate — 复制试卷', () => {
       difficulty: null,
       passScore: null,
       totalScore: 20,
+      // source/createdBy 对齐真实 Prisma 记录：duplicate 接口会做数据范围校验（本人或官方），
+      // fixture 缺字段会被当成"他人的非官方卷"拒掉，测不到本用例关心的 slotType/rule 复制
+      source: 'school',
+      createdBy: 'u-teacher-1',
       paperQuestions: [
         { questionId: 'q1', sortOrder: 0, score: 10, slotType: 'fixed', rule: null },
         {
