@@ -44,18 +44,27 @@ httpServer.listen(config.port, () => {
  *   - 开发时 tsx watch 每次热重载都卡在 "Process hasn't exited"，新进程起不来
  *   - 生产 docker stop 要等超时后被 SIGKILL（不是优雅退出）
  * 因此这里主动断开 socket.io 与残余连接，并加一道兜底超时强制退出。
+ *
+ * ⚠️ 兜底时长必须**明显短于 tsx watch 自己的等待上限（5 秒）**，否则两者赛跑：
+ * 我们拖到 5 秒才退，tsx 就会走它的「强制杀」分支，而那条分支正是它状态机卡死的
+ * 入口 —— 2026-10-13 真实发生过：连杀几次之后 tsx 再也不启动新进程，后端静默下线
+ * 了一个半小时，期间所有页面都连不上。开发脚本因此把它压到 1.5 秒
+ * （`SHUTDOWN_GRACE_MS`，见 package.json 的 dev 脚本）；生产不设该变量，
+ * 保持 5 秒，让 docker stop 有足够时间收尾在途的判分任务。
  */
+const SHUTDOWN_GRACE_MS = Number(process.env.SHUTDOWN_GRACE_MS || 5000);
+
 let shuttingDown = false;
 const shutdown = async () => {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log('Shutting down...');
+  console.log(`Shutting down... (兜底 ${SHUTDOWN_GRACE_MS}ms)`);
 
-  // 兜底：无论下面卡在哪一步，5 秒后强制退出
+  // 兜底：无论下面卡在哪一步，到点强制退出
   const forceExit = setTimeout(() => {
     console.warn('[shutdown] 超时强制退出');
     process.exit(0);
-  }, 5000);
+  }, SHUTDOWN_GRACE_MS);
   forceExit.unref();
 
   try {
