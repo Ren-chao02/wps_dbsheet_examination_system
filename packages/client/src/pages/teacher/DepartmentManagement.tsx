@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Card, Row, Col, Tree, Input, Button, Form, Empty, message, Popconfirm,
-  Space, Spin, Tag,
+  Space, Spin, Tag, Result,
 } from 'antd';
 import {
   PlusOutlined, BankOutlined, BookOutlined, TeamOutlined,
@@ -37,9 +38,9 @@ function parseNodeKey(key: string): { type: NodeType; id: string } {
 }
 
 export default function DepartmentManagement() {
-  // 组织架构写操作仅管理员可用（后端已收紧）：教师只能查看，
-  // 因此把新增/删除/保存入口一并隐藏，避免点了才收到 403。
+  // 本页仅校级管理员可用（菜单入口已隐藏，这里挡直链）。
   const canWrite = useAuthStore((s) => s.user?.role) === 'admin';
+  const navigate = useNavigate();
 
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
@@ -339,6 +340,21 @@ export default function DepartmentManagement() {
       </Card>
     );
   };
+
+  // ---------- 直链守卫 ----------
+  // 为什么整页挡下而不再保留只读视图：P1 数据范围收口后，教师看到的院系树只剩自己任教的
+  // 班级，导航已在菜单层隐藏；但该页是全系统唯一能建「院系/专业/班级」的界面，管理员不可替代，
+  // 所以要挡直链而不是删页面。守卫必须放在所有 hooks 之后，保证 hooks 调用顺序稳定。
+  if (!canWrite) {
+    return (
+      <Result
+        status="403"
+        title="该功能仅校级管理员可用"
+        subTitle="院系/专业/班级的结构调整由教务处统一管理；你可以在「学生列表」中查看自己任教的班级与学生。"
+        extra={<Button type="primary" onClick={() => navigate('/teacher/students')}>前往学生列表</Button>}
+      />
+    );
+  }
 
   // ---------- Render ----------
   return (
