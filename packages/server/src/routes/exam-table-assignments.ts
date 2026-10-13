@@ -2,6 +2,7 @@ import express, { Router, Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { rejectExamConfigMutationWhenEnded } from '../middleware/exam-lock';
+import { scopeCtxOf, assertExamAccess, denyAccess } from '../services/data-scope';
 
 export const examTableAssignmentRouter = Router();
 examTableAssignmentRouter.use(authenticate);
@@ -31,6 +32,8 @@ function extractFileId(input: string): string {
 // GET /api/exam-table-assignments/:examId
 examTableAssignmentRouter.get('/:examId', async (req: Request, res: Response) => {
   try {
+    const access = await assertExamAccess(scopeCtxOf(req), req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access);
     const { examId } = req.params;
     const assignments = await prisma.examTableAssignment.findMany({
       where: { examId },
@@ -56,6 +59,8 @@ examTableAssignmentRouter.get('/:examId', async (req: Request, res: Response) =>
 // POST /api/exam-table-assignments/:examId/bulk
 examTableAssignmentRouter.post('/:examId/bulk', async (req: Request, res: Response) => {
   try {
+    const access = await assertExamAccess(scopeCtxOf(req), req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access);
     const { examId } = req.params;
     const { items } = req.body as { items: { studentId: string; shareUrl: string; accessToken: string }[] };
 
@@ -116,6 +121,8 @@ examTableAssignmentRouter.post('/:examId/bulk', async (req: Request, res: Respon
 // DELETE /api/exam-table-assignments/:examId/:studentId
 examTableAssignmentRouter.delete('/:examId/:studentId', async (req: Request, res: Response) => {
   try {
+    const access = await assertExamAccess(scopeCtxOf(req), req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access);
     const { examId, studentId } = req.params;
     await prisma.examTableAssignment.deleteMany({
       where: { examId, studentId },
