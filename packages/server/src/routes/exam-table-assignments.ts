@@ -3,6 +3,7 @@ import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { rejectExamConfigMutationWhenEnded } from '../middleware/exam-lock';
 import { scopeCtxOf, assertExamAccess, denyAccess } from '../services/data-scope';
+import { checkTablesReadable } from '../services/table-health-service';
 
 export const examTableAssignmentRouter = Router();
 examTableAssignmentRouter.use(authenticate);
@@ -96,6 +97,21 @@ examTableAssignmentRouter.post('/:examId/bulk', async (req: Request, res: Respon
       fileIds.add(a.fileId);
     }
 
+    // 保存前先确认这些表格真的读得到。
+    // 此前不校验的后果是：老师贴一个已删除/分享被撤销的链接 → 看到「分配保存成功」
+    // → 学生坐到考场上，右侧 iframe 里是「文档已删除」，做不了题；判分也读不到表格，
+    // 答卷会一直卡在「已交卷」。这个坑已经真实发生过（3 场考试引用了同一份失效表格）。
+    // 校验放在 deleteMany 之前：不合格就一个字节都不写，避免把原有分配也清掉。
+    const health = await checkTablesReadable(
+      assignments.map(a => ({ fileId: a.fileId, accessToken: a.accessToken })),
+    );
+    if (health.failed.length > 0) {
+      return res.status(400).json({
+        message: `以下表格无法读取，请确认文档未被删除、且应用有访问权限：${health.failed.map(f => f.fileId).join('、')}`,
+        failures: health.failed,
+      });
+    }
+
     await prisma.examTableAssignment.deleteMany({
       where: {
         examId,
@@ -112,7 +128,14 @@ examTableAssignmentRouter.post('/:examId/bulk', async (req: Request, res: Respon
       throw err;
     }
 
-    res.json({ count: assignments.length });
+    res.json({
+      count: assignments.length,
+      // 极端批量（远超并发×时间预算）时会有没查完的：放行但明确告知，不静默跳过
+      ...(health.unchecked.length > 0 && {
+        warning: `共 ${health.unchecked.length} 个表格因数量过多未能在本次分配时校验，请自行确认其可用性`,
+        unchecked: health.unchecked,
+      }),
+    });
   } catch (err: any) {
     res.status(500).json({ message: '服务器错误', detail: err.message });
   }

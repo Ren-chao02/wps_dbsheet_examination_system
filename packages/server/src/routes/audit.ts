@@ -17,10 +17,10 @@ import { authenticate, authorize } from '../middleware/auth';
 
 const router = Router();
 
-// 审计日志含操作人、变更前后数据等敏感信息，且提供删除/清理能力，
-// 因此：查询类接口对教师与管理员开放，删除与清理仅限管理员。
+// 审计日志含操作人、变更前后数据等敏感信息，2026-10-13 起仅校级管理员可见
+// （数据范围设计 §3.1；此前对教师开放，属走查发现的越权读缺口）。
 router.use(authenticate);
-router.use(authorize('teacher', 'admin'));
+router.use(authorize('admin'));
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 1️⃣ Zod Schema 定义

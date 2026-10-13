@@ -6,7 +6,7 @@
  * 本测试锁定修复后的行为：
  * - 未认证 → 401
  * - 学生 → 403
- * - 教师：可查询/统计，但不可删除、不可清理
+ * - 教师：不可查询/统计（2026-10-13 起审计日志仅校级管理员可见），也不可删除、不可清理
  * - 管理员：可删除/清理，且 retainDays 有下限（传 0 不会清空全部）
  *
  * authenticate 被替换为「按 x-test-role 头注入用户」，authorize 使用真实实现。
@@ -64,10 +64,10 @@ describe('GET /api/audit/logs', () => {
     expect(res.status).toBe(403);
   });
 
-  it('教师 → 200', async () => {
+  it('教师 → 403（2026-10-13 起审计日志对教师关闭，设计 §3.1）', async () => {
     const res = await request(makeApp()).get('/api/audit/logs').set('x-test-role', 'teacher');
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.status).toBe(403);
+    expect(mockPrisma.auditLog.findMany).not.toHaveBeenCalled();
   });
 });
 
