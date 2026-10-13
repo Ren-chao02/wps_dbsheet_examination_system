@@ -4,6 +4,7 @@ import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { autoEndExpiredExams, finalizeExamSubmissions } from '../utils/exam-utils';
 import { checkExamAccess, denyAccess } from '../middleware/exam-ownership';
+import { scopeCtxOf, examWhere, assertExamAccess } from '../services/data-scope';
 import { emitStudentSubmit, emitStudentUpdate } from '../services/socket';
 
 export const examRouter = Router();
@@ -40,17 +41,22 @@ examRouter.get('/', async (req: Request, res: Response) => {
     const skip = (Number(page) - 1) * Number(pageSize);
     const take = Number(pageSize);
 
-    const where: any = {};
-    if (status) where.status = String(status);
-    if (mode) where.mode = String(mode);
-    // 监考中心等处按考试名称/创建人搜索（此前前端传了 search 但后端未接，搜索是无效的）
+    // 数据范围：教师只能看到「我创建 + 我监考」的考试；admin 不受限。
+    // 用 AND 组合而非对象展开 —— 下面的 search 会占用 OR 字段，展开会互相覆盖。
+    const scope = scopeCtxOf(req);
+    const conditions: any[] = [await examWhere(scope)];
+    if (status) conditions.push({ status: String(status) });
+    if (mode) conditions.push({ mode: String(mode) });
     if (search) {
       const kw = String(search);
-      where.OR = [
-        { title: { contains: kw, mode: 'insensitive' } },
-        { creator: { realName: { contains: kw, mode: 'insensitive' } } },
-      ];
+      conditions.push({
+        OR: [
+          { title: { contains: kw, mode: 'insensitive' } },
+          { creator: { realName: { contains: kw, mode: 'insensitive' } } },
+        ],
+      });
     }
+    const where: any = { AND: conditions };
 
     const [exams, total] = await Promise.all([
       prisma.exam.findMany({
@@ -125,6 +131,9 @@ examRouter.get('/', async (req: Request, res: Response) => {
 examRouter.get('/:id', async (req: Request, res: Response) => {
   try {
     await autoEndExpiredExams();
+
+    const access = await assertExamAccess(scopeCtxOf(req), req.params.id);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试，请联系考试创建者或管理员');
 
     const exam = await prisma.exam.findUnique({
       where: { id: req.params.id },
@@ -811,6 +820,9 @@ examRouter.post('/:id/revive', async (req: Request, res: Response) => {
 // GET /api/exams/:id/submissions
 examRouter.get('/:id/submissions', async (req: Request, res: Response) => {
   try {
+    const access = await assertExamAccess(scopeCtxOf(req), req.params.id);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的答卷');
+
     const [submissions, assignments] = await Promise.all([
       prisma.studentSubmission.findMany({
         where: { examId: req.params.id },
@@ -927,6 +939,9 @@ examRouter.post('/:id/submissions/:studentId/resume', async (req: Request, res: 
 // GET /api/exams/:id/students — 获取考试已分配学生列表
 examRouter.get('/:id/students', authenticate, authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
+    const access = await assertExamAccess(scopeCtxOf(req), req.params.id);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的考生名单');
+
     const { id } = req.params;
     const exam = await prisma.exam.findUnique({
       where: { id },
@@ -969,6 +984,9 @@ examRouter.get('/:id/students', authenticate, authorize('teacher', 'admin'), asy
 // GET /api/exams/:id/room-assignments
 examRouter.get('/:id/room-assignments', async (req: Request, res: Response) => {
   try {
+    const access = await assertExamAccess(scopeCtxOf(req), req.params.id);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的考场安排');
+
     const assignments = await prisma.examRoomStudent.findMany({
       where: { assignment: { examId: req.params.id } },
       include: {
