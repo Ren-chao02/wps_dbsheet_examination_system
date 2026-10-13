@@ -33,14 +33,15 @@ userRouter.get('/', async (req: Request, res: Response) => {
 
     const scope = scopeCtxOf(req);
     // 数据范围（P1）：student/无 role → 走学生范围（教师=任教班级）；
-    // role=teacher 保持轻量列表（监考人选择、题库筛选需要）；admin 不受限。
+    // role=teacher 保持轻量列表（监考人选择、题库筛选需要）；admin 不受限；
+    // 其余 role（如 ?role=admin）一律 fail-closed —— 设计 §3.1：用户列表对教师不可见
     const scopeCondition = !scope.isAdmin && (!role || role === 'student')
       ? await studentWhere(scope)
       : role === 'teacher' && !scope.isAdmin
         ? { role: 'teacher' }
         : scope.isAdmin
           ? {}
-          : { role: String(role) };
+          : { id: { in: [] } };
     const conditions: any[] = [scopeCondition];
     if (search) {
       conditions.push({
