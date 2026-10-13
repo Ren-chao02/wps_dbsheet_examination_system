@@ -19,16 +19,68 @@ vi.mock('../../middleware/auth', async (importOriginal) => {
   };
 });
 
-const { mockPrisma } = vi.hoisted(() => ({
+const { mockPrisma, mockSheet, excelMock } = vi.hoisted(() => ({
   mockPrisma: {
     teacherClass: { findMany: vi.fn() },
     user: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), count: vi.fn(), create: vi.fn(), update: vi.fn() },
-    classRoom: { findUnique: vi.fn() },
+    classRoom: { findUnique: vi.fn(), findMany: vi.fn() },
+    importTask: { update: vi.fn() },
+    $transaction: vi.fn(),
   } as any,
+  // 伪 sheet 数据：rows 为数据行（不含表头），列序与导入模板一致（1 学号、2 姓名、3 性别、4 手机、5 邮箱、6 班级编码）
+  mockSheet: { rows: [] as string[][], errorRows: [] as any[] },
+  excelMock: { readFile: vi.fn(async () => {}), writeFile: vi.fn(async () => {}) },
 }));
 vi.mock('../../config/prisma', () => ({ prisma: mockPrisma }));
 
-import { studentRouter } from '../students';
+// processImport 直接读/写 xlsx：readFile 吃 mockSheet.rows，writeFile 只记录不落盘
+vi.mock('exceljs', () => {
+  class MockRow {
+    constructor(private readonly values: any[]) {}
+    getCell(col: number) {
+      return { value: this.values[col - 1] };
+    }
+  }
+  class MockWorksheet {
+    columns: any[] = [];
+    rowCount: number;
+    private rows = new Map<number, any>();
+    constructor(dataRows: string[][]) {
+      this.rowCount = dataRows.length + 1; // 首行表头
+      this.rows.set(1, { font: null, commit: () => {} });
+      dataRows.forEach((values, i) => this.rows.set(i + 2, new MockRow(values)));
+    }
+    getRow(n: number) {
+      return this.rows.get(n);
+    }
+    addRow(row: any) {
+      mockSheet.errorRows.push(row);
+      return row;
+    }
+  }
+  class MockWorkbook {
+    worksheets: MockWorksheet[];
+    xlsx = { readFile: excelMock.readFile, writeFile: excelMock.writeFile };
+    constructor() {
+      this.worksheets = [new MockWorksheet(mockSheet.rows)];
+    }
+    addWorksheet() {
+      const ws = new MockWorksheet([]);
+      this.worksheets.push(ws);
+      return ws;
+    }
+  }
+  const ExcelJS = { Workbook: MockWorkbook };
+  return { __esModule: true, default: ExcelJS, Workbook: MockWorkbook };
+});
+
+// 初始密码哈希与数据范围判定无关，mock 掉省去真实 bcrypt 开销
+vi.mock('bcryptjs', () => {
+  const bcrypt = { hash: vi.fn(async () => 'hashed-password'), compare: vi.fn(async () => true) };
+  return { __esModule: true, default: bcrypt, ...bcrypt };
+});
+
+import { studentRouter, processImport } from '../students';
 
 // zod 的 uuid 校验要求请求体里是合法 UUID —— 测试数据与 mock 返回值共用这组常量
 const C1 = '00000000-0000-4000-8000-000000000001';
@@ -93,5 +145,72 @@ describe('POST /api/students 创建', () => {
       .send({ username: 'stu1', realName: '张三', studentId: '2026001', classRoomId: C1 });
     expect(res.status).toBe(201);
     expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('processImport 导入行级班级范围', () => {
+  const TASK_ID = 'task-1';
+  const FILE_PATH = '/tmp/fake-import.xlsx';
+
+  beforeEach(() => {
+    // xlsx 里只有 1 行：学号 2026001 / 姓名 张三 / 班级编码 CLS9（属于 C9，不属于教师的 C1）
+    mockSheet.rows = [['2026001', '张三', '', '', '', 'CLS9']];
+    mockSheet.errorRows = [];
+    excelMock.readFile.mockClear();
+    excelMock.writeFile.mockClear();
+    mockPrisma.importTask.update.mockResolvedValue({});
+    mockPrisma.classRoom.findMany.mockResolvedValue([
+      { id: C9, code: 'CLS9', departmentId: 'd-1', majorId: 'm-1' },
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([]);
+    mockPrisma.$transaction.mockResolvedValue([]);
+    mockPrisma.user.create.mockImplementation(async (args: any) => ({ id: 's-new', ...args.data }));
+  });
+
+  it('教师导入到非任教班级 → 该行报错、不创建', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ role: 'teacher' });
+    mockPrisma.teacherClass.findMany.mockResolvedValue([{ classId: C1 }]);
+
+    const result = await processImport(TASK_ID, FILE_PATH, 't-1');
+
+    expect(result.totalRows).toBe(1);
+    expect(result.failedRows).toBe(1);
+    expect(result.successRows).toBe(0);
+    expect(result.errorFile).toBe('import_errors_task-1.xlsx');
+    // 范围拒绝必须发生在落库之前：事务与建号都不应被触发
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+    // 错误文件是内存 mock 写出的，未落盘
+    expect(excelMock.writeFile).toHaveBeenCalledTimes(1);
+    // 错误明细是范围性拒绝，而非格式类错误
+    expect(mockSheet.errorRows).toHaveLength(1);
+    expect(mockSheet.errorRows[0].classRoomCode).toBe('CLS9');
+    expect(mockSheet.errorRows[0].error).toContain('该班级不在你任教的班级内');
+  });
+
+  it('管理员导入同一行 → 不因范围被拒，正常创建', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ role: 'admin' });
+
+    const result = await processImport(TASK_ID, FILE_PATH, 'a-1');
+
+    expect(result.totalRows).toBe(1);
+    expect(result.failedRows).toBe(0);
+    expect(result.successRows).toBe(1);
+    expect(result.errorFile).toBeNull();
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.user.create.mock.calls[0][0].data).toMatchObject({
+      studentId: '2026001',
+      classRoomId: C9,
+      departmentId: 'd-1',
+      majorId: 'm-1',
+      role: 'student',
+    });
+    expect(excelMock.writeFile).not.toHaveBeenCalled();
+    expect(mockPrisma.importTask.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'FINISHED', successRows: 1, failedRows: 0 }),
+      }),
+    );
   });
 });
