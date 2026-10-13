@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Table, Tag, Card, Statistic, Row, Col, Spin, message, Badge,
   Button, Space, Tabs, Modal, Drawer, Alert, Progress,
-  Tooltip, Typography, Divider, Empty, Switch, InputNumber, Form, Popconfirm
+  Tooltip, Typography, Divider, Empty, Switch, InputNumber, Form, Popconfirm, Result
 } from 'antd';
 import { CheckCircleOutlined, ClockCircleOutlined, WarningOutlined,
   ExportOutlined, EyeOutlined, SettingOutlined, HomeOutlined,
@@ -133,6 +133,8 @@ export function EnhancedExamMonitor() {
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [liveStudents, setLiveStudents] = useState<Map<string, LiveStudent>>(new Map());
   const [loading, setLoading] = useState(true);
+  // 数据范围外的考试（非创建者/监考/管理员）后端对监控数据统一 403：整页降级为无权限提示
+  const [forbidden, setForbidden] = useState(false);
   const [connected, setConnected] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [alertRules, setAlertRules] = useState<AlertRule>(DEFAULT_ALERT_RULES);
@@ -240,7 +242,12 @@ export function EnhancedExamMonitor() {
     try {
       const res = await api.get(`/exams/${id}/submissions`);
       setSubmissions(res.data);
-    } catch (err) {
+    } catch (err: any) {
+      // 403 = 该考试不在当前用户管理范围内：整页降级提示，不再反复弹「加载失败」
+      if (err?.response?.status === 403) {
+        setForbidden(true);
+        return;
+      }
       message.error('加载失败');
     } finally {
       setLoading(false);
@@ -612,6 +619,17 @@ export function EnhancedExamMonitor() {
       ),
     },
   ];
+
+  // 权限不足优先于加载态渲染：拿不到数据的监控面板只会是空白，不如直接说明原因
+  if (forbidden) {
+    return (
+      <Result
+        status="403"
+        title="无权查看该考试"
+        subTitle="该考试不在你的管理范围内（仅创建者、监考老师或管理员可查看）"
+      />
+    );
+  }
 
   if (loading) {
     return (

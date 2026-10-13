@@ -26,6 +26,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../services/api';
+import { useAuthStore } from '../../stores/auth';
 
 const { Text, Title, Paragraph } = Typography;
 const { TabPane } = Tabs;
@@ -37,13 +38,13 @@ const FORMAT_CONFIG: Record<string, { label: string; icon: React.ReactNode; colo
   pdf: { label: 'PDF', icon: <FilePdfOutlined />, color: '#ff4d4f' },
 };
 
-// ✅ 实体类型配置
-const ENTITY_CONFIG: Record<string, { label: string; description: string; icon?: React.ReactNode }> = {
+// ✅ 实体类型配置（adminOnly：后端仅放行校级管理员导出，其余角色会 403）
+const ENTITY_CONFIG: Record<string, { label: string; description: string; icon?: React.ReactNode; adminOnly?: boolean }> = {
   exam: { label: '考试列表', description: '所有考试的详细信息', icon: <FileTextOutlined /> },
   student: { label: '学生信息', description: '学生基本资料', icon: <UserOutlined /> },
   submission: { label: '成绩记录', description: '学生考试成绩明细', icon: <TrophyOutlined /> },
   behavior: { label: '行为日志', description: '考生行为追踪数据', icon: <EyeOutlined /> },
-  audit: { label: '审计日志', description: '系统操作审计记录', icon: <SafetyCertificateOutlined /> },
+  audit: { label: '审计日志', description: '系统操作审计记录', icon: <SafetyCertificateOutlined />, adminOnly: true },
   batch: { label: '批次管理', description: '考试批次配置', icon: <AppstoreOutlined /> },
   room: { label: '考场管理', description: '考场和座位分配', icon: <HomeOutlined /> },
 };
@@ -90,6 +91,14 @@ export function ExportCenter() {
   const [loading, setLoading] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<ExportTemplate | null>(null);
+
+  // 按角色过滤可导出类型：审计日志仅校级管理员可见（后端对其他人 403，前端不展示避免白点一次）
+  const currentUser = useAuthStore((s) => s.user);
+  const visibleEntities = Object.entries(ENTITY_CONFIG)
+    .filter(([, cfg]) => !cfg.adminOnly || currentUser?.role === 'admin');
+  // 模板也按可见实体过滤（快捷导出卡与模板库共用）：后端模板列表里含审计日志模板
+  const visibleEntityTypes = new Set(visibleEntities.map(([key]) => key));
+  const visibleTemplates = templates.filter((t) => visibleEntityTypes.has(t.entityType));
 
   // 表单状态
   const [form] = Form.useForm();
@@ -397,6 +406,16 @@ export function ExportCenter() {
         </Space>
       </div>
 
+      {/* 教师视角说明导出范围（管理员可导出全部数据，不加此提示） */}
+      {currentUser?.role !== 'admin' && (
+        <Alert
+          type="info"
+          showIcon
+          message="导出范围为本人的考试与任教班级数据"
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
       {/* ✅ Tab切换：快捷导出 / 任务历史 / 模板库 */}
       <Tabs activeKey={activeTab} onChange={setActiveTab}>
         {/* ── Tab1: 快捷导出 ── */}
@@ -404,7 +423,7 @@ export function ExportCenter() {
           <span><CloudDownloadOutlined /> 快捷导出</span>
         } key="quick">
           <Row gutter={[16, 16]}>
-            {templates.map(template => (
+            {visibleTemplates.map(template => (
               <Col xs={24} sm={12} md={8} lg={6} key={template.id}>
                 <Card
                   hoverable
@@ -478,7 +497,7 @@ export function ExportCenter() {
         } key="templates">
           <List
             grid={{ gutter: 16, xs: 1, sm: 2, md: 3, lg: 4 }}
-            dataSource={templates}
+            dataSource={visibleTemplates}
             renderItem={item => (
               <List.Item>
                 <Card
@@ -538,7 +557,7 @@ export function ExportCenter() {
             rules={[{ required: true, message: '请选择要导出的内容' }]}
           >
             <Select placeholder="请选择实体类型">
-              {Object.entries(ENTITY_CONFIG).map(([key, cfg]) => (
+              {visibleEntities.map(([key, cfg]) => (
                 <Select.Option key={key} value={key}>
                   {cfg.label} - {cfg.description}
                 </Select.Option>

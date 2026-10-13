@@ -10,6 +10,7 @@ import {
   DownloadOutlined, ImportOutlined
 } from '@ant-design/icons';
 import api from '../../services/api';
+import { useAuthStore } from '../../stores/auth';
 
 const { Title, Text } = Typography;
 
@@ -65,6 +66,11 @@ export function RoomManager() {
   const [selectedRoom, setSelectedRoom] = useState<ExamRoom | null>(null);
   const [form] = Form.useForm();
   const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 });
+
+  // 考场写操作（新增/编辑/删除/批量导入）后端仅放行校级管理员，教师发起会被 403；
+  // 前端直接隐藏入口，避免出现"点了报错"的死按钮（详情仍可查看）
+  const currentUser = useAuthStore((s) => s.user);
+  const canManage = currentUser?.role === 'admin';
 
   // 加载考场列表
   const fetchRooms = async (page = 1, pageSize = 20) => {
@@ -232,19 +238,23 @@ export function RoomManager() {
           <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>
             详情
           </Button>
-          <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="确定删除该考场？"
-            onConfirm={() => handleDelete(record.id)}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
-          </Popconfirm>
+          {canManage && (
+            <>
+              <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
+                编辑
+              </Button>
+              <Popconfirm
+                title="确定删除该考场？"
+                onConfirm={() => handleDelete(record.id)}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button size="small" danger icon={<DeleteOutlined />}>
+                  删除
+                </Button>
+              </Popconfirm>
+            </>
+          )}
         </Space>
       ),
     },
@@ -256,9 +266,11 @@ export function RoomManager() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={3} style={{ margin: 0 }}>考场管理</Title>
         <Space>
-          <Button icon={<ImportOutlined />} onClick={() => setBulkImportModalOpen(true)}>
-            批量导入
-          </Button>
+          {canManage && (
+            <Button icon={<ImportOutlined />} onClick={() => setBulkImportModalOpen(true)}>
+              批量导入
+            </Button>
+          )}
           <Button icon={<DownloadOutlined />} onClick={() => {
             api.get('/rooms/export-template').then((res: any) => {
               // 下载模板逻辑
@@ -285,9 +297,11 @@ export function RoomManager() {
           }}>
             导出模板
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-            新增考场
-          </Button>
+          {canManage && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+              新增考场
+            </Button>
+          )}
         </Space>
       </div>
 
