@@ -15,6 +15,7 @@ import { enqueueImport } from '../jobs/import-queue';
 import { wpsConfigService } from '../services/wps-config-service';
 
 import { checkStudentAccess, denyAccess } from '../middleware/exam-ownership';
+import { scopeCtxOf, studentWhere, myClassIds } from '../services/data-scope';
 
 export const studentRouter = Router();
 
@@ -146,40 +147,23 @@ studentRouter.get('/', async (req: Request, res: Response) => {
     const skip = (Number(page) - 1) * Number(pageSize);
     const take = Number(pageSize);
 
-    const where: any = { role: 'student' };
-
+    // 数据范围：admin 全校；教师仅任教班级（未分班学生不在教师名册内）。
+    // 与业务筛选用 AND 组合 —— search 会占用 OR 字段。
+    const conditions: any[] = [await studentWhere(scopeCtxOf(req))];
     if (search) {
-      where.OR = [
-        { username: { contains: String(search), mode: 'insensitive' } },
-        { realName: { contains: String(search), mode: 'insensitive' } },
-        { studentId: { contains: String(search), mode: 'insensitive' } },
-        { email: { contains: String(search), mode: 'insensitive' } },
-      ];
-    }
-    if (departmentId) where.departmentId = String(departmentId);
-    if (majorId) where.majorId = String(majorId);
-
-    // ✅ 教师只能管理自己负责的班级的学生；admin 可查看全部
-    if (req.user!.role === 'teacher') {
-      const teacherClasses = await prisma.teacherClass.findMany({
-        where: { teacherId: req.user!.userId },
-        select: { classId: true },
+      conditions.push({
+        OR: [
+          { username: { contains: String(search), mode: 'insensitive' } },
+          { realName: { contains: String(search), mode: 'insensitive' } },
+          { studentId: { contains: String(search), mode: 'insensitive' } },
+          { email: { contains: String(search), mode: 'insensitive' } },
+        ],
       });
-      const myClassIds = teacherClasses.map(tc => tc.classId);
-
-      if (classRoomId) {
-        // 前端指定了班级，验证是否属于当前教师
-        if (!myClassIds.includes(String(classRoomId))) {
-          return res.json({ data: [], total: 0, page: Number(page), pageSize: Number(pageSize) });
-        }
-        where.classRoomId = String(classRoomId);
-      } else {
-        where.classRoomId = { in: myClassIds };
-      }
-    } else if (classRoomId) {
-      // admin 按班级筛选
-      where.classRoomId = String(classRoomId);
     }
+    if (departmentId) conditions.push({ departmentId: String(departmentId) });
+    if (majorId) conditions.push({ majorId: String(majorId) });
+    if (classRoomId) conditions.push({ classRoomId: String(classRoomId) });
+    const where: any = { AND: conditions };
 
     const [data, total] = await Promise.all([
       prisma.user.findMany({
@@ -347,37 +331,20 @@ studentRouter.get('/export', async (req: Request, res: Response) => {
   try {
     const { departmentId, majorId, classRoomId, search } = req.query;
 
-    const where: any = { role: 'student' };
-    if (departmentId) where.departmentId = String(departmentId);
-    if (majorId) where.majorId = String(majorId);
-
-    // ✅ 教师导出时也只能导出自己负责班级的学生
-    if (req.user!.role === 'teacher') {
-      const teacherClasses = await prisma.teacherClass.findMany({
-        where: { teacherId: req.user!.userId },
-        select: { classId: true },
-      });
-      const myClassIds = teacherClasses.map(tc => tc.classId);
-      if (classRoomId) {
-        if (!myClassIds.includes(String(classRoomId))) {
-          where.classRoomId = '__none__'; // 返回空结果
-        } else {
-          where.classRoomId = String(classRoomId);
-        }
-      } else {
-        where.classRoomId = { in: myClassIds };
-      }
-    } else if (classRoomId) {
-      where.classRoomId = String(classRoomId);
-    }
-
+    const conditions: any[] = [await studentWhere(scopeCtxOf(req))];
+    if (departmentId) conditions.push({ departmentId: String(departmentId) });
+    if (majorId) conditions.push({ majorId: String(majorId) });
+    if (classRoomId) conditions.push({ classRoomId: String(classRoomId) });
     if (search) {
-      where.OR = [
-        { username: { contains: String(search), mode: 'insensitive' } },
-        { realName: { contains: String(search), mode: 'insensitive' } },
-        { studentId: { contains: String(search), mode: 'insensitive' } },
-      ];
+      conditions.push({
+        OR: [
+          { username: { contains: String(search), mode: 'insensitive' } },
+          { realName: { contains: String(search), mode: 'insensitive' } },
+          { studentId: { contains: String(search), mode: 'insensitive' } },
+        ],
+      });
     }
+    const where: any = { AND: conditions };
 
     const students = await prisma.user.findMany({
       where,
@@ -520,6 +487,14 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
 studentRouter.post('/', async (req: Request, res: Response) => {
   try {
     const data = createStudentSchema.parse(req.body);
+
+    // 教师只能在本人任教的班级下建学生；「未分班学生」也属管理员职责（设计 §3.1）
+    if (req.user!.role === 'teacher') {
+      const classIds = await myClassIds(scopeCtxOf(req));
+      if (!data.classRoomId || !classIds.includes(data.classRoomId)) {
+        return res.status(403).json({ message: '只能在自己任教的班级下创建学生' });
+      }
+    }
 
     // 用户名唯一性
     const existingUsername = await prisma.user.findUnique({ where: { username: data.username } });
@@ -830,7 +805,7 @@ interface ImportResult {
 export async function processImport(
   taskId: string,
   filePath: string,
-  _userId: string,
+  userId: string,
 ): Promise<ImportResult> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(filePath);
@@ -852,6 +827,20 @@ export async function processImport(
   const errors: ImportErrorRow[] = [];
   let successRows = 0;
   let failedRows = 0;
+
+  // 教师导入只能落到本人任教的班级（管理员的导入不受限）；超范围的行记为错误行，
+  // 与其它行级校验同一口径 —— 不让整份文件失败，而是逐行报告（导入页展示错误明细）
+  let allowedClassIds: Set<string> | null = null;
+  if (userId) {
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (u?.role === 'teacher') {
+      const myClasses = await prisma.teacherClass.findMany({
+        where: { teacherId: userId },
+        select: { classId: true },
+      });
+      allowedClassIds = new Set(myClasses.map((c) => c.classId));
+    }
+  }
 
   // 预加载所有班级编码映射
   const classRooms = await prisma.classRoom.findMany({
@@ -904,6 +893,8 @@ export async function processImport(
     const classRoom = classRoomCode ? classRoomMap.get(classRoomCode) : undefined;
     if (classRoomCode && !classRoom) {
       rowErrors.push('班级编码不存在');
+    } else if (classRoom && allowedClassIds && !allowedClassIds.has(classRoom.id)) {
+      rowErrors.push('该班级不在你任教的班级内');
     }
 
     // 邮箱格式
