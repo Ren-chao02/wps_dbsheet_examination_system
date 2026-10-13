@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { BehaviorType, RiskLevel } from '@prisma/client';
 import { authenticate, authorize } from '../middleware/auth'; // ✅ 修复Bug#2：导入认证中间件
 import { prisma } from '../config/prisma';
+import { scopeCtxOf, behaviorWhere, assertExamAccess, denyAccess } from '../services/data-scope';
 
 const router = Router();
 const recordBehaviorSchema = z.object({
@@ -25,7 +26,9 @@ const recordBehaviorSchema = z.object({
 
 // 查询参数验证
 const queryBehaviorSchema = z.object({
-  examId: z.string().uuid(),
+  // examId 可省略：省略时按请求者的数据范围（behaviorWhere）自动限定可见考试。
+  // 也不再做 UUID 格式校验——非法/不存在的 id 由 assertExamAccess 判 404，参数层不重复拦。
+  examId: z.string().optional(),
   studentId: z.string().uuid().optional(),
   behaviorType: z.nativeEnum(BehaviorType).optional(),
   riskLevel: z.nativeEnum(RiskLevel).optional(),
@@ -154,18 +157,25 @@ router.get('/', authenticate, authorize('teacher', 'admin'), async (req: Request
   try {
     const query = queryBehaviorSchema.parse(req.query);
 
-    const where: any = {
-      examId: query.examId,
-    };
-
-    if (query.studentId) where.studentId = query.studentId;
-    if (query.behaviorType) where.behaviorType = query.behaviorType;
-    if (query.riskLevel) where.riskLevel = query.riskLevel;
-    if (query.startTime || query.endTime) {
-      where.occurredAt = {};
-      if (query.startTime) where.occurredAt.gte = new Date(query.startTime);
-      if (query.endTime) where.occurredAt.lte = new Date(query.endTime);
+    const scope = scopeCtxOf(req);
+    // 指定考试时先做归属校验：范围外直接 403，而不是返回空列表掩盖越权
+    if (query.examId) {
+      const access = await assertExamAccess(scope, query.examId);
+      if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的行为日志');
     }
+
+    const conditions: any[] = [await behaviorWhere(scope)];
+    if (query.examId) conditions.push({ examId: query.examId });
+    if (query.studentId) conditions.push({ studentId: query.studentId });
+    if (query.behaviorType) conditions.push({ behaviorType: query.behaviorType });
+    if (query.riskLevel) conditions.push({ riskLevel: query.riskLevel });
+    if (query.startTime || query.endTime) {
+      const occurredAt: any = {};
+      if (query.startTime) occurredAt.gte = new Date(query.startTime);
+      if (query.endTime) occurredAt.lte = new Date(query.endTime);
+      conditions.push({ occurredAt });
+    }
+    const where: any = { AND: conditions };
 
     const [logs, total] = await Promise.all([
       prisma.studentBehaviorLog.findMany({
@@ -207,6 +217,9 @@ router.get('/', authenticate, authorize('teacher', 'admin'), async (req: Request
  */
 router.get('/reports/:examId/:studentId', authenticate, authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
+    const access = await assertExamAccess(scopeCtxOf(req), req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的行为数据');
+
     const { examId, studentId } = req.params;
 
     let report = await prisma.behaviorAnalysisReport.findUnique({
@@ -242,6 +255,9 @@ router.get('/reports/:examId/:studentId', authenticate, authorize('teacher', 'ad
 // 任何知道 examId 的匿名请求者都能拉走，属严重隐私泄露。
 router.get('/reports/:examId', authenticate, authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
+    const access = await assertExamAccess(scopeCtxOf(req), req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的行为数据');
+
     const { examId } = req.params;
     const { suspiciousOnly } = req.query; // 是否只返回可疑报告
 
@@ -279,6 +295,9 @@ router.get('/reports/:examId', authenticate, authorize('teacher', 'admin'), asyn
  */
 router.put('/reports/:examId/:studentId/review', authenticate, authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
+    const access = await assertExamAccess(scopeCtxOf(req), req.params.examId);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的行为数据');
+
     const { examId, studentId } = req.params;
     const reviewerId = req.user?.id; // 从认证中间件获取
 
