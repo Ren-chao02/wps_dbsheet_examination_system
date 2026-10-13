@@ -46,7 +46,7 @@ npx tsx scripts/probe-v7-delete.ts        # 探测 v7 sheet 删除接口形态�
 ## 架构要点
 
 ### 请求链路
-`app.ts` 按模块挂载 `/api/<module>` 路由；绝大多数路由在文件头统一 `router.use(authenticate)` + `router.use(authorize('teacher'|'student'|'admin'))`（少数在 `app.ts` 挂载处加 `authenticate`，如 notifications）。**例外**：`routes/demo.ts` 有意免认证（Mock 判分演示）；`routes/audit.ts` 目前**没有任何鉴权**且自带一份 `new PrismaClient()`，其 `/api/audit/logs`（全量审计日志）、`/api/audit/cleanup`（按 `retainDays` 批量删除，传 0 即清空）对可达网络的任何人开放——改这块时按标准模式补上鉴权，别让缺口扩大。
+`app.ts` 按模块挂载 `/api/<module>` 路由；绝大多数路由在文件头统一 `router.use(authenticate)` + `router.use(authorize('teacher'|'student'|'admin'))`（少数在 `app.ts` 挂载处加 `authenticate`，如 notifications）。**例外**：`routes/demo.ts` 有意免认证（Mock 判分演示）。`routes/audit.ts` 曾完全无鉴权的缺口已修复（2026-10-13 数据范围收口 P1）：现为 `authenticate` + `authorize('admin')`，审计日志（含操作人、变更数据）仅校级管理员可查，`/api/audit/cleanup` 的 `retainDays` 有 30 天下限——新增审计端点时沿用该口径，别让缺口扩大。
 
 `middleware/exam-lock.ts` 的 `rejectExamConfigMutationWhenEnded()` 用于考场分配与表格分配等配置接口；考试自身的 `ended` 校验是 `routes/exams.ts` 内联的（约 251 行）。`middleware/audit-middleware.ts` 全局记录 CRUD 审计。
 
