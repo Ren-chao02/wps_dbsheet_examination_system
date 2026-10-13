@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { ExportFormat, exportService, TaskStatus } from '../services/export-service';
 import { authenticate, authorize } from '../middleware/auth';
 import { prisma } from '../config/prisma';
+import { scopeCtxOf, studentWhere, examWhere, type ScopeCtx } from '../services/data-scope';
 
 const router = Router();
 router.use(authenticate);
@@ -93,8 +94,12 @@ const queryTasksSchema = z.object({
 
 /**
  * 根据实体类型获取对应的数据
+ *
+ * 数据范围收口（P1）：首参必须是范围上下文，各分支用 AND 组合「范围条件」与
+ * 「业务筛选」（filters 里可能有 search 等占用 OR 的字段，展开合并会互相覆盖）。
  */
-async function fetchEntityData(
+export async function fetchEntityData(
+  ctx: ScopeCtx,
   entityType: string,
   entityId?: string,
   filters?: Record<string, any>
@@ -106,7 +111,8 @@ async function fetchEntityData(
   switch (entityType) {
     case 'exam':
       return prisma.exam.findMany({
-        where: entityId ? { id: entityId } : (filters || {}),
+        // 数据范围：教师只能导出「我创建/监考」的考试
+        where: { AND: [entityId ? { id: entityId } : (filters || {}), await examWhere(ctx)] },
         include: { creator: { select: { realName: true, username: true } }, batch: true },
         orderBy: { createdAt: 'desc' },
         take: cap,
@@ -114,7 +120,8 @@ async function fetchEntityData(
 
     case 'student':
       return prisma.user.findMany({
-        where: { role: 'student', ...(filters || {}) },
+        // 范围里已含 role: 'student'；教师自动限定任教班级
+        where: { AND: [await studentWhere(ctx), (filters || {})] },
         select: {
           id: true, username: true, realName: true, studentId: true,
           email: true, department: { select: { name: true } },
@@ -125,11 +132,13 @@ async function fetchEntityData(
 
     case 'submission':
       return prisma.studentSubmission.findMany({
-        // 无 entityId 时补默认 30 天时间窗口（submissions 长期累积可达十万级），
-        // 显式传入 filters.createdAt 可覆盖；指定 entityId（单场考试）无需窗口
-        where: entityId
-          ? { examId: entityId }
-          : withDefaultTimeWindow(filters, 'createdAt'),
+        // 无 entityId 时补默认 30 天窗口；范围：教师限定「我创建/监考」考试的答卷（关系过滤）
+        where: {
+          AND: [
+            entityId ? { examId: entityId } : withDefaultTimeWindow(filters, 'createdAt'),
+            { exam: await examWhere(ctx) },
+          ],
+        },
         include: {
           student: { select: { realName: true, username: true, studentId: true } },
           exam: { select: { title: true } },
@@ -140,13 +149,17 @@ async function fetchEntityData(
 
     case 'behavior':
       return prisma.studentBehaviorLog.findMany({
-        where: withDefaultTimeWindow(filters, 'occurredAt'),
+        where: {
+          AND: [withDefaultTimeWindow(filters, 'occurredAt'), { exam: await examWhere(ctx) }],
+        },
         include: { student: { select: { realName: true, username: true } } },
         orderBy: { occurredAt: 'desc' },
         take: cap,
       });
 
     case 'audit':
+      // 审计日志含操作人与变更数据，仅校级管理员可导出（设计 §3.1）
+      if (!ctx.isAdmin) throw new Error('审计日志仅校级管理员可导出');
       return prisma.auditLog.findMany({
         where: withDefaultTimeWindow(filters, 'occurredAt'),
         include: { operator: { select: { realName: true, username: true } } },
@@ -156,13 +169,14 @@ async function fetchEntityData(
 
     case 'batch':
       return prisma.examBatch.findMany({
-        where: filters || {},
+        where: { AND: [filters || {}, ctx.isAdmin ? {} : { createdBy: ctx.userId }] },
         include: { creator: { select: { realName: true } } },
         orderBy: { createdAt: 'desc' },
         take: cap,
       });
 
     case 'room':
+      // 考场列表教师本就只读可见（用于考前核对），导出不放宽也不收紧
       return prisma.examRoom.findMany({
         where: filters || {},
         include: { invigilators: { select: { realName: true } } },
@@ -171,10 +185,14 @@ async function fetchEntityData(
       });
 
     case 'gradeReview':
-      // 批改留痕：谁、何时、把哪道题从多少分改成多少分、理由是什么
-      // 支持按 examId 过滤（批改记录按考试归档），默认 90 天窗口
+      // 批改留痕：教师限定「我创建/监考」考试的复核记录（detail → submission → exam 关系链）
       return prisma.gradeReviewLog.findMany({
-        where: withDefaultTimeWindow(filters, 'createdAt'),
+        where: {
+          AND: [
+            withDefaultTimeWindow(filters, 'createdAt'),
+            { detail: { submission: { exam: await examWhere(ctx) } } },
+          ],
+        },
         include: {
           detail: {
             select: {
@@ -211,6 +229,12 @@ async function fetchEntityData(
 router.post('/trigger', async (req: Request, res: Response) => {
   try {
     const body = triggerExportSchema.parse(req.body);
+    const scope = scopeCtxOf(req);
+
+    // 审计导出仅校级管理员：在建任务之前拒绝，避免留下失败任务记录
+    if (body.entityType === 'audit' && !scope.isAdmin) {
+      return res.status(403).json({ success: false, error: '审计日志仅校级管理员可导出' });
+    }
 
     // PDF 导出当前仅为 HTML 占位，明确拒绝避免用户拿到非 PDF 文件
     if (body.format === ExportFormat.PDF) {
@@ -257,11 +281,7 @@ router.post('/trigger', async (req: Request, res: Response) => {
         });
 
         // 1. 获取数据
-        const data = await fetchEntityData(
-          body.entityType,
-          body.entityId,
-          body.options?.filters
-        );
+        const data = await fetchEntityData(scope, body.entityType, body.entityId, body.options?.filters);
 
         if (data.length === 0) {
           throw new Error('没有可导出的数据');
