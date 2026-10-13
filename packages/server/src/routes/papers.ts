@@ -303,6 +303,13 @@ paperRouter.post('/:id/duplicate', async (req: Request, res: Response) => {
       return res.status(404).json({ message: '试卷不存在' });
     }
 
+    // 数据范围（P1）：只能复制自己创建的或官方试卷；他人校本试卷不可复制
+    // （官方试卷的复制是题库分发路径，刻意放开）
+    const isAdmin = req.user?.role === 'admin';
+    if (!isAdmin && original.createdBy !== req.user!.userId && original.source !== 'official') {
+      return res.status(403).json({ message: '只能复制自己创建的或官方试卷' });
+    }
+
     const duplicated = await prisma.paper.create({
       data: {
         name: `${original.name} - 副本`,
