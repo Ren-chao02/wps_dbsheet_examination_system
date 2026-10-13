@@ -118,4 +118,9 @@ Socket.IO 在 `index.ts` 里 `initSocketIO(httpServer)`（监考推送 + 通知�
 - `config/index.ts` 用 `dotenv.config()` 按**进程 cwd** 加载 `.env`：从根目录跑脚本读到的是根 `.env`，从 `packages/server` 跑读到的是 `packages/server/.env`——两者内容可能不同（尤其 `JWT_SECRET`），调试接口鉴权失败时先确认这一点。生产环境弱 `JWT_SECRET` 会 fail-fast 拒绝启动。
 - `docs/`、`.qoder/`、`.trae/`、`.playwright-mcp/`、`test_screenshots/` 都在 `.gitignore` 中（本地参考资料，不会入库）；`docs/kingsoft-api-reference.md` 是多维表格 API 速查，`docs/superpowers/specs/*.md` 是各模块设计文档。
 - `packages/server/scripts/` 在 `.gitignore` 里是**白名单**（`packages/server/scripts/*` + 逐条 `!` 放行）：新写的临时脚本不会自动入库，要入库得先加一条 `!` 规则。别改成裸 `scripts/`，那会连带挡住整个目录且没有任何提示。
+- **后端"没反应"时的排查顺序**（2026-10-13 真实发生过：静默下线一个半小时，期间所有页面都连不上）：
+  1. `curl -s localhost:3002/api/health` —— 无响应就是后端没了
+  2. 看后端日志尾部（`npm run dev` 的终端输出，或 `/tmp/dev-server.log`）有没有在刷 `Process hasn't exited. Killing process...`
+  3. 看到那一行就是 **`tsx watch` 自己卡死**了（连续快速重启触发；会留下"孤儿 + 没有子进程"的僵尸 watcher，`pgrep -f "tsx watch"` 能看到）。重启即可。
+  生产用 `node dist/index.js`，没有这个毛病；`SHUTDOWN_GRACE_MS`（dev 脚本设为 1500）只是让我们这边不拖后腿，治不了 tsx 自身。
 - 生产构建产物由 server 托管（`NODE_ENV=production` 时 `app.ts` 静态托管 `packages/client/dist` 并做 SPA fallback）。
