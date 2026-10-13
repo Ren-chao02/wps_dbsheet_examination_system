@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
+import { scopeCtxOf, studentWhere, assertStudentAccess, denyAccess } from '../services/data-scope';
 
 export const userRouter = Router();
 userRouter.use(authenticate);
@@ -30,17 +31,28 @@ userRouter.get('/', async (req: Request, res: Response) => {
     const skip = (Number(page) - 1) * Number(pageSize);
     const take = Number(pageSize);
 
-    const where: any = {};
+    const scope = scopeCtxOf(req);
+    // 数据范围（P1）：student/无 role → 走学生范围（教师=任教班级）；
+    // role=teacher 保持轻量列表（监考人选择、题库筛选需要）；admin 不受限。
+    const scopeCondition = !scope.isAdmin && (!role || role === 'student')
+      ? await studentWhere(scope)
+      : role === 'teacher' && !scope.isAdmin
+        ? { role: 'teacher' }
+        : scope.isAdmin
+          ? {}
+          : { role: String(role) };
+    const conditions: any[] = [scopeCondition];
     if (search) {
-      where.OR = [
-        { username: { contains: String(search), mode: 'insensitive' } },
-        { realName: { contains: String(search), mode: 'insensitive' } },
-        { email: { contains: String(search), mode: 'insensitive' } },
-      ];
+      conditions.push({
+        OR: [
+          { username: { contains: String(search), mode: 'insensitive' } },
+          { realName: { contains: String(search), mode: 'insensitive' } },
+          { email: { contains: String(search), mode: 'insensitive' } },
+        ],
+      });
     }
-    if (role) {
-      where.role = String(role);
-    }
+    if (role) conditions.push({ role: String(role) });
+    const where: any = { AND: conditions };
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
@@ -90,6 +102,12 @@ userRouter.get('/teachers', async (_req: Request, res: Response) => {
 // GET /api/users/:id
 userRouter.get('/:id', async (req: Request, res: Response) => {
   try {
+    // 数据范围（P1）：教师只能看自己任教班级的学生详情；管理员不限
+    if (req.user!.role === 'teacher') {
+      const access = await assertStudentAccess(scopeCtxOf(req), req.params.id);
+      if (access !== 'ok') return denyAccess(res, access, '该学生不在你任教的班级内');
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: req.params.id },
       select: {
