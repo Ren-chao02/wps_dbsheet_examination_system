@@ -48,7 +48,7 @@ describe('GET /api/behaviors 列表', () => {
   it('教师指定范围外考试 → 403', async () => {
     mockPrisma.exam.findUnique.mockResolvedValue({ createdBy: 't-1', assignments: [] });
     const res = await request(makeApp())
-      .get('/api/behaviors?examId=exam-1')
+      .get('/api/behaviors?examId=00000000-0000-4000-8000-000000000001')
       .set('x-test-role', 'teacher')
       .set('x-test-user', 't-2');
     expect(res.status).toBe(403);

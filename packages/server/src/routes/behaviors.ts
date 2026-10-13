@@ -27,8 +27,9 @@ const recordBehaviorSchema = z.object({
 // 查询参数验证
 const queryBehaviorSchema = z.object({
   // examId 可省略：省略时按请求者的数据范围（behaviorWhere）自动限定可见考试。
-  // 也不再做 UUID 格式校验——非法/不存在的 id 由 assertExamAccess 判 404，参数层不重复拦。
-  examId: z.string().optional(),
+  // 保留 uuid 格式校验不是为准入把关（归属由 assertExamAccess 判），而是让畸形 id 在校验层
+  // 得到干净的 400——若放行到 Prisma，非 UUID 会抛 P2023 变成 500 并带出引擎错误。
+  examId: z.string().uuid().optional(), // 可选：指定则校验归属；不指定则限定在「我创建/监考」的考试内
   studentId: z.string().uuid().optional(),
   behaviorType: z.nativeEnum(BehaviorType).optional(),
   riskLevel: z.nativeEnum(RiskLevel).optional(),
