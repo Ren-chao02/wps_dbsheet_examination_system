@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
+import { scopeCtxOf, myClassIds } from '../services/data-scope';
 
 export const departmentRouter = Router();
 
@@ -56,7 +57,7 @@ const updateClassRoomSchema = z.object({
 // ============ 院系 CRUD ============
 
 // GET / — 获取院系列表（含专业和班级树形结构）
-departmentRouter.get('/', async (_req: Request, res: Response) => {
+departmentRouter.get('/', async (req: Request, res: Response) => {
   try {
     const departments = await prisma.department.findMany({
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
@@ -76,19 +77,30 @@ departmentRouter.get('/', async (_req: Request, res: Response) => {
       },
     });
 
-    res.json({
-      data: departments.map(dept => ({
+    const scope = scopeCtxOf(req);
+    // 数据范围（P1）：教师只看得到自己任教班级所在的院系/专业/班级——
+    // 通知发送、邀请创建、名册筛选三处选择器都由此树驱动，裁剪后天然选不到范围外
+    const visibleClassIds = scope.isAdmin ? null : new Set(await myClassIds(scope));
+
+    const shaped = departments
+      .map(dept => ({
         ...dept,
-        majors: dept.majors.map(major => ({
-          ...major,
-          classRooms: major.classRooms.map(cls => ({
-            ...cls,
-            studentCount: cls._count?.students ?? 0,
-            _count: undefined,
-          })),
-        })),
-      })),
-    });
+        majors: dept.majors
+          .map(major => ({
+            ...major,
+            classRooms: major.classRooms
+              .filter(cls => !visibleClassIds || visibleClassIds.has(cls.id))
+              .map(cls => ({
+                ...cls,
+                studentCount: cls._count?.students ?? 0,
+                _count: undefined,
+              })),
+          }))
+          .filter(major => major.classRooms.length > 0),
+      }))
+      .filter(dept => dept.majors.length > 0);
+
+    res.json({ data: shaped });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
