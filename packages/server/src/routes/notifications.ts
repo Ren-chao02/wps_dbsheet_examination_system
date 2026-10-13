@@ -11,17 +11,20 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { PrismaClient, NotificationType, NotificationPriority } from '@prisma/client';
+import { NotificationType, NotificationPriority } from '@prisma/client';
+import { prisma } from '../config/prisma';
 import { notificationService } from '../services/notification-service';
 import { authorize } from '../middleware/auth';
+import { scopeCtxOf, myClassIds } from '../services/data-scope';
 
 const router = Router();
-const prisma = new PrismaClient();
+// prisma 统一用 config/prisma 单例：此前这里自带一份 new PrismaClient()，
+// 与全库其余路由不一致（开发热重载会多开连接池，且测试无法 vi.mock 替换）。
 
 // 权限说明：路由在 app.ts 只挂了 authenticate（任何人都能进来），
 // 因此「发通知 / 模板增删改」这些管理动作必须在本文件内加 authorize 收紧：
-// - POST /send：限 teacher/admin（学生不能给任意用户发通知）
-// - 模板 POST/PUT/DELETE：限 teacher/admin（学生不能改全局模板）
+// - POST /send：限 teacher/admin，且教师只能发给本人任教班级的学生（数据范围见 handler 内）
+// - 模板 POST/PUT/DELETE：仅校级管理员（全库共用一份模板，教师只在发送时下拉选用）
 // - GET /?senderId=xxx：只能查自己发出的（admin 例外）
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -203,8 +206,9 @@ router.get('/templates', async (_req: Request, res: Response) => {
   }
 });
 
-// 模板增删改：限 teacher/admin（app.ts 只挂了 authenticate，这里必须补 authorize）
-router.post('/templates', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
+// 模板增删改：仅校级管理员（教师使用时从下拉选择）
+// app.ts 只挂了 authenticate，这里必须补 authorize
+router.post('/templates', authorize('admin'), async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     const data = createTemplateSchema.parse(req.body);
@@ -220,7 +224,7 @@ router.post('/templates', authorize('teacher', 'admin'), async (req: Request, re
   }
 });
 
-router.put('/templates/:id', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
+router.put('/templates/:id', authorize('admin'), async (req: Request, res: Response) => {
   try {
     const data = updateTemplateSchema.parse(req.body);
     const template = await prisma.notificationTemplate.update({
@@ -236,7 +240,7 @@ router.put('/templates/:id', authorize('teacher', 'admin'), async (req: Request,
   }
 });
 
-router.delete('/templates/:id', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
+router.delete('/templates/:id', authorize('admin'), async (req: Request, res: Response) => {
   try {
     await prisma.notificationTemplate.delete({ where: { id: req.params.id } });
     res.json({ success: true, message: '模板已删除' });
@@ -328,6 +332,24 @@ router.post('/send', authorize('teacher', 'admin'), async (req: Request, res: Re
   try {
     const userId = req.user!.id;
     const body = sendNotificationSchema.parse(req.body);
+
+    // 数据范围（P1）：教师只能发给「本人任教班级」的学生；admin 不限。
+    // userIds 与 classRoomIds 都要校验 —— 客户端虽只按班级选人，接口不能依赖这一点。
+    if (req.user!.role === 'teacher') {
+      const classIds = await myClassIds(scopeCtxOf(req));
+      if (body.classRoomIds?.some((id) => !classIds.includes(id))) {
+        return res.status(403).json({ success: false, error: '只能向自己任教的班级发送通知' });
+      }
+      if (body.userIds?.length) {
+        const allowed = await prisma.user.findMany({
+          where: { id: { in: body.userIds }, role: 'student', classRoomId: { in: classIds } },
+          select: { id: true },
+        });
+        if (allowed.length !== new Set(body.userIds).size) {
+          return res.status(403).json({ success: false, error: '收件人不在你任教的班级内' });
+        }
+      }
+    }
 
     // 解析接收者：如果提供了班级ID，展开为班级内所有学生
     let targetUserIds: string[] = body.userIds || [];
