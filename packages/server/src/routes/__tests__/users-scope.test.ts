@@ -75,6 +75,17 @@ describe('GET /api/users', () => {
     expect(where.AND[0]).toEqual({ role: 'teacher' });
   });
 
+  it('教师传 ?role=admin → fail-closed 空集（不得枚举管理员）', async () => {
+    const res = await request(makeApp())
+      .get('/api/users?role=admin')
+      .set('x-test-role', 'teacher')
+      .set('x-test-user', 't-1');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([]);
+    const where = mockPrisma.user.findMany.mock.calls[0][0].where;
+    expect(where.AND[0]).toEqual({ id: { in: [] } });
+  });
+
   it('admin → 无范围条件', async () => {
     const res = await request(makeApp())
       .get('/api/users?role=student')
