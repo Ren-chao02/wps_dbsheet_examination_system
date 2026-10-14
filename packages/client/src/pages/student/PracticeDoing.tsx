@@ -10,7 +10,7 @@ import {
 import { practiceApi } from '../../services/api';
 import type { RuleResult } from '../../types';
 import { WpsTablePanel } from '../../components/wps/WpsTablePanel';
-import { buildChainAttribution, hasNeedsReview } from '../../utils/practice-attribution';
+import { buildChainAttribution, hasNeedsReview, questionVerdict } from '../../utils/practice-attribution';
 import { friendlyRuleMessage } from '../../utils/rule-message';
 
 const { Text, Title, Paragraph } = Typography;
@@ -329,9 +329,16 @@ export function PracticeDoing() {
                     </Tag>
                     <Tag>{typeLabels[d.type] || d.type}</Tag>
                     <Text>{d.score} / {d.maxScore} 分</Text>
-                    <Tag color={d.isCorrect ? 'success' : 'error'}>
-                      {d.isCorrect ? '正确' : '错误'}
-                    </Tag>
+                    {/* 题级结论与规则级同口径（questionVerdict）：needsReview 规则的 passed 也是 false，
+                        只按 isCorrect 会把「系统判不了」标成「错误」，与下方规则明细自相矛盾 */}
+                    {(() => {
+                      const v = questionVerdict(d);
+                      return (
+                        <Tag color={v === 'correct' ? 'success' : v === 'needs_review' ? 'warning' : 'error'}>
+                          {v === 'correct' ? '正确' : v === 'needs_review' ? '待复核' : '错误'}
+                        </Tag>
+                      );
+                    })()}
                     {renderStar(d.questionId)}
                   </Space>
                   <Text strong>{d.questionTitle}</Text>

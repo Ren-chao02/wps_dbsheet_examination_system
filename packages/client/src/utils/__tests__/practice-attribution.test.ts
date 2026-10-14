@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildChainAttribution } from '../practice-attribution';
+import { buildChainAttribution, questionVerdict } from '../practice-attribution';
 
 const detail = (title: string, errorMessages: string[]) => ({
   questionTitle: title,
@@ -34,5 +34,34 @@ describe('buildChainAttribution', () => {
 
   it('无缺表信息 → 空数组（不编造原因）', () => {
     expect(buildChainAttribution([detail('A', ['字段「姓名」格式不符']), detail('B', [])])).toEqual([]);
+  });
+});
+
+describe('questionVerdict', () => {
+  const verdict = (isCorrect: boolean, rules: Array<{ passed: boolean; needsReview?: boolean }>) =>
+    questionVerdict({ questionTitle: 'T', isCorrect, ruleResults: rules });
+
+  it('规则全过 → correct', () => {
+    expect(verdict(true, [{ passed: true }, { passed: true }])).toBe('correct');
+  });
+
+  it('纯 needsReview 失败（passed=false 全因无法自动判定）→ needs_review，不能标「错误」', () => {
+    // 复刻判分服务对 check_view_filter 这类规则的产出：passed=false + needsReview=true
+    expect(verdict(false, [{ passed: true }, { passed: false, needsReview: true }])).toBe('needs_review');
+  });
+
+  it('确实做错（passed=false 且 needsReview=false）→ incorrect', () => {
+    expect(verdict(false, [{ passed: false, needsReview: false }, { passed: true }])).toBe('incorrect');
+  });
+
+  it('混合（既有做错又有待复核）→ needs_review：题级结论待定，做错的部分由规则明细逐条标出', () => {
+    expect(verdict(false, [
+      { passed: false, needsReview: false },
+      { passed: false, needsReview: true },
+    ])).toBe('needs_review');
+  });
+
+  it('无规则兜底题（ruleResults 空、isCorrect=false）→ incorrect', () => {
+    expect(verdict(false, [])).toBe('incorrect');
   });
 });

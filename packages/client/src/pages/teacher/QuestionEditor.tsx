@@ -151,6 +151,9 @@ export function QuestionEditor() {
           primaryCategoryId: q.primaryCategoryId,
           secondaryCategoryId: q.secondaryCategoryId,
           teacherName: q.teacherName,
+          // 场景链：编辑已有题时预填（null 落在空的 Input / InputNumber 上 = 未填）
+          scenario: q.scenario ?? null,
+          scenarioOrder: q.scenarioOrder ?? null,
         });
         const savedRules = q.answerRules || [];
         setRules(savedRules);
@@ -367,11 +370,24 @@ export function QuestionEditor() {
       message.error(objectiveError);
       return;
     }
+    // 场景链两字段从 form store 全量读（getFieldsValue(true)）而不是 onFinish 的 values：
+    // 客观题会把「前置契约」卡片整块卸载，未挂载字段的值不在 values 里，而预填值在 store 里一直都在。
+    // 服务端语义 = 显式 null 清空 / 键缺席不动，所以空输入必须归一化成 null 显式回传
+    // （回空串会在库里留下「名为空字符串的场景」，学生端场景卡会多出一张无名卡）
+    const allValues = form.getFieldsValue(true);
+    const scenarioRaw = allValues.scenario;
+    const scenario = typeof scenarioRaw === 'string' && scenarioRaw.trim() ? scenarioRaw.trim() : null;
+    const scenarioOrder = typeof allValues.scenarioOrder === 'number' && Number.isInteger(allValues.scenarioOrder)
+      ? allValues.scenarioOrder
+      : null;
     setSaving(true);
     try {
       const payload = {
         ...values,
         type,
+        // 场景链：同场景的题按序号在练习「场景实战」里成链出给学生；null = 清空（移出场景链）
+        scenario,
+        scenarioOrder,
         // 客观题不带判分规则（判分规则编辑器只对实操题出现）；实操题不带客观题答案
         answerRules: objective ? [] : rules,
         // 知识点打标：抽题组卷按它做同知识点等值替换，不打标就无法被抽中
@@ -726,6 +742,30 @@ export function QuestionEditor() {
                   />
                 </Col>
               </Row>
+
+              {/* 场景链：同场景的题按序号在练习「场景实战」里成链出给学生（练习只收实操题）。
+                  与 requires/creates 同属"这条题属于哪条链"的元数据，故与它们同卡；
+                  留空 = 不属于任何场景。没有这个录入点，「教师可在题库页改场景」就是句空话 */}
+              <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12, marginBottom: 12 }}>
+                <div style={{ marginBottom: 4 }}>
+                  场景链
+                  <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                    同一场景的题会按序号在练习的「场景实战」里成链出给学生；题库列表的「场景」标签可直接核对结果。
+                  </Typography.Text>
+                </div>
+                <Row gutter={16}>
+                  <Col span={16}>
+                    <Form.Item name="scenario" label="场景名" style={{ marginBottom: 0 }}>
+                      <Input placeholder="如：员工信息表；留空 = 不属于任何场景" maxLength={128} allowClear />
+                    </Form.Item>
+                  </Col>
+                  <Col span={8}>
+                    <Form.Item name="scenarioOrder" label="序号" style={{ marginBottom: 0 }}>
+                      <InputNumber min={1} precision={0} style={{ width: '100%' }} placeholder="场景内第几步" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              </div>
 
               <div style={{ marginBottom: 12 }}>
                 <div style={{ marginBottom: 4 }}>本题将产出（推导产物，只读）</div>
