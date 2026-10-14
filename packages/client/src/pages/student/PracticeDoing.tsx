@@ -10,6 +10,8 @@ import {
 import { practiceApi } from '../../services/api';
 import type { RuleResult } from '../../types';
 import { WpsTablePanel } from '../../components/wps/WpsTablePanel';
+import { buildChainAttribution, hasNeedsReview } from '../../utils/practice-attribution';
+import { friendlyRuleMessage } from '../../utils/rule-message';
 
 const { Text, Title, Paragraph } = Typography;
 
@@ -266,6 +268,26 @@ export function PracticeDoing() {
           ]}
         />
 
+        {/* 链级归因：多题因同一张表缺失失败时，把"一个原因连累多题"折叠成一条，
+            放在分数横幅正下方，先于逐题红叉解释原因 */}
+        {(() => {
+          const chain = buildChainAttribution(result.details ?? []);
+          if (chain.length === 0) return null;
+          return (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="这些题是被同一个原因连累的"
+              description={chain.map(c => (
+                <div key={c.missingTable}>
+                  你的表格里没有「{c.missingTable}」这张表，第 {c.failedSteps.join('、')} 步都因此无法判定。先把它建出来，再重做这几步。
+                </div>
+              ))}
+            />
+          );
+        })()}
+
         <Card
           title="判分明细"
           style={{ marginTop: 16 }}
@@ -307,7 +329,15 @@ export function PracticeDoing() {
                         <List.Item>
                           <Space direction="vertical" size={2} style={{ width: '100%' }}>
                             <Space>
-                              <Tag color={r.passed ? 'success' : 'error'}>{r.passed ? '✓' : '✗'}</Tag>
+                              {/* needsReview 优先于 passed 判定：这类规则拿不到数据、引擎拒绝硬判（passed 也是 false），
+                                  显示成「错误」会让学生把系统原因当成自己做错 */}
+                              {hasNeedsReview([r]) ? (
+                                <Tag color="warning">待人工复核</Tag>
+                              ) : r.passed ? (
+                                <Tag color="success">正确</Tag>
+                              ) : (
+                                <Tag color="error">错误</Tag>
+                              )}
                               <Text type="secondary" style={{ fontSize: 12 }}>规则 {ri + 1}: {r.action}</Text>
                               {r.score > 0 && <Text type="secondary" style={{ fontSize: 12 }}>+{r.score}</Text>}
                             </Space>
@@ -317,7 +347,9 @@ export function PracticeDoing() {
                               </Text>
                             )}
                             {r.errorMessage && (
-                              <Text type="danger" style={{ fontSize: 12 }}>{r.errorMessage}</Text>
+                              // 走 friendlyRuleMessage 统一翻译（「未找到表「X」」→ 学生能懂的话），
+                              // 不在这里另写一套正则——缺表识别只有 rule-message.ts 一处
+                              <Text type="danger" style={{ fontSize: 12 }}>{friendlyRuleMessage(r.errorMessage)}</Text>
                             )}
                           </Space>
                         </List.Item>
