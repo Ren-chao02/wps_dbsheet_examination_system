@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { buildBackfillPlan } from '../question-refs-backfill';
 
-const Q = (id: string, title: string, answerRules: any[]) => ({ id, title, answerRules });
+// description 必须透传：推导器判 check_table_exists 是"真建表 vs 前置检查"要看题面（标题+描述）。
+// 现有夹具的标题本就含「创建 + 表名」，故断言不变。
+const Q = (id: string, title: string, answerRules: any[], description?: string | null) => ({ id, title, answerRules, description });
 
 describe('buildBackfillPlan', () => {
   it('能推导的题：契约 + 场景 + 顺序一起填好，不进人工清单', () => {

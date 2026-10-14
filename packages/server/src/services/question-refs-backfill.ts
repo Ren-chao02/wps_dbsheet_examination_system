@@ -9,6 +9,8 @@ import type { AnswerRule } from '../engine/rule-engine';
 export interface BackfillInput {
   id: string;
   title: string;
+  /** 描述：推导器判"真建表 vs 前置检查"要用（见 prerequisite-deriver 的 hasCreationIntent） */
+  description?: string | null;
   /** 直接来自 Prisma 的 Json 列，可能是任意脏数据 */
   answerRules: unknown;
 }
@@ -43,7 +45,8 @@ export function buildBackfillPlan(questions: BackfillInput[]): BackfillPlan {
   const derived = new Map<string, DeriveResult>();
   for (const q of questions) {
     try {
-      derived.set(q.id, derivePrerequisites(asRules(q.answerRules)));
+      // 题面一起传进去：check_table_exists 是不是"真建表"要看题面语义
+      derived.set(q.id, derivePrerequisites(asRules(q.answerRules), { title: q.title, description: q.description }));
     } catch {
       // 脏规则（不是数组 / 结构异常）不该让整批回填失败
       derived.set(q.id, { refs: emptyRefs(), unresolved: ['(规则解析失败)'] });
