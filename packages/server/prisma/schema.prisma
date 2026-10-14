@@ -263,12 +263,18 @@ model Question {
   createdAt       DateTime       @default(now()) @map("created_at")
   updatedAt       DateTime       @updatedAt @map("updated_at")
 
+  /// 归属院系（数据范围 P2）：为空 = 校级资源（存量兼容）；有值 = 该院系资产
+  departmentId   String? @map("department_id")
+  /// 显式上架到校级共享池（全校教师可读、可复制；改/删仍归创建者）
+  sharedToSchool Boolean @default(false) @map("shared_to_school")
+
   // ✅ 新增关联关系：两级分类
   primaryCategory   QuestionCategory? @relation("QuestionPrimaryCategory", fields: [primaryCategoryId], references: [id])
   secondaryCategory QuestionCategory? @relation("QuestionSecondaryCategory", fields: [secondaryCategoryId], references: [id])
 
   // 保留现有关联（不变）
   creator              User?                 @relation("QuestionCreator", fields: [createdBy], references: [id])
+  department           Department?           @relation(fields: [departmentId], references: [id])
   examQuestions        ExamQuestion[]
   submissionDetails    SubmissionDetail[]
   paperQuestions       PaperQuestion[]
@@ -280,6 +286,7 @@ model Question {
   @@index([status, primaryCategoryId])
   @@index([status, secondaryCategoryId])
   @@index([status, difficulty])
+  @@index([departmentId])
   @@map("questions")
 }
 
@@ -295,11 +302,18 @@ model Paper {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
+  /// 归属院系（数据范围 P2）：为空 = 校级资源（存量兼容）；有值 = 该院系资产
+  departmentId   String? @map("department_id")
+  /// 显式上架到校级共享池（全校教师可读、可复制；改/删仍归创建者）
+  sharedToSchool Boolean @default(false) @map("shared_to_school")
+
   creator         User?            @relation("PaperCreator", fields: [createdBy], references: [id])
+  department      Department?      @relation(fields: [departmentId], references: [id])
   paperQuestions  PaperQuestion[]
   exams           Exam[]
   practiceRecords PracticeRecord[]
 
+  @@index([departmentId])
   @@map("papers")
 }
 
@@ -343,11 +357,15 @@ model Exam {
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")
 
+  /// 归属院系（数据范围 P2）：为空 = 校级资源（存量兼容）；有值 = 该院系资产
+  departmentId String? @map("department_id")
+
   paperId String? @map("paper_id") @db.Uuid
   batchId String? @map("batch_id") @db.Uuid // 关联批次
 
   // Relations
   creator          User?                    @relation("ExamCreator", fields: [createdBy], references: [id])
+  department       Department?              @relation(fields: [departmentId], references: [id])
   paper            Paper?                   @relation(fields: [paperId], references: [id])
   batch            ExamBatch?               @relation(fields: [batchId], references: [id]) // 批次关联
   examQuestions    ExamQuestion[]
@@ -362,6 +380,7 @@ model Exam {
   @@index([batchId])
   @@index([status, endTime])
   @@index([status, startTime])
+  @@index([departmentId])
   @@map("exams")
 }
 
@@ -638,6 +657,9 @@ model Department {
   majors     Major[]
   classRooms ClassRoom[]
   users      User[]
+  exams      Exam[]
+  papers     Paper[]
+  questions  Question[]
 }
 
 model Major {
