@@ -18,13 +18,19 @@ describe('buildRequirementHint', () => {
     );
   });
 
-  it('多表：表名用顿号连接，字段按表分组', () => {
+  it('多表：表名相邻列出（各带引号，无需顿号），字段按表分组', () => {
     const hint = buildRequirementHint({
       tables: ['任务表', '项目表'],
       fields: [{ table: '任务表', field: '所属项目' }],
     });
     expect(hint).toBe(
       '本题需要「任务表」「项目表」（任务表含字段：所属项目）。若你的表格里还没有它们，请先在左侧新建这些表并建好对应字段，再完成题目要求。',
+    );
+  });
+
+  it('tables 为空但视图非空 → 从视图的宿主表反推表名，文案不留空指代', () => {
+    expect(buildRequirementHint({ views: [{ table: '员工信息表', view: '员工总览' }] })).toBe(
+      '本题需要「员工信息表」；另需要视图「员工总览」。若你的表格里还没有它，请先在左侧新建这张表，再完成题目要求。',
     );
   });
 
