@@ -16,15 +16,22 @@ export interface StudentRequires {
 }
 
 export function buildRequirementHint(requires?: StudentRequires | null): string | null {
-  const tables = requires?.tables ?? [];
   const fields = requires?.fields ?? [];
   const views = requires?.views ?? [];
+  // tables 可能为空而 fields/views 非空：视图的宿主表若恰好由本题自己创建，会被服务端
+  // 从 requires.tables 里剔除。这时从 fields/views 反推表名，避免文案出现"以下结构"
+  // 这种没有指代对象的说法——这段话是在告诉学生该建什么，不能含糊。
+  const tables = requires?.tables?.length
+    ? requires.tables
+    : [...new Set([...fields.map(f => f.table), ...views.map(v => v.table)])];
   if (tables.length === 0 && fields.length === 0 && views.length === 0) return null;
 
   const quoted = tables.map(t => `「${t}」`).join('');
   const multi = tables.length > 1;
 
-  // 字段按表分组展示：同一张表的字段跟上表名
+  // 字段按表分组展示：同一张表的字段跟上表名。
+  // 前提不变式：字段的 table 必在 tables 里（服务端推导器每条字段规则都同步推表），
+  // 否则这里会把字段挂到一张没被列出的表名下，文案自相矛盾。
   const fieldGroups = new Map<string, string[]>();
   for (const f of fields) {
     if (!fieldGroups.has(f.table)) fieldGroups.set(f.table, []);
@@ -42,5 +49,5 @@ export function buildRequirementHint(requires?: StudentRequires | null): string 
     ? '若你的表格里还没有它们，请先在左侧新建这些表并建好对应字段，再完成题目要求。'
     : '若你的表格里还没有它，请先在左侧新建这张表' + (fieldGroups.size > 0 ? '并建好这些字段' : '') + '，再完成题目要求。';
 
-  return `${tables.length > 0 ? `本题需要${quoted}` : '本题需要以下结构'}${fieldText}${viewText}。${createHint}`;
+  return `本题需要${quoted}${fieldText}${viewText}。${createHint}`;
 }
