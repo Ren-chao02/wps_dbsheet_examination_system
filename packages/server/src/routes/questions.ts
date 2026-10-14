@@ -74,6 +74,11 @@ const questionSchema = z.object({
     tables: z.array(z.string()).optional(),
     fields: z.array(z.string()).optional(),
   }).nullable().optional(),
+  /** 场景链：同一 scenario 的题按 scenarioOrder 顺序出给学生（练习「场景实战」）。
+   *  不声明这两个字段的话 zod 会 strip——「教师可在题库页改」就是句空话：
+   *  待人工确认的题永远进不了链、链名（学生会看到）改不了、新题静默落在所有链外 */
+  scenario: z.string().max(128).nullable().optional(),
+  scenarioOrder: z.number().int().nullable().optional(),
   hints: z.string().optional(),
   tags: z.array(z.string()).default([]),
 });
@@ -300,6 +305,10 @@ questionRouter.post('/', authorize('teacher', 'admin'), async (req: Request, res
         type: data.type || 'comprehensive',
         objectiveAnswer: toJsonInput(data.objectiveAnswer),
         schemaRefs: toJsonInput(data.schemaRefs),
+        // 场景链：显式传 null 才清空；字段缺席时不写值（Prisma 视为不动 → 建新题走列默认 null）。
+        // 这里跟 PUT 保持同一写法（undefined=不动，null=显式清空），与 toJsonInput 对 JSON 列的既有语义一致
+        scenario: 'scenario' in data ? data.scenario : undefined,
+        scenarioOrder: 'scenarioOrder' in data ? data.scenarioOrder : undefined,
         createdBy: req.user!.userId,
         departmentId: req.user!.departmentId ?? null, // P2：默认归属创建者院系；无院系 = 校级
         // 如果未提供teacherName，使用当前用户姓名
@@ -373,6 +382,11 @@ questionRouter.put('/:id', authorize('teacher', 'admin'), async (req: Request, r
         type: nextType,
         objectiveAnswer: toJsonInput(data.objectiveAnswer),
         schemaRefs: toJsonInput(data.schemaRefs),
+        // 场景链：显式回传 null 才清空（拆链/移出链）；字段缺席时保持库中原值不动。
+        // 不能写成 `?? null`：旧版编辑器不回传这两个字段，那会把「没回传」也变成清空——
+        // 教师每次编辑保存都会把题静默摘出场景链（学生端链名/顺序随之变化，且没有任何报错）
+        scenario: 'scenario' in data ? data.scenario : undefined,
+        scenarioOrder: 'scenarioOrder' in data ? data.scenarioOrder : undefined,
         ...(answerChanged ? { version: { increment: 1 } } : {}),
         updatedBy: req.user?.realName || undefined,
       },

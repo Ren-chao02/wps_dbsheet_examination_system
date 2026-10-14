@@ -273,8 +273,14 @@ practiceRouter.post('/start', async (req: Request, res: Response) => {
       if (pool.length > SCENARIO_MAX_QUESTIONS) {
         return res.status(400).json({ message: `该场景题目过多（${pool.length} 题，上限 ${SCENARIO_MAX_QUESTIONS}），请联系教师拆分场景` });
       }
-      // 教学顺序：严格按 scenarioOrder；没填序号的（不应出现，回填脚本保证）排最后
-      selected = [...pool].sort((a, b) => (a.scenarioOrder ?? 9999) - (b.scenarioOrder ?? 9999));
+      // 教学顺序：严格按 scenarioOrder；序号撞车（教师可在题库页改序号，撞车不再是不可能）时
+      // 按 id 码点序兜底，保证同一份链每次开练顺序一致。不用 localeCompare——比较结果会随
+      // 服务器语言环境漂移；没填序号的（回填脚本理论上不该留空）排最后
+      selected = [...pool].sort(
+        (a, b) =>
+          (a.scenarioOrder ?? 9999) - (b.scenarioOrder ?? 9999) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
     } else if (requestedIds) {
       if (pool.length !== requestedIds.length) {
         // 可能是"不存在/已下线"，也可能是"选中了客观题"（练习不支持）
@@ -373,7 +379,8 @@ practiceRouter.post('/start', async (req: Request, res: Response) => {
 });
 
 /** 快照落库形状：questionId/score/sortOrder 是老字段，scenarioKey/requires/creates 是场景链后加的。
- *  全部按可选处理——老记录可能缺 sortOrder，用数组下标兜底。 */
+ *  全部按可选处理——老记录可能缺 sortOrder，用数组下标兜底。
+ *  ⚠️ requires/creates 只允许存在于 DB 快照（内部数据），恢复接口回发时必须裁掉，见 hydrateQuestionSnapshots。 */
 type PracticeSnapshotEntry = Partial<PracticeQuestionSnapshot> & {
   questionId: string;
   scenarioKey?: string;
@@ -405,9 +412,16 @@ async function hydrateQuestionSnapshots(raw: unknown) {
     .map((s, i) => {
       const q = byId.get(s.questionId);
       return {
-        // 快照元数据优先：分值与顺序按开练时冻结的口径；场景链/契约字段（scenarioKey 等）跟着带出
-        ...s,
+        // 安全不变式：逐字段挑选回发，绝不 `...s` 整体回发——快照里还冻结着 requires/creates
+        //（本题前置契约与预期产物声明），其中 creates 属答案信息（"这题该产出哪些表/字段/视图"），
+        // 下发学生等于提前泄题。考试侧 toStudentQuestion（my-exams.ts）已按同一口径裁剪
+        //（只发 requires 不发 creates），恢复接口从这里对齐；DB 里的快照照旧保留契约字段（内部数据）。
+        questionId: s.questionId,
+        score: s.score,
+        // 分值与顺序按开练时冻结的口径；老记录可能缺 sortOrder，用数组下标兜底
         sortOrder: s.sortOrder ?? i,
+        // 场景链续做标注：仅场景开练的记录带（自由练习/老记录没有该字段，前端据此容错）
+        ...(s.scenarioKey ? { scenarioKey: s.scenarioKey } : {}),
         ...(q
           ? { title: q.title, description: q.description, type: q.type, difficulty: q.difficulty, hints: q.hints }
           : { title: '（题目已从题库删除）' }),
