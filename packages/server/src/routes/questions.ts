@@ -5,6 +5,9 @@ import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { skeletonGenerator } from '../engine/skeleton-generator';
 import { answerReverser } from '../engine/answer-reverser';
+import { derivePrerequisites } from '../engine/prerequisite-deriver';
+// 类型 import：推导接口只把规则原样喂给纯函数推导器，不触碰 rule-engine 的任何处理器（判分逻辑零改动）
+import type { AnswerRule } from '../engine/rule-engine';
 import { wpsConfigService } from '../services/wps-config-service';
 import { scopeCtxOf, questionWhere, assertQuestionRead, denyAccess } from '../services/data-scope';
 
@@ -434,6 +437,32 @@ questionRouter.post('/skeleton', authorize('teacher', 'admin'), async (req: Requ
     console.error('Error generating skeleton:', err);
     res.status(500).json({ message: '生成题目骨架失败', detail: err.message });
   }
+});
+
+/**
+ * POST /api/questions/derive-refs
+ * 从判分规则反推前置契约（requires/creates），供出题页「自动推导」按钮使用。
+ * 纯函数、不查库不联网；推不出来的 action 在 unresolved 里点名，交人工处理。
+ */
+const deriveRefsSchema = z.object({
+  rules: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        action: z.string().min(1, 'action 不能为空'),
+        params: z.record(z.any()).default({}),
+        score: z.number().optional(),
+      }),
+    )
+    .min(1, '至少一条规则'),
+});
+
+questionRouter.post('/derive-refs', authorize('teacher', 'admin'), async (req: Request, res: Response) => {
+  const parsed = deriveRefsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: '参数错误', errors: parsed.error.flatten() });
+  }
+  res.json(derivePrerequisites(parsed.data.rules as AnswerRule[]));
 });
 
 /**
