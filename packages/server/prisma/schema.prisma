@@ -251,6 +251,10 @@ model Question {
   /// 抽题时用于「同题位候选题必须引用同一份结构」的等值校验——
   /// 否则学生打开自己的表格会找不到题目里说的那张表
   schemaRefs      Json?          @map("schema_refs")
+  /// 场景链（练习「场景实战」）：同一 scenario 的题按 scenarioOrder 顺序出给学生。
+  /// 初始由 scripts/backfill-question-refs.ts 从判分规则推导，教师可在题库页改。
+  scenario       String? @db.VarChar(128)
+  scenarioOrder  Int?    @map("scenario_order")
   /// 版本号：规则/答案变更时自增，判分快照 gradedWith 会记录它
   version         Int            @default(1)
   hints           String?        @db.Text
@@ -287,6 +291,7 @@ model Question {
   @@index([status, secondaryCategoryId])
   @@index([status, difficulty])
   @@index([departmentId])
+  @@index([scenario, scenarioOrder])
   @@map("questions")
 }
 
