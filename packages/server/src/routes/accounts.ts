@@ -147,6 +147,7 @@ const createAccountSchema = z.object({
   gender: z.enum(['MALE', 'FEMALE', 'UNSET']).optional().nullable(),
   remark: z.string().max(512).optional().nullable(),
   systemRoleId: z.string().uuid().optional().nullable(),
+  departmentId: z.string().uuid().optional().nullable(), // P2：教师归属院系（管理员/校长任命两级管理的基础）
 });
 
 accountRouter.post('/', async (req: Request, res: Response) => {
@@ -163,6 +164,15 @@ accountRouter.post('/', async (req: Request, res: Response) => {
       const role = await prisma.systemRole.findUnique({ where: { id: data.systemRoleId } });
       if (!role) {
         return res.status(400).json({ message: '角色不存在' });
+      }
+    }
+
+    // 院系非空时必须存在：否则会留下指向不存在院系的账号，
+    // 后续按院系收口数据范围时这类账号谁都看不到（写库前拦截）
+    if (data.departmentId) {
+      const department = await prisma.department.findUnique({ where: { id: data.departmentId } });
+      if (!department) {
+        return res.status(400).json({ message: '院系不存在' });
       }
     }
 
@@ -185,6 +195,7 @@ accountRouter.post('/', async (req: Request, res: Response) => {
         gender: data.gender || null,
         remark: data.remark || null,
         systemRoleId,
+        departmentId: data.departmentId ?? null,
       },
       select: {
         id: true,
@@ -195,6 +206,7 @@ accountRouter.post('/', async (req: Request, res: Response) => {
         gender: true,
         remark: true,
         systemRoleId: true,
+        departmentId: true,
         systemRole: { select: { roleCode: true, roleName: true } },
         accountStatus: true,
         createdAt: true,
@@ -221,6 +233,7 @@ const updateAccountSchema = z.object({
   remark: z.string().max(512).optional().nullable(),
   systemRoleId: z.string().uuid().optional().nullable(),
   accountStatus: z.enum(['ENABLED', 'DISABLED']).optional(),
+  departmentId: z.string().uuid().optional().nullable(), // P2：教师归属院系（管理员/校长任命两级管理的基础）
 });
 
 accountRouter.put('/:id', async (req: Request, res: Response) => {
@@ -240,6 +253,15 @@ accountRouter.put('/:id', async (req: Request, res: Response) => {
       }
     }
 
+    // departmentId 非空才校验存在（null 表示清空归属，无需查库）；
+    // 未提供（undefined）时不碰该字段，避免把已有归属改没
+    if (data.departmentId) {
+      const department = await prisma.department.findUnique({ where: { id: data.departmentId } });
+      if (!department) {
+        return res.status(400).json({ message: '院系不存在' });
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data: {
@@ -251,6 +273,7 @@ accountRouter.put('/:id', async (req: Request, res: Response) => {
         ...(data.remark !== undefined && { remark: data.remark }),
         ...(data.systemRoleId !== undefined && { systemRoleId: data.systemRoleId }),
         ...(data.accountStatus !== undefined && { accountStatus: data.accountStatus }),
+        ...(data.departmentId !== undefined && { departmentId: data.departmentId }),
       },
       select: {
         id: true,
@@ -261,6 +284,7 @@ accountRouter.put('/:id', async (req: Request, res: Response) => {
         gender: true,
         remark: true,
         systemRoleId: true,
+        departmentId: true,
         systemRole: { select: { roleCode: true, roleName: true } },
         accountStatus: true,
         lastLoginAt: true,
