@@ -60,6 +60,23 @@ function capsSignature(caps?: string[]): string {
   return [...(caps ?? [])].sort().join('|');
 }
 
+/**
+ * 归一化「引用结构声明」——承重不变式，别在这里"简化"。
+ *
+ * 1. 空（两串都空 / 全空标签 / 未声明）必须归一成 `null` 而不是 `{ tables: [], fields: [] }`：
+ *    空对象是「真值」，会被 slotsFromItems 原样发出，服务端 schemaRefsSignature 会把它算成
+ *    `"T:#F:"`（非空签名）——于是候选题一个都匹配不上，教师看到的是"声明了但抽不出题"。
+ *    留空与不校验必须是同一个语义。
+ * 2. 标签 trim + 去重：表名/字段名在服务端是逐字比对，多一个空格或重复项就让等值校验落空。
+ * 3. 返回值里的 tables/fields 一律是 string[]（输入可能带 undefined 或空数组）。
+ */
+export function normalizeSchemaRefs(refs?: SchemaRefs | null): SchemaRefs | null {
+  const clean = (v?: string[]) => Array.from(new Set((v ?? []).map(s => String(s).trim()).filter(Boolean)));
+  const tables = clean(refs?.tables);
+  const fields = clean(refs?.fields);
+  return tables.length || fields.length ? { tables, fields } : null;
+}
+
 /** 规则的主体条件是否同组（不含难度）：题型 + 知识点 + 每题分值 + 引用声明 */
 function sameRuleGroup(a: RuleEditorItem, rule: SlotRule, score: number): boolean {
   return (

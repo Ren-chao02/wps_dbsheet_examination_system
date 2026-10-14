@@ -7,7 +7,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   itemsFromSlots, slotsFromItems, validateEditorItems, analyzeItems, difficultyBreakdown,
-  ruleItemTotal, type EditorItem, type RuleEditorItem,
+  ruleItemTotal, normalizeSchemaRefs,
+  type EditorItem, type RuleEditorItem,
 } from '../paperAssembly';
 import type { PaperQuestion, Question } from '../../types';
 
@@ -119,7 +120,7 @@ describe('slotsFromItems — 编辑行展开为题位', () => {
     ]);
   });
 
-  it('schemaRefs 透传保留（UI 不编辑但不能丢）', () => {
+  it('题位上已存的 schemaRefs 原样保留（打开旧卷不丢声明）', () => {
     const slots = [
       ruleSlot(10, 0, { capabilityIds: [], type: 'comprehensive', difficulty: 'easy', schemaRefs: { tables: ['员工信息表'] } }),
     ];
@@ -157,6 +158,31 @@ describe('slotsFromItems — 编辑行展开为题位', () => {
     expect(items).toHaveLength(3);
     expect((items[0] as RuleEditorItem).schemaRefs).toEqual({ tables: ['员工信息表'] });
     expect((items[0] as RuleEditorItem).counts.easy).toBe(1);
+  });
+});
+
+describe('normalizeSchemaRefs — 引用结构声明的归一化', () => {
+  it('空输入一律归一成 null（不是空对象）', () => {
+    // 空对象会被原样发出，服务端算出的签名是 "T:#F:"（非空）→ 候选题全被筛掉。
+    // 「留空 = 不校验」必须与 null 是同一个语义
+    expect(normalizeSchemaRefs({})).toBeNull();
+    expect(normalizeSchemaRefs({ tables: [], fields: [] })).toBeNull();
+    expect(normalizeSchemaRefs({ tables: ['  ', ''] })).toBeNull();
+    expect(normalizeSchemaRefs(null)).toBeNull();
+    expect(normalizeSchemaRefs(undefined)).toBeNull();
+  });
+
+  it('标签 trim + 去重（逐字比对，空格/重复会让等值校验落空）', () => {
+    expect(normalizeSchemaRefs({ tables: [' 员工信息表 ', '员工信息表'], fields: [] }))
+      .toEqual({ tables: ['员工信息表'], fields: [] });
+  });
+
+  it('返回值里的 tables/fields 都是 string[]（输入可能带 undefined）', () => {
+    const refs = normalizeSchemaRefs({ tables: ['员工信息表'] });
+    expect(Array.isArray(refs?.tables)).toBe(true);
+    expect(Array.isArray(refs?.fields)).toBe(true);
+    expect(refs?.fields).toEqual([]);
+    expect((refs?.tables ?? []).every(t => typeof t === 'string')).toBe(true);
   });
 });
 

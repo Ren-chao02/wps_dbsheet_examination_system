@@ -13,7 +13,7 @@ import { ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined, SearchOutlined } fr
 import api from '../../../services/api';
 import type { Capability, Difficulty, SchemaRefs } from '../../../types';
 import { QUESTION_TYPE_LABELS } from '../../../utils/questionLabels';
-import { DIFFICULTY_LABELS, ruleItemTotal, type RuleEditorItem } from '../../../utils/paperAssembly';
+import { DIFFICULTY_LABELS, normalizeSchemaRefs, ruleItemTotal, type RuleEditorItem } from '../../../utils/paperAssembly';
 
 const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard'];
 
@@ -45,6 +45,9 @@ export function RuleItemEditor({ item, index, capabilities, onPatch, onRemove, o
 
   useEffect(() => {
     const controller = new AbortController();
+    // 抽题条件/声明一变就先作废旧候选数：旧值是「上一份声明」的结果，
+    // 在 600ms 防抖 + 一次往返期间会显示成当前声明的结果（请求失败时更是永久留着）
+    setRefsCandidate(null);
     const timer = setTimeout(() => {
       setLoading(true);
       setFailed(false);
@@ -81,17 +84,16 @@ export function RuleItemEditor({ item, index, capabilities, onPatch, onRemove, o
   }, [item.key, item.ruleType, item.score, capsKey, refsKey]);
 
   /**
-   * 写回引用结构声明。两处讲究：
-   * 1. 标签先 trim + 去重：这些字符串与题目上存的表名/字段名逐字比对，多余空格会让等值校验全落空；
-   * 2. 两串都空 → 写 null 而不是 { tables: [], fields: [] }：后者是「真值」，
-   *    会被 slotsFromItems 原样发出、在服务端算出一个非空签名，反而把候选题全筛掉
-   *    （留空 = 不校验，语义必须是同一个）。
+   * 写回引用结构声明：只做「补丁合并」，归一化（空 → null / trim / 去重）在
+   * paperAssembly.normalizeSchemaRefs —— 那是纯函数、有测试，别在组件里重写一遍。
    */
   const writeSchemaRefs = (patch: Partial<SchemaRefs>) => {
-    const clean = (v?: string[]) => Array.from(new Set((v ?? []).map(s => s.trim()).filter(Boolean)));
-    const tables = clean(patch.tables ?? item.schemaRefs?.tables);
-    const fields = clean(patch.fields ?? item.schemaRefs?.fields);
-    onPatch(item.key, { schemaRefs: tables.length || fields.length ? { tables, fields } : null });
+    onPatch(item.key, {
+      schemaRefs: normalizeSchemaRefs({
+        tables: patch.tables ?? item.schemaRefs?.tables,
+        fields: patch.fields ?? item.schemaRefs?.fields,
+      }),
+    });
   };
 
   const selectedCaps = item.capabilityIds ?? [];
@@ -248,9 +250,14 @@ export function RuleItemEditor({ item, index, capabilities, onPatch, onRemove, o
                   已声明：{[...schemaTables, ...schemaFields].join('、')}
                 </div>
               )}
-              {schemaDeclared && refsCandidate && (
+              {schemaDeclared && refsCandidate && !failed && (
                 <div style={{ fontSize: 12, marginTop: 2, color: refsCandidate.count === 0 ? 'var(--apple-red)' : '#999' }}>
-                  {refsCandidate.warning ?? `按此声明可抽的候选题：${refsCandidate.count} 道`}
+                  {refsCandidate.count === 0
+                    // 后果必须说准：开考不会"抽不出题"，而是退到 relax-schemaRefs 静默抽一道
+                    // 引用结构不同的题（结构不一致的学生根本做不了），所以别把教师往
+                    // 能力点/难度/分值上引 —— 问题在他刚编辑的这份声明
+                    ? '按此声明没有候选题；开考时会放宽引用结构、可能抽到引用不同表/字段的题（结构不一致的学生做不了），请调整声明或改回留空。'
+                    : (refsCandidate.warning ?? `按此声明可抽的候选题：${refsCandidate.count} 道`)}
                 </div>
               )}
             </div>
