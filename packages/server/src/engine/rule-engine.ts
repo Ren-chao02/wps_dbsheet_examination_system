@@ -1679,6 +1679,28 @@ const ruleHandlers: Record<string, RuleHandler> = {
 };
 
 // ============================================================
+// 规则支持面（出题/组卷侧读取，不参与判分）
+// 只读 ruleHandlers 的 key：新增处理器时支持面自动跟着变，不会两处维护漂移。
+// ============================================================
+
+/** 引擎支持的全部规则 action（出题/组卷侧判定"这题能不能自动判"） */
+export function getSupportedActions(): string[] {
+  return Object.keys(ruleHandlers);
+}
+
+/**
+ * 这题的规则里有哪些引擎不认识的 action。
+ * 空数组 = 全部可自动判（含"压根没有规则"的情况——那属于另一个问题，这里不碰）。
+ */
+export function unsupportedRuleActions(rules: unknown): string[] {
+  if (!Array.isArray(rules)) return [];
+  const supported = new Set(Object.keys(ruleHandlers));
+  return [...new Set(
+    rules.map(r => String((r as any)?.action ?? '')).filter(a => a && !supported.has(a)),
+  )];
+}
+
+// ============================================================
 // 核心函数
 // ============================================================
 
