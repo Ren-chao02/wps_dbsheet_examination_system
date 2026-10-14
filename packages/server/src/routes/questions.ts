@@ -445,6 +445,9 @@ questionRouter.post('/skeleton', authorize('teacher', 'admin'), async (req: Requ
  * 纯函数、不查库不联网；推不出来的 action 在 unresolved 里点名，交人工处理。
  */
 const deriveRefsSchema = z.object({
+  // 题面随规则一起传：check_table_exists 是"真建表"还是"前置检查"要靠题面判
+  title: z.string().optional(),
+  description: z.string().optional(),
   rules: z
     .array(
       z.object({
@@ -462,7 +465,8 @@ questionRouter.post('/derive-refs', authorize('teacher', 'admin'), async (req: R
   if (!parsed.success) {
     return res.status(400).json({ message: '参数错误', errors: parsed.error.flatten() });
   }
-  res.json(derivePrerequisites(parsed.data.rules as AnswerRule[]));
+  const { title, description, rules } = parsed.data;
+  res.json(derivePrerequisites(rules as AnswerRule[], { title, description }));
 });
 
 /**

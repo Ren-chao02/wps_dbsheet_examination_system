@@ -70,4 +70,38 @@ describe('POST /api/questions/derive-refs', () => {
       .send({ rules: [] });
     expect(res.status).toBe(400);
   });
+
+  it('题面带创建语义且点名了表 → check_table_exists 落 creates', async () => {
+    const res = await request(app)
+      .post('/api/questions/derive-refs')
+      .set('x-test-role', 'teacher')
+      .send({
+        // 表名只出现在 description 里：这条同时证明 description 被透传给了推导器
+        title: '创建单向关联字段连接两个数据表',
+        description: "创建两个数据表：'项目表'和'任务表'。",
+        rules: [
+          { id: 'r1', action: 'check_table_exists', params: { tableName: '项目表' }, score: 50 },
+          { id: 'r2', action: 'check_table_exists', params: { tableName: '任务表' }, score: 50 },
+        ],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.refs.creates.tables).toEqual(['任务表', '项目表']);   // 码点序：任 U+4EFB < 项 U+9879
+    expect(res.body.refs.requires.tables).toEqual([]);
+  });
+
+  it('题面没有创建语义（前置检查）→ check_table_exists 落 requires', async () => {
+    const res = await request(app)
+      .post('/api/questions/derive-refs')
+      .set('x-test-role', 'teacher')
+      .send({
+        title: '设置关联字段允许多条记录关联',
+        rules: [
+          { id: 'r1', action: 'check_table_exists', params: { tableName: '任务表' }, score: 50 },
+          { id: 'r2', action: 'check_table_exists', params: { tableName: '员工信息表' }, score: 50 },
+        ],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.refs.creates.tables).toEqual([]);
+    expect(res.body.refs.requires.tables).toEqual(['任务表', '员工信息表']);   // 码点序：任 U+4EFB < 员 U+5458
+  });
 });
