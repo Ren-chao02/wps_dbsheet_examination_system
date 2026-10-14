@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Card, Select, InputNumber, Button, Alert, Spin, Typography, Space, Row, Col, Tag, message,
+  Card, Select, InputNumber, Button, Alert, Spin, Typography, Space, Row, Col, Tag, Modal, message,
 } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 import { practiceApi } from '../../services/api';
@@ -36,6 +36,9 @@ interface ScenarioSummary {
   running?: { recordId: string; startedAt: string };
   latest?: { recordId: string; score: number; maxScore: number; passed: boolean; submittedAt: string };
 }
+
+/** 与服务端 SCENARIO_MAX_QUESTIONS 一致：超限场景服务端直接 400，卡片必须先禁掉 */
+const MAX_SCENARIO_QUESTIONS = 50;
 
 const difficultyLabels: Record<string, { label: string; color: string }> = {
   easy: { label: '简单', color: 'success' },
@@ -96,6 +99,42 @@ export function PracticeList() {
     }
   };
 
+  const handleStartScenario = (key: string) => {
+    const running = scenarios.find(s => s.key === key)?.running;            // 本场景没做完的那条
+    const otherRunning = scenarios.find(s => s.key !== key && s.running);   // 别的场景在跑 → 会被中断
+
+    if (running) {
+      // 继续：走恢复路由，**不重新开练**（开练会 resetFile 清空表格、并删掉这条记录）。
+      // 注意：这条路径不经过 /start，因此不受题量上限影响——超限场景只要有进行中的记录仍可继续
+      Modal.confirm({
+        title: '继续上次的场景实战？',
+        content: '会回到你未完成的进度，表格内容保留。',
+        okText: '继续', cancelText: '取消',
+        onOk: () => navigate(`/student/practice/${running.recordId}`),
+      });
+      return;
+    }
+
+    // 同一个练习文件同一时刻只能有一条进行中的链：开新链必然清空表格
+    Modal.confirm({
+      title: '开始场景实战？',
+      content: otherRunning
+        ? `开始新的实战会清空当前表格，未完成的『${otherRunning.key}』将中断。`
+        : `会清空你练习表格里的全部内容，从『${key}』第 1 步开始。`,
+      okText: '开始', cancelText: '取消',
+      onOk: async () => {
+        try {
+          // start() 返回的已是响应体（services/api.ts 里统一 .then(r => r.data)）
+          const res = await practiceApi.start({ scenarioKey: key });
+          navigate(`/student/practice/${res.recordId}`, { state: res });
+        } catch (err: any) {
+          // 卡片数据可能过期（教师刚改动题库/场景），把服务端的拒绝原因原样告诉学生
+          message.error(err.response?.data?.message || '开练失败');
+        }
+      },
+    });
+  };
+
   if (loading) {
     return (
       <div style={{ padding: 60, textAlign: 'center' }}>
@@ -124,24 +163,36 @@ export function PracticeList() {
       {scenarios.length > 0 && (
         <Card title="场景实战（按顺序做完整条任务链）" style={{ marginTop: 16, marginBottom: 16 }}>
           <Row gutter={[12, 12]}>
-            {scenarios.map(s => (
-              <Col key={s.key} xs={24} sm={12} lg={8}>
-                {/* data-scenario 先埋好；「开练」的 onClick 与确认框在 Task 13 接上 */}
-                <Card size="small" hoverable data-scenario={s.key}>
-                  <div style={{ fontWeight: 600 }}>{s.name}</div>
-                  <div style={{ fontSize: 12, color: '#888', margin: '4px 0 8px' }}>
-                    共 {s.questionCount} 步 · 满分 {s.totalScore}
-                  </div>
-                  {s.running && <Tag color="processing">进行中，可继续</Tag>}
-                  {!s.running && s.latest && (
-                    <Tag color={s.latest.passed ? 'success' : 'default'}>
-                      已完成 {s.latest.score}/{s.latest.maxScore}
-                    </Tag>
-                  )}
-                  {!s.running && !s.latest && <Tag>未开始</Tag>}
-                </Card>
-              </Col>
-            ))}
+            {scenarios.map(s => {
+              const overLimit = s.questionCount > MAX_SCENARIO_QUESTIONS;
+              // 超限场景服务端会 400，卡片直接禁掉（别让学生点了才被拒）；
+              // 但已有进行中的记录例外——「继续」不走 /start，禁掉反而把学生的进度锁死
+              const blocked = overLimit && !s.running;
+              return (
+                <Col key={s.key} xs={24} sm={12} lg={8}>
+                  <Card
+                    size="small"
+                    hoverable={!blocked}
+                    data-scenario={s.key}
+                    onClick={blocked ? undefined : () => handleStartScenario(s.key)}
+                    style={blocked ? { opacity: 0.6, cursor: 'not-allowed' } : undefined}
+                  >
+                    <div style={{ fontWeight: 600 }}>{s.name}</div>
+                    <div style={{ fontSize: 12, color: '#888', margin: '4px 0 8px' }}>
+                      共 {s.questionCount} 步 · 满分 {s.totalScore}
+                    </div>
+                    {overLimit && <Tag color="error">题量超限，请联系教师拆分场景</Tag>}
+                    {s.running && <Tag color="processing">进行中，可继续</Tag>}
+                    {!s.running && s.latest && (
+                      <Tag color={s.latest.passed ? 'success' : 'default'}>
+                        已完成 {s.latest.score}/{s.latest.maxScore}
+                      </Tag>
+                    )}
+                    {!s.running && !s.latest && !overLimit && <Tag>未开始</Tag>}
+                  </Card>
+                </Col>
+              );
+            })}
           </Row>
         </Card>
       )}

@@ -47,13 +47,22 @@ export const startSchema = z
     count: z.number().int().min(1).max(20).default(5),
     // ✅ 个人题集「再练一次 / 勾选组卷」：按指定题目开练（与分类/难度随机抽题互斥）
     questionIds: z.array(z.string().uuid()).min(1).max(20).optional(),
+    // ✅ 场景实战：按场景整链开练（与上面两种互斥）
+    scenarioKey: z.string().min(1).max(128).optional(),
   })
   .refine(
     (data) =>
       !data.questionIds ||
       (!data.primaryCategoryId && !data.secondaryCategoryId && !data.difficulty),
     { message: 'questionIds 与 分类/难度 筛选不能同时使用', path: ['questionIds'] },
+  )
+  .refine(
+    (data) => !data.scenarioKey || (!data.questionIds && !data.primaryCategoryId && !data.secondaryCategoryId && !data.difficulty),
+    { message: 'scenarioKey 与 分类/难度/指定题目 不能同时使用', path: ['scenarioKey'] },
   );
+
+/** 场景实战上限：超过它说明题库配置有问题（一条链不该这么长），拒绝而不是截断 */
+const SCENARIO_MAX_QUESTIONS = 50;
 
 // POST /api/practice/assignment — 注册/更新当前学生的练习文件
 practiceRouter.post('/assignment', async (req: Request, res: Response) => {
@@ -222,7 +231,7 @@ practiceRouter.get('/scenarios', async (req: Request, res: Response) => {
 // POST /api/practice/start — 抽题 + 重置文件 + 建记录
 practiceRouter.post('/start', async (req: Request, res: Response) => {
   try {
-    const { primaryCategoryId, secondaryCategoryId, difficulty, count, questionIds } = startSchema.parse(req.body);
+    const { primaryCategoryId, secondaryCategoryId, difficulty, count, questionIds, scenarioKey } = startSchema.parse(req.body);
     const studentId = req.user!.userId;
 
     // 1. 检查练习文件注册
@@ -242,6 +251,9 @@ practiceRouter.post('/start', async (req: Request, res: Response) => {
     where.type = { in: PRACTICE_QUESTION_TYPES };
     if (requestedIds) {
       where.id = { in: requestedIds };
+    } else if (scenarioKey) {
+      // 场景实战：取整条链，不随机、不受 count 影响
+      where.scenario = scenarioKey;
     } else {
       if (primaryCategoryId) where.primaryCategoryId = primaryCategoryId;
       if (secondaryCategoryId) where.secondaryCategoryId = secondaryCategoryId;
@@ -250,11 +262,20 @@ practiceRouter.post('/start', async (req: Request, res: Response) => {
 
     const pool = await prisma.question.findMany({
       where,
-      select: { id: true, title: true, description: true, type: true, difficulty: true, score: true, answerRules: true, analysis: true, hints: true },
+      select: { id: true, title: true, description: true, type: true, difficulty: true, score: true, answerRules: true, analysis: true, hints: true, schemaRefs: true, scenario: true, scenarioOrder: true },
     });
 
     let selected: typeof pool;
-    if (requestedIds) {
+    if (scenarioKey) {
+      if (pool.length === 0) {
+        return res.status(400).json({ message: '该场景下暂无可练习的题目' });
+      }
+      if (pool.length > SCENARIO_MAX_QUESTIONS) {
+        return res.status(400).json({ message: `该场景题目过多（${pool.length} 题，上限 ${SCENARIO_MAX_QUESTIONS}），请联系教师拆分场景` });
+      }
+      // 教学顺序：严格按 scenarioOrder；没填序号的（不应出现，回填脚本保证）排最后
+      selected = [...pool].sort((a, b) => (a.scenarioOrder ?? 9999) - (b.scenarioOrder ?? 9999));
+    } else if (requestedIds) {
       if (pool.length !== requestedIds.length) {
         // 可能是"不存在/已下线"，也可能是"选中了客观题"（练习不支持）
         const found = await prisma.question.count({ where: { id: { in: requestedIds } } });
@@ -279,6 +300,9 @@ practiceRouter.post('/start', async (req: Request, res: Response) => {
       questionId: q.id,
       score: q.score,
       sortOrder: i,
+      // 场景链元数据：续做提示、判分归因都要用（旧记录没有这些字段，前端要容错）
+      ...(scenarioKey ? { scenarioKey } : {}),
+      ...(q.schemaRefs ? { requires: (q.schemaRefs as any)?.requires ?? null, creates: (q.schemaRefs as any)?.creates ?? null } : {}),
     }));
     const maxScore = selected.reduce((sum, q) => sum + q.score, 0);
 
