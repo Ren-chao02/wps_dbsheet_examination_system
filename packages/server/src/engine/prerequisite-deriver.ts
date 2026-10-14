@@ -1,8 +1,10 @@
 /**
  * 前置契约推导器：从题目的判分规则（answerRules）反推「这题需要什么 / 会产出什么」。
  *
- * 为什么能推：规则处理器的语义是稳定的 —— check_table_exists 的考点就是"把表建出来"（creates），
- * check_field_* 的考点是"字段配对了"（creates 字段），而它引用的表必须已存在（requires）。
+ * 为什么能推：规则处理器的语义是稳定的 —— check_field_* 的考点是"字段配对了"（creates 字段），
+ * 它引用的表必须已存在（requires）；check_view_* 同理。
+ * 唯一有歧义的是 check_table_exists：它既可能是"把这张表建出来"（真建表），
+ * 也可能是"表得在，我才配得上字段"（前置检查）—— 所以要用题面语义来判（见 hasCreationIntent）。
  * 推导结果只用于提示 / 归链 / 组卷签名，**判分一行都不看它**；推错最多多显示一条提示。
  */
 import type { AnswerRule } from './rule-engine';
@@ -33,10 +35,36 @@ export interface DeriveResult {
   unresolved: string[];
 }
 
-/** 考点 = "这张表建出来/建对了" → creates */
+/** 考点 = "这张表建出来/建对了" → 但**要过题面语义门槛**（见 hasCreationIntent） */
 const CREATES_TABLE = new Set([
   'check_table_exists', 'check_table_name', 'check_table_count', 'check_table_fields',
 ]);
+
+/** 题面上下文：判断"这题是在建这张表吗"要用 */
+export interface QuestionContext {
+  title?: string | null;
+  description?: string | null;
+}
+
+/** 题面里的创建语义 */
+const CREATION_VERBS = /创建|新建|搭建|构建|导入/;
+
+/**
+ * 这道题是在"建"这张表，还是只是"用了"这张表？
+ *
+ * 实证：题库里 15 道题带 check_table_exists，其中只有一两道是真建表，其余都是前置检查——
+ * 一律当 creates 会把「设置关联字段允许多条记录关联」（检查 任务表+员工信息表 存在）
+ * 判成"创建了这两张表"，把两条本不相干的链焊成一条 25 题大链。
+ * 判定：题面（标题+描述）点名了这张表，且带创建语义 ⇒ 建；否则 ⇒ 只是前提。
+ * 没有题面时保守判"不创建"（宁可该表暂时没有创建者，也不要错误合并链）。
+ */
+function hasCreationIntent(table: string, question?: QuestionContext | null): boolean {
+  const text = `${question?.title ?? ''}\n${question?.description ?? ''}`;
+  if (!text.trim()) return false;
+  if (!text.includes(table)) return false;
+  return CREATION_VERBS.test(text);
+}
+
 /** 考点 = "字段配对了" → creates 字段；所在表属 requires */
 const FIELD_ACTIONS = new Set([
   'check_field', 'check_field_count', 'check_field_default', 'check_field_format', 'check_field_formula',
@@ -68,7 +96,12 @@ const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const dedupeRefs = <T extends { table: string } & Record<string, string>>(xs: T[]): T[] =>
   [...new Map(xs.map(x => [refKey(x), x])).values()].sort((a, b) => cmp(refKey(a), refKey(b)));
 
-export function derivePrerequisites(rules: AnswerRule[]): DeriveResult {
+export function derivePrerequisites(
+  rules: AnswerRule[],
+  // 题面（标题+描述）：判 check_table_exists 是"真建表"还是"前置检查"的唯一依据。
+  // 两个真实调用方（回填构建器、出题页推导按钮）都必须传；省略时保守判"不创建"。
+  question?: QuestionContext | null,
+): DeriveResult {
   const requires: RefGroup = { tables: [], fields: [], views: [] };
   const creates: RefGroup = { tables: [], fields: [], views: [] };
   const unresolved: string[] = [];
@@ -82,7 +115,12 @@ export function derivePrerequisites(rules: AnswerRule[]): DeriveResult {
 
     if (CREATES_TABLE.has(action)) {
       if (!table) { unresolved.push(action); continue; }
-      creates.tables.push(table);
+      // check_table_exists 有两种含义：真建表（"创建一个数据表，命名为 X"）与前置检查
+      // （"表得在，我才配得上关联字段"）。只有题面带创建语义且点名了这张表，才算本题产物。
+      // 误判代价不对称：错判成 creates 会把两条链焊死（实测出现过 25 题大链），
+      // 错判成 requires 只是该表暂时没有创建者、题目自成链根——后者人工一改就好。
+      if (hasCreationIntent(table, question)) creates.tables.push(table);
+      else requires.tables.push(table);
     } else if (FIELD_ACTIONS.has(action)) {
       if (!table || !field) { unresolved.push(action); continue; }
       requires.tables.push(table);
