@@ -75,9 +75,12 @@ async function main() {
       where: { id: e.id },
       data: {
         schemaRefs: e.refs as any,
-        // 待人工确认的题：场景留空（教师后续在题库页指定），契约仍然写入（推导出的部分是可信的）。
-        // 含成环题：它的 scenarioOrder 只是 topoSort 的兜底顺序（参考用），落库一律不写
-        ...(e.scenario && !e.pendingReason ? { scenario: e.scenario, scenarioOrder: e.scenarioOrder } : {}),
+        // 待人工确认一律显式清空：Prisma 对"字段缺省"不会清空旧值，
+        // 首轮误挂的链名会残留在库里（--force 重跑时暴露）。教师手工值不受影响——
+        // 默认路径只处理 scenario IS NULL 的题，--force 的语义本就是覆盖。
+        ...(e.scenario && !e.pendingReason
+          ? { scenario: e.scenario, scenarioOrder: e.scenarioOrder }
+          : { scenario: null, scenarioOrder: null }),
       },
     });
     written += 1;
