@@ -58,6 +58,9 @@ export const practiceApi = {
   /** 获取分类/难度目录 */
   getCatalog: () => api.get('/practice/questions/catalog').then(r => r.data),
 
+  /** 场景实战卡片列表（只含题数 ≥ 2 的场景 + 该生进度） */
+  scenarios: () => api.get('/practice/scenarios'),
+
   /** 开练：按分类/难度随机抽题，或个人题集按指定题目（questionIds）组卷 */
   start: (data: {
     primaryCategoryId?: string;
