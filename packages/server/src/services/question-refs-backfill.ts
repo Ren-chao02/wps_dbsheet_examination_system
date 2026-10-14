@@ -80,14 +80,14 @@ export function buildBackfillPlan(questions: BackfillInput[]): BackfillPlan {
     };
   });
 
+  // 链顺序沿用归链的输出顺序（首次出现 = 教学顺序），**不要按 key 重排**：
+  // 中文 localeCompare 依赖语言环境，会让人工清单的顺序随机器漂移（Task 2 已定过这条口径）
   const counts = new Map<string, number>();
   for (const a of cluster.assignments) counts.set(a.scenario, (counts.get(a.scenario) ?? 0) + 1);
 
   return {
     entries,
-    scenarios: [...counts.entries()]
-      .map(([key, questionCount]) => ({ key, questionCount }))
-      .sort((a, b) => a.key.localeCompare(b.key)),
+    scenarios: [...counts.entries()].map(([key, questionCount]) => ({ key, questionCount })),
     autoCount: entries.filter(e => !e.pendingReason).length,
     pendingCount: entries.filter(e => e.pendingReason).length,
   };
