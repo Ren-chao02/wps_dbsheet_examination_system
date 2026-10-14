@@ -87,10 +87,15 @@ export function derivePrerequisites(rules: AnswerRule[]): DeriveResult {
     } else if (LINK_ACTIONS.has(action)) {
       if (!table) { unresolved.push(action); continue; }
       requires.tables.push(table);
-      const target = str(params.targetTable);
-      // 有些历史规则把目标表写在 linkTarget 里（真实题：创建单向关联字段连接两个数据表）
-      const target2 = target || str(params.linkTarget);
-      if (target2) requires.tables.push(target2); else unresolved.push(action);
+      // 规则表的 `check_field*`（含 link_*）一行要求 creates 该字段：
+      // check_field_link_target(T,F,target) 的考点就是这个字段配对了。
+      // check_linked_record 没有 fieldName（它校验"表里有指向 target 的关联字段"），
+      // 所以只在 fieldName 存在时才记 creates，不因此把它打成 unresolved。
+      if (field) creates.fields.push({ table, field });
+      // targetTable 是引擎处理器的参数名；linkTarget 只是同义兜底（生产库暂无使用），
+      // 保留它是因为出题辅助链路可能生成不同拼写
+      const target = str(params.targetTable) || str(params.linkTarget);
+      if (target) requires.tables.push(target); else unresolved.push(action);
     } else if (CREATES_VIEW.has(action)) {
       if (!table || !view) { unresolved.push(action); continue; }
       requires.tables.push(table);

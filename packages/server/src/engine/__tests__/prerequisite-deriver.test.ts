@@ -65,6 +65,14 @@ describe('derivePrerequisites', () => {
     expect(refs.requires.tables).toEqual(['任务表', '项目表']);
   });
 
+  it('关联字段题（真实题：设置关联字段允许多条记录关联）→ requires 源表与目标表，且 creates 该关联字段', () => {
+    const { refs } = derivePrerequisites([
+      rule('check_field_link_target', { tableName: '任务表', fieldName: '负责人', targetTable: '员工信息表' }),
+    ]);
+    expect(refs.requires.tables).toEqual(['任务表', '员工信息表']);
+    expect(refs.creates.fields).toEqual([{ table: '任务表', field: '负责人' }]);
+  });
+
   it('表单题 → requires 表 + creates 表单', () => {
     const { refs } = derivePrerequisites([
       rule('check_form_exists', { tableName: '设备巡检表', formName: '巡检登记' }),
