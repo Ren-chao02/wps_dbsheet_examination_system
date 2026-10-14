@@ -81,6 +81,17 @@ describe('GET /api/practice/records/:id', () => {
     expect(questionFindMany).not.toHaveBeenCalled();
   });
 
+  // 安全不变量：题面回查的 select 必须是正向白名单（只给展示字段）。
+  // 加回 answerRules/analysis（判分规则 = 答案）时这条必须红
+  it('回查题库的字段白名单不含 answerRules/analysis（学生端不能带回答案）', async () => {
+    findFirst.mockResolvedValue(row);
+    const res = await request(app).get('/api/practice/records/rec-1');
+    expect(res.status).toBe(200);
+    const select = questionFindMany.mock.calls[0][0].select;
+    expect(select).not.toHaveProperty('answerRules');
+    expect(select).not.toHaveProperty('analysis');
+  });
+
   // 简报只覆盖 in_progress；判分结果的回发分支（前端"直接进结果态"依赖）单独钉住
   it('已判分的记录：带 score/passed/details，前端可直接进结果态', async () => {
     findFirst.mockResolvedValue({
