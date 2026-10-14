@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { previewSlotCandidates } from '../services/paper-generator';
 import { authenticate, authorize } from '../middleware/auth';
+import { scopeCtxOf, paperWhere, assertPaperRead, questionWhere, denyAccess } from '../services/data-scope';
 
 export const paperRouter = Router();
 paperRouter.use(authenticate);
@@ -56,16 +57,21 @@ paperRouter.get('/', async (req: Request, res: Response) => {
     const skip = (Number(page) - 1) * Number(pageSize);
     const take = Number(pageSize);
 
-    const where: any = {};
+    // 数据范围（P2）：教师 = 自己创建 ∪ 本院系 ∪ 校级(null) ∪ 校级池(shared)；admin 不受限。
+    // 用 AND 组合而非对象展开 —— 范围条件本身就占 OR 字段，展开会与业务筛选互相覆盖。
+    const conditions: any[] = [await paperWhere(scopeCtxOf(req))];
+
     if (search) {
-      where.name = { contains: String(search), mode: 'insensitive' };
+      conditions.push({ name: { contains: String(search), mode: 'insensitive' } });
     }
     if (difficulty) {
-      where.difficulty = String(difficulty);
+      conditions.push({ difficulty: String(difficulty) });
     }
     if (source) {
-      where.source = String(source);
+      conditions.push({ source: String(source) });
     }
+
+    const where: any = { AND: conditions };
 
     const [papers, total] = await Promise.all([
       prisma.paper.findMany({
@@ -112,6 +118,11 @@ paperRouter.get('/', async (req: Request, res: Response) => {
 // GET /api/papers/:id
 paperRouter.get('/:id', async (req: Request, res: Response) => {
   try {
+    // 数据范围（P2）：详情必须与列表同口径收口 —— 否则拿到试卷 ID 就能绕过列表直读
+    // （试卷详情含题目与答案规则），池外一律拒绝。
+    const access = await assertPaperRead(scopeCtxOf(req), req.params.id);
+    if (access !== 'ok') return denyAccess(res, access, '该试卷不在你可见的范围内（本院系 / 校级 / 本人）');
+
     const paper = await prisma.paper.findUnique({
       where: { id: req.params.id },
       include: {
@@ -149,6 +160,7 @@ paperRouter.post('/', async (req: Request, res: Response) => {
       data: {
         ...data,
         createdBy: req.user!.userId,
+        departmentId: req.user!.departmentId ?? null, // P2：默认归属创建者院系；无院系 = 校级
       },
     });
 
@@ -277,7 +289,10 @@ paperRouter.post('/slot-preview', async (req: Request, res: Response) => {
       score: z.number().int().min(0),
     }).parse(req.body);
 
-    const result = await previewSlotCandidates(rule as any, score);
+    // 数据范围（P2）：候选数与试卷列表同池（本院系 / 校级 / 本人 / 上架），
+    // 否则教师会看到"列表里没有、题位预览里却算数"的幽灵候选，开考时又抽不到
+    const poolWhere = await questionWhere(scopeCtxOf(req));
+    const result = await previewSlotCandidates(rule as any, score, poolWhere);
     res.json(result);
   } catch (err: any) {
     if (err instanceof z.ZodError) {
@@ -303,12 +318,11 @@ paperRouter.post('/:id/duplicate', async (req: Request, res: Response) => {
       return res.status(404).json({ message: '试卷不存在' });
     }
 
-    // 数据范围（P1）：只能复制自己创建的或官方试卷；他人校本试卷不可复制
-    // （官方试卷的复制是题库分发路径，刻意放开）
-    const isAdmin = req.user?.role === 'admin';
-    if (!isAdmin && original.createdBy !== req.user!.userId && original.source !== 'official') {
-      return res.status(403).json({ message: '只能复制自己创建的或官方试卷' });
-    }
+    // 数据范围（P2）：复制范围 = 可读范围（本院系池 / 校级池 / 本人 / 官方）——
+    // 「看得见就能复制」比 P1 的「本人或官方」更符合院系共享池的用法；
+    // 复制出的新卷归属复制者院系，避免复制品留在原作者的池子里。
+    const access = await assertPaperRead(scopeCtxOf(req), req.params.id);
+    if (access !== 'ok') return denyAccess(res, access, '该试卷不在你可见的范围内，无法复制');
 
     const duplicated = await prisma.paper.create({
       data: {
@@ -318,6 +332,7 @@ paperRouter.post('/:id/duplicate', async (req: Request, res: Response) => {
         passScore: original.passScore,
         totalScore: original.totalScore,
         createdBy: req.user!.userId,
+        departmentId: req.user!.departmentId ?? null,
         paperQuestions: {
           create: original.paperQuestions.map(pq => ({
             questionId: pq.questionId,
