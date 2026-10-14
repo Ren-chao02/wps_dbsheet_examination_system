@@ -106,7 +106,7 @@ Question
 
 - 按第三节的映射表逐条规则归并；
 - 同一题里"既 requires 又 creates 同一张表"时（如先建表再在表上建字段），合并为 creates（本题自给自足）；
-- 推导不出的题（unknown action / 无表名）→ 输出空契约 + `unresolved: true` 标记。
+- 推导不出的题（unknown action / 无表名）→ 输出空契约，并在 `unresolved` 里**点名**是哪个 action 推不出来（字符串数组，回填清单直接拿来展示）。
 
 ### 2. 归链（`services/scenario-cluster.ts`）
 
