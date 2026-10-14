@@ -8,6 +8,8 @@ import { answerReverser } from '../engine/answer-reverser';
 import { derivePrerequisites } from '../engine/prerequisite-deriver';
 // 类型 import：推导接口只把规则原样喂给纯函数推导器，不触碰 rule-engine 的任何处理器（判分逻辑零改动）
 import type { AnswerRule } from '../engine/rule-engine';
+// 支持面判定（纯函数，只读 ruleHandlers 的 key）：列表页标出"引擎不认识的规则"用
+import { unsupportedRuleActions } from '../engine/rule-engine';
 import { wpsConfigService } from '../services/wps-config-service';
 import { scopeCtxOf, questionWhere, assertQuestionRead, denyAccess } from '../services/data-scope';
 
@@ -122,6 +124,7 @@ questionRouter.get('/', async (req: Request, res: Response) => {
       updatedAtStart,
       updatedAtEnd,
       source,
+      scenario,
     } = req.query;
 
     const skip = (Number(page) - 1) * Number(pageSize);
@@ -154,6 +157,9 @@ questionRouter.get('/', async (req: Request, res: Response) => {
 
     // 来源筛选：official = 官方题库 / school = 校本题库（题库页页签）
     if (source) conditions.push({ source: String(source) });
+
+    // 场景筛选（练习成链：教师核对回填结果、按链检查顺序）
+    if (scenario) conditions.push({ scenario: String(scenario) });
 
     // ✨ 新增：出题老师模糊匹配
     if (teacherName) {
@@ -216,9 +222,34 @@ questionRouter.get('/', async (req: Request, res: Response) => {
       prisma.question.count({ where }),
     ]);
 
-    res.json({ data: questions, total, page: Number(page), pageSize: Number(pageSize) });
+    // 哪些规则引擎不认 —— 这类题永远走 needsReview，不该出现在组卷候选池里。
+    // 现算而不入库：规则实现变化时，标记自动跟着变，不会留下过期状态。
+    const data = questions.map(q => ({ ...q, unsupportedActions: unsupportedRuleActions(q.answerRules) }));
+
+    res.json({ data, total, page: Number(page), pageSize: Number(pageSize) });
   } catch (error) {
     console.error('Error fetching questions:', error);
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+/**
+ * GET /api/questions/scenarios —— 场景清单（题库筛选器用；只返回名字与题数）
+ *
+ * ⚠️ 必须注册在 `/:id` 之前，否则 "scenarios" 会被当成题目 id 去查详情。
+ * 题数按当前用户可见范围统计（与列表同一套 questionWhere）：否则筛选器会出现
+ * "选了这个场景却一道题都没有"的假选项，也会把范围外的场景名透给教师。
+ */
+questionRouter.get('/scenarios', async (req: Request, res: Response) => {
+  try {
+    const rows = await prisma.question.groupBy({
+      by: ['scenario'],
+      where: { AND: [{ scenario: { not: null } }, await questionWhere(scopeCtxOf(req))] },
+      _count: { _all: true },
+    });
+    res.json(rows.filter(r => r.scenario).map(r => ({ scenario: r.scenario, count: r._count._all })));
+  } catch (error) {
+    console.error('Error fetching question scenarios:', error);
     res.status(500).json({ message: '服务器错误' });
   }
 });

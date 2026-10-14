@@ -72,6 +72,8 @@ export function QuestionBank() {
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const [teachers, setTeachers] = useState<{ id: string; realName: string }[]>([]);
+  /** 场景清单（筛选下拉的选项）：场景是回填出来的自由文本，没有固定枚举，只能从库里现取 */
+  const [scenarioOptions, setScenarioOptions] = useState<{ scenario: string; count: number }[]>([]);
   // 次要筛选（出题老师/分类/时间）默认收起，点「展开」才显示 —— 对齐参考产品的筛选区形态
   const [filtersExpanded, setFiltersExpanded] = useState(false);
 
@@ -82,6 +84,8 @@ export function QuestionBank() {
     difficulty?: string;
     status?: string;
     source?: string;
+    /** 场景链：教师核对回填结果的筛选入口（选项来自 GET /questions/scenarios） */
+    scenario?: string;
     teacherName?: string;
     primaryCategory?: string;
     secondaryCategory?: string;
@@ -161,6 +165,16 @@ export function QuestionBank() {
       setTeachers(res.data || []);
     } catch (error) {
       console.error('Error fetching teachers:', error);
+    }
+  };
+
+  // 获取场景清单（用于下拉筛选；题数按当前可见范围统计，与列表口径一致）
+  const fetchScenarios = async () => {
+    try {
+      const res = await api.get('/questions/scenarios');
+      setScenarioOptions(res.data || []);
+    } catch (error) {
+      console.error('Error fetching scenarios:', error);
     }
   };
 
@@ -253,6 +267,7 @@ export function QuestionBank() {
   useEffect(() => {
     fetchCategories();
     fetchTeachers();
+    fetchScenarios();
   }, []);
 
   // 删除题目
@@ -441,7 +456,7 @@ export function QuestionBank() {
           <Card size="small" style={{ marginBottom: 16 }}>
             {/* 第一行：基础筛选 */}
             <Row gutter={[12, 12]} align="middle" style={{ marginBottom: 12 }}>
-              <Col span={7}>
+              <Col span={5}>
                 <Input
                   placeholder="搜索题目"
                   prefix={<SearchOutlined />}
@@ -456,7 +471,7 @@ export function QuestionBank() {
                 />
               </Col>
 
-              <Col span={5}>
+              <Col span={4}>
                 <Select
                   mode="multiple"
                   maxTagCount="responsive"
@@ -471,7 +486,7 @@ export function QuestionBank() {
                 />
               </Col>
 
-              <Col span={4}>
+              <Col span={3}>
                 <Select
                   placeholder="难度"
                   allowClear
@@ -484,7 +499,7 @@ export function QuestionBank() {
                 />
               </Col>
 
-              <Col span={4}>
+              <Col span={3}>
                 <Select
                   placeholder="状态"
                   allowClear
@@ -494,6 +509,24 @@ export function QuestionBank() {
                     setFilters((f) => ({ ...f, status: v || undefined }))
                   }
                   options={statusOptions}
+                />
+              </Col>
+
+              {/* 场景筛选：场景链是回填的自由文本（如「员工信息表」），只能从接口现取的清单里选 */}
+              <Col span={5}>
+                <Select
+                  placeholder="场景"
+                  allowClear
+                  showSearch
+                  value={filters.scenario}
+                  style={{ width: '100%' }}
+                  onChange={(v) =>
+                    setFilters((f) => ({ ...f, scenario: v || undefined }))
+                  }
+                  filterOption={(input, option) =>
+                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  options={scenarioOptions.map((s) => ({ value: s.scenario, label: `${s.scenario}（${s.count}）` }))}
                 />
               </Col>
 
