@@ -393,6 +393,8 @@ async function hydrateQuestionSnapshots(raw: unknown) {
 
   const rows = await prisma.question.findMany({
     where: { id: { in: snapshots.map(s => s.questionId) } },
+    // 有意不带 status: 'published' 过滤：抽题（/start）要求 published，但续做语义是「接着做完」——
+    // 中途被下架（未硬删）的题仍要能恢复显示，否则学生做到一半的题会凭空消失；硬删的走下面的标注分支
     select: { id: true, title: true, description: true, type: true, difficulty: true, hints: true },
   });
   const byId = new Map(rows.map(q => [q.id, q]));

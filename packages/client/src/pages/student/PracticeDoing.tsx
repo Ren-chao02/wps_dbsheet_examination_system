@@ -59,6 +59,18 @@ const typeLabels: Record<string, string> = {
   comprehensive: '综合',
 };
 
+/** 读步骤记忆并夹取到 [0, 题数-1]（越界/脏值/隐私模式一律回落 0，避免 currentQuestion 为 undefined）。
+ *  放组件外：模块级函数引用稳定，恢复 effect 的依赖数组不用挂它（也方便两处调用点共用同一夹取口径） */
+function clampSavedStep(recordId: string | undefined, questionCount: number) {
+  try {
+    const saved = Number(localStorage.getItem(`practice_step:${recordId}`) ?? '0');
+    if (!Number.isFinite(saved) || saved <= 0) return 0;
+    return Math.min(saved, Math.max(questionCount - 1, 0));
+  } catch {
+    return 0; // 隐私模式：读不了就当第 1 题
+  }
+}
+
 export function PracticeDoing() {
   const { recordId } = useParams<{ recordId: string }>();
   const navigate = useNavigate();
@@ -67,10 +79,15 @@ export function PracticeDoing() {
 
   const [questions, setQuestions] = useState<PracticeQuestion[]>(payload?.questions || []);
   const [shareUrl, setShareUrl] = useState<string | null>(payload?.shareUrl || null);
-  const [currentStep, setCurrentStep] = useState(0);
+  // F5 刷新时 React Router 会从 history.state.usr 还原 location.state（payload 非空），
+  // 恢复 effect 被 `if (payload) return` 挡住——步骤记忆必须在守卫之外、初始化时就恢复
+  const [currentStep, setCurrentStep] = useState(() => clampSavedStep(recordId, payload?.questions?.length ?? 0));
   const [loading, setLoading] = useState(!payload);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<GradingResult | null>(null);
+  // 「已提交、判分结果还没写回」的窗口：此时恢复接口只给得到 status=graded（details 为 null）。
+  // 不能落进「题目未加载，请返回重新开练」的空态——学生会重新开练，而开练会 resetFile 清空表格
+  const [gradingPending, setGradingPending] = useState(false);
   // ── 收藏（个人题集）：星标状态全局共享（作答页 + 结果页） ──
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [favPendingId, setFavPendingId] = useState<string | null>(null);
@@ -143,19 +160,14 @@ export function PracticeDoing() {
           if (Array.isArray(res.data.details)) {
             setResult(res.data as unknown as GradingResult);
           } else {
-            message.info('判分进行中，请稍后刷新查看结果');
+            setGradingPending(true);
           }
           return;
         }
         setQuestions(res.data.questions ?? []);
         setShareUrl(res.data.shareUrl ?? null);
-        // 步骤记忆：同一台设备上回到上次作答的那一步（换设备则从头开始翻，不影响作答内容）。
-        // 读取单独 try/catch：存储被禁用时别把整条恢复流程带进下面的错误分支。
-        let saved = 0;
-        try { saved = Number(localStorage.getItem(`practice_step:${recordId}`) ?? '0'); } catch { /* 隐私模式忽略 */ }
-        // 越界（脏值/题目被删）回落到第一题，避免 currentQuestion 为 undefined
-        const maxStep = Math.max((res.data.questions?.length ?? 0) - 1, 0);
-        setCurrentStep(Number.isFinite(saved) && saved > 0 ? Math.min(saved, maxStep) : 0);
+        // 步骤记忆：同一台设备上回到上次作答的那一步（换设备则从头开始翻，不影响作答内容）
+        setCurrentStep(clampSavedStep(recordId, res.data.questions?.length ?? 0));
       } catch {
         message.error('练习记录加载失败，请返回重新开始');
       } finally {
@@ -190,6 +202,19 @@ export function PracticeDoing() {
     return (
       <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Spin size="large" />
+      </div>
+    );
+  }
+
+  // ───── 判分中（已提交、结果尚未写回）：独立提示 + 重试入口 ─────
+  if (gradingPending) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center' }}>
+        <Empty description="已提交，正在判分。结果生成后点「刷新查看结果」即可（请勿重新开练，重新开练会清空练习表格）" />
+        <Space style={{ marginTop: 16 }}>
+          <Button type="primary" onClick={() => window.location.reload()}>刷新查看结果</Button>
+          <Button onClick={() => navigate('/student/practice')}>返回列表</Button>
+        </Space>
       </div>
     );
   }
