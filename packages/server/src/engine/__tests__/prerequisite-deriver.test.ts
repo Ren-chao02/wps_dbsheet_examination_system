@@ -12,11 +12,41 @@ const rule = (action: string, params: Record<string, any>): AnswerRule => ({ id:
 
 describe('derivePrerequisites', () => {
   it('建表题（真实题：在左侧导航面板中创建新的数据表）→ creates 该表，requires 为空', () => {
-    const { refs, unresolved } = derivePrerequisites([rule('check_table_exists', { tableName: '员工信息表' })]);
+    const { refs, unresolved } = derivePrerequisites(
+      [rule('check_table_exists', { tableName: '员工信息表' })],
+      {
+        title: '在左侧导航面板中创建新的数据表',
+        description: '在已创建的多维表格中，通过左侧导航面板的"+"按钮创建一个新的数据表，命名为"员工信息表"。',
+      },
+    );
     expect(refs.creates.tables).toEqual(['员工信息表']);
     expect(refs.requires.tables).toEqual([]);
     expect(refs.tables).toEqual(['员工信息表']);
     expect(unresolved).toEqual([]);
+  });
+
+  it('前置检查不是创建（真实题：设置关联字段允许多条记录关联）→ 两张表都进 requires', () => {
+    // 同一批 check_table_exists 规则的两种含义：本题题面只说了"设置字段"，
+    // 两张表是「配字段的前提」，不是「本题的产物」——判成 creates 会把两条独立的链焊成一条
+    const { refs } = derivePrerequisites(
+      [
+        rule('check_table_exists', { tableName: '任务表' }),
+        rule('check_table_exists', { tableName: '员工信息表' }),
+        rule('check_field', { tableName: '任务表', fieldName: '负责人', type: 'link' }),
+      ],
+      {
+        title: '设置关联字段允许多条记录关联',
+        description: "在单向关联或双向关联字段设置中，开启'允许关联多条记录'开关，使一个任务可以关联多个负责人。",
+      },
+    );
+    expect(refs.creates.tables).toEqual([]);
+    expect(refs.requires.tables).toEqual(['任务表', '员工信息表']);   // 码点序：任 U+4EFB < 员 U+5458
+  });
+
+  it('没有题面时保守判"不创建"（宁可该表暂时没有创建者，也不要错并链）', () => {
+    const { refs } = derivePrerequisites([rule('check_table_exists', { tableName: '员工信息表' })]);
+    expect(refs.creates.tables).toEqual([]);
+    expect(refs.requires.tables).toEqual(['员工信息表']);
   });
 
   it('加字段题（真实题：创建时间字段「打卡时间」）→ requires 员工信息表 + creates 该字段', () => {
@@ -30,10 +60,13 @@ describe('derivePrerequisites', () => {
   });
 
   it('同一题里既建表又建字段 → 表算 creates，不再算 requires', () => {
-    const { refs } = derivePrerequisites([
-      rule('check_table_exists', { tableName: '员工信息表' }),
-      rule('check_field', { tableName: '员工信息表', fieldName: '姓名' }),
-    ]);
+    const { refs } = derivePrerequisites(
+      [
+        rule('check_table_exists', { tableName: '员工信息表' }),
+        rule('check_field', { tableName: '员工信息表', fieldName: '姓名' }),
+      ],
+      { title: '创建员工信息表', description: '创建一个新的数据表，命名为"员工信息表"。' },
+    );
     expect(refs.creates.tables).toEqual(['员工信息表']);
     expect(refs.requires.tables).toEqual([]);
     expect(refs.creates.fields).toEqual([{ table: '员工信息表', field: '姓名' }]);
@@ -95,11 +128,14 @@ describe('derivePrerequisites', () => {
   });
 
   it('多表题（真实题：创建单向关联字段连接两个数据表）→ 两张表都算 creates', () => {
-    const { refs } = derivePrerequisites([
-      rule('check_table_exists', { tableName: '项目表' }),
-      rule('check_table_exists', { tableName: '任务表' }),
-      rule('check_field', { tableName: '任务表', fieldName: '所属项目', linkTarget: '项目表' }),
-    ]);
+    const { refs } = derivePrerequisites(
+      [
+        rule('check_table_exists', { tableName: '项目表' }),
+        rule('check_table_exists', { tableName: '任务表' }),
+        rule('check_field', { tableName: '任务表', fieldName: '所属项目', linkTarget: '项目表' }),
+      ],
+      { title: '创建单向关联字段连接两个数据表', description: "创建两个数据表：'项目表'和'任务表'。在'任务表'中新建单向关联字段'所属项目'，关联到'项目表'。" },
+    );
     expect(refs.creates.tables).toEqual(['任务表', '项目表']);
     expect(refs.tables).toEqual(['任务表', '项目表']);
     expect(refs.requires.tables).toEqual([]);
