@@ -2691,7 +2691,11 @@ practiceRouter.get('/records/:id', async (req: Request, res: Response) => {
 Run: `cd packages/server && npx vitest run src/routes/__tests__/practice-record-resume.test.ts`
 Expected: PASS
 
-手工：开一条场景练习 → 做到第 3 题 → **刷新页面** → 直接落到第 3 题且题目还在（旧行为是「刷新后题目无法恢复」）。
+手工：开一条场景练习 → 做到第 3 题 → **刷新页面** → 直接落到第 3 题且题目还在。
+
+> ⚠️ 实施时被复审实测纠正的两个事实（写在这里，免得后人再踩）：
+> 1. **React Router v6 把 `location.state` 存进 `history.state`，跨 F5 保留**——所以"刷新后题面丢失"这个旧前提是错的（旧代码在 F5 下题面同样来自 state）。本任务的真正价值是「继续按钮 / 新标签页 / 换设备 / 记录恢复」。
+> 2. 正因为 `payload` 刷新后仍非空，**步骤恢复绝不能写在 `if (payload) return` 之内**——否则"刷新落回第 3 题"这条验收永远不成立。步骤要用 `useState` 的 lazy 初始化直接读 localStorage 并按 `questions.length` 夹取（见修复后的实现）。
 
 ```bash
 git commit -m "feat(practice): 断点续做（记录恢复接口 + 步骤记忆，刷新不再丢进度）" -- \
