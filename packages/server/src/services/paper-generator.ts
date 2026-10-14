@@ -230,10 +230,19 @@ async function pickQuestionForSlot(params: {
  * 候选题只有 1 道时必须显式提示 —— 否则"每生不同"会静默退化成"全员同题"，
  * 而教师毫不知情（这是本功能最容易无声失效的地方）。
  */
-export async function previewSlotCandidates(rule: SlotRule, slotScore: number) {
+export async function previewSlotCandidates(
+  rule: SlotRule,
+  slotScore: number,
+  poolWhere?: Prisma.QuestionWhereInput,
+) {
   const where: Prisma.QuestionWhereInput = { status: 'published' };
   if (rule.capabilityIds?.length) where.capabilityIds = { hasEvery: rule.capabilityIds };
   if (rule.type) where.type = rule.type as any;
+  // 数据范围 P2：预览候选数按当前请求者的可读池（本院系 / 校级 / 本人 / 上架）统计，
+  // 与试卷列表可见性同源。第三参可选：不传（旧调用/离线脚本）= 不收口，行为向后兼容。
+  if (poolWhere && Object.keys(poolWhere).length > 0) {
+    (where as any).AND = [poolWhere];
+  }
 
   // 一次取全（不叠加难度条件），在同一份数据上算出两个口径：
   // ① 按 rule.difficulty 过滤后的候选池（单题位预览，原有语义）
