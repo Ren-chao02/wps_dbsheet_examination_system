@@ -75,7 +75,26 @@ describe('clusterScenarios', () => {
       { id: 'q1', reason: '依赖成环，顺序需人工确认' },
       { id: 'q2', reason: '依赖成环，顺序需人工确认' },
     ]);
-    // 成环也给出一个可用的兜底顺序（按 title），不是空手而归
+    // 成环也给出一个可用的兜底顺序（按输入顺序），不是空手而归
     expect(r.scenarios[0].questionIds).toEqual(['q1', 'q2']);
+  });
+
+  it('成环兜底按输入顺序（title 顺序与输入顺序相反时以输入为准）', () => {
+    const r = clusterScenarios([
+      { id: 'q1', title: 'Z 后置题', creates: ['表X'], requires: ['表Y'] },
+      { id: 'q2', title: 'A 前置题', creates: ['表Y'], requires: ['表X'] },
+    ]);
+    expect(r.scenarios[0].questionIds).toEqual(['q1', 'q2']);   // 输入序，不是 title 序
+    expect(r.pending.map(p => p.id)).toEqual(['q1', 'q2']);
+  });
+
+  it('字段题排在建表题之前时，仍归到同一条链（防"边并边归属"的过期根）', () => {
+    const r = clusterScenarios([
+      { id: 'qa', title: '创建时间字段', creates: [], requires: ['员工信息表'] },
+      { id: 'qb', title: '创建员工信息表', creates: ['员工信息表'], requires: ['组织表'] },
+    ]);
+    // qb 创建「员工信息表」、qa 需要它 ⇒ 建表题必须排在使用它的题之前（规则 5）
+    expect(r.scenarios).toEqual([{ key: '员工信息表 + 组织表', questionIds: ['qb', 'qa'] }]);
+    expect(r.pending).toEqual([]);
   });
 });
