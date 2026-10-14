@@ -232,6 +232,8 @@ export interface QuestionContext {
 
 /** 题面里的创建语义 */
 const CREATION_VERBS = /创建|新建|搭建|构建|导入/;
+/** 创建动词要落在表名之前多远内才算"在建这张表" */
+const CREATION_VERB_WINDOW = 20;
 
 /**
  * 这道题是在"建"这张表，还是只是"用了"这张表？
@@ -239,14 +241,24 @@ const CREATION_VERBS = /创建|新建|搭建|构建|导入/;
  * 实证：题库里 15 道题带 check_table_exists，其中只有一两道是真建表，其余都是前置检查——
  * 一律当 creates 会把「设置关联字段允许多条记录关联」（检查 任务表+员工信息表 存在）
  * 判成"创建了这两张表"，把两条本不相干的链焊成一条 25 题大链。
- * 判定：题面（标题+描述）点名了这张表，且带创建语义 ⇒ 建；否则 ⇒ 只是前提。
+ *
+ * 判据要**把动词绑到表名上**，不能只判"全文有动词 + 全文有表名"：
+ * 「在'销售报表'中创建统计字段'总销售额'」里那个"创建"说的是字段，不是表——
+ * 全文级判断会把这两道真实题误判成建表（实测踩过）。
+ * 所以：逐个定位表名出现的位置，看它**前面 20 字内**有没有创建动词。
+ *
  * 没有题面时保守判"不创建"（宁可该表暂时没有创建者，也不要错误合并链）。
  */
 function hasCreationIntent(table: string, question?: QuestionContext | null): boolean {
   const text = `${question?.title ?? ''}\n${question?.description ?? ''}`;
   if (!text.trim()) return false;
-  if (!text.includes(table)) return false;
-  return CREATION_VERBS.test(text);
+  let idx = text.indexOf(table);
+  while (idx >= 0) {
+    const before = text.slice(Math.max(0, idx - CREATION_VERB_WINDOW), idx);
+    if (CREATION_VERBS.test(before)) return true;
+    idx = text.indexOf(table, idx + table.length);
+  }
+  return false;
 }
 /** 考点 = "字段配对了" → creates 字段；所在表属 requires */
 const FIELD_ACTIONS = new Set([
@@ -282,7 +294,8 @@ const dedupeRefs = <T extends { table: string } & Record<string, string>>(xs: T[
 export function derivePrerequisites(
   rules: AnswerRule[],
   // 题面（标题+描述）：判 check_table_exists 是"真建表"还是"前置检查"的唯一依据。
-  // 只有一个调用方拿不到题面（无），两个真实调用方（回填脚本、出题页推导按钮）都必须传
+  // 三个真实调用方（回填构建器、回填脚本、出题页推导按钮）都必须传；
+  // 不传 = 拿不到题面 = 保守判"不创建"
   question?: QuestionContext | null,
 ): DeriveResult {
   const requires: RefGroup = { tables: [], fields: [], views: [] };
@@ -1221,8 +1234,13 @@ async function main() {
       data: {
         schemaRefs: e.refs as any,
         // 待人工确认的题：场景留空（教师后续在题库页指定），契约仍然写入（推导出的部分是可信的）。
-        // 含成环题：它的 scenarioOrder 只是 topoSort 的兜底顺序（参考用），落库一律不写
-        ...(e.scenario && !e.pendingReason ? { scenario: e.scenario, scenarioOrder: e.scenarioOrder } : {}),
+        // 含成环题：它的 scenarioOrder 只是 topoSort 的兜底顺序（参考用），落库一律不写。
+        // **必须显式写 null**：Prisma 对"字段缺省"不会清空旧值，首轮误挂的链名会残留
+        // （实测：--force 重跑时旧链名留在了库里）。教师手工值不受影响——默认路径只处理
+        // scenario IS NULL 的题，--force 的语义本就是"连已有 scenario 一起覆盖"。
+        ...(e.scenario && !e.pendingReason
+          ? { scenario: e.scenario, scenarioOrder: e.scenarioOrder }
+          : { scenario: null, scenarioOrder: null }),
       },
     });
     written += 1;
@@ -3011,4 +3029,43 @@ Task 17 收尾（全部）
 
 同题多表（「创建单向关联字段连接两个数据表」）与"先建表再建字段"两条用例：补题面（`{ title: '创建单向关联字段连接两个数据表', description: "创建两个数据表：'项目表'和'任务表'。在'任务表'中新建单向关联字段'所属项目'，关联到'项目表'。" }` / `{ title: '创建员工信息表', description: '创建一个新的数据表，命名为"员工信息表"。' }`），断言不变。
 
-**重跑要求**：改动落地后 `npx tsx scripts/backfill-question-refs.ts --apply --force` 覆盖重写（脚本幂等），并用只读 SQL 核对新链结构；预期能读回「员工信息表 ≈20」「任务表 + 项目表 + 统计表 ≈4」这样的分链，桥接题进待人工清单。
+**重跑要求**：改动落地后 `npx tsx scripts/backfill-question-refs.ts --apply --force` 覆盖重写（脚本幂等），并用只读 SQL 核对新链结构；预期能读回「员工信息表 ≈20」「任务表 + 项目表 ≈4」这样的分链，桥接题进待人工清单。
+
+### 附三·补：动词绑定表名（2026-10-14 复审发现后收紧）
+
+首版判据是"**全文**有创建动词 + **全文**有表名"，复审证明太松——题面「在'销售报表'中创建统计字段'总销售额'」的那个"创建"说的是**字段**，却把 销售报表 记成了产物（真实数据里误判 2 道：`使用查找引用字段实现跨表数据同步`、`创建统计字段实现求和汇总`）。今日影响是潜在的（都是单题链、没有一张表被两道题同时"创建"），但 `creates` 是落库的产物契约，将来会被组卷签名与提示条消费。
+
+**收紧后的判据**：逐个定位表名出现的位置，看它**前面 20 字内**有没有创建动词（`CREATION_VERB_WINDOW = 20`）。上方代码已同步。
+
+新增/加强的用例（补进 Task 1 测试块）：
+
+```ts
+  it('不把字段的创建算到表头上（真实题：使用查找引用字段实现跨表数据同步）', () => {
+    const { refs } = derivePrerequisites(
+      [
+        rule('check_table_exists', { tableName: '销售明细表' }),
+        rule('check_table_exists', { tableName: '产品主数据表' }),
+      ],
+      {
+        title: '使用查找引用字段实现跨表数据同步',
+        description: "在'销售明细表'中创建查找引用字段，根据'产品编号'从'产品主数据表'同步'产品名称'和'规格型号'两个字段的值。",
+      },
+    );
+    expect(refs.creates.tables).toEqual([]);
+    expect(refs.requires.tables).toEqual(['产品主数据表', '销售明细表']);   // 码点序：产 U+4EA7 < 销 U+9500
+  });
+
+  it('题面有创建动词但没点名这张表 → 只是前提', () => {
+    const { refs } = derivePrerequisites(
+      [rule('check_table_exists', { tableName: '任务表' }), rule('check_table_exists', { tableName: '项目表' })],
+      {
+        title: '创建统计字段实现计数功能',
+        description: "创建统计字段'任务数量'，统计每个项目负责人名下的任务总数（使用计数统计方式）。",
+      },
+    );
+    expect(refs.creates.tables).toEqual([]);
+    expect(refs.requires.tables).toEqual(['任务表', '项目表']);
+  });
+```
+
+**重跑后预期**：三条链的名字**不变**（员工信息表 20 / 任务表 + 项目表 4 / 各单题链），但 `creates.tables` 变干净：不再有「销售报表」「产品主数据表」「销售明细表」「任务管理表」「订单管理表」「设备巡检表」这些被字段/视图题误挂的产物（它们改为自成一链的 requires 根题，链名不变）。
