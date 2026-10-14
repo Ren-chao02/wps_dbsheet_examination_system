@@ -61,13 +61,14 @@ export const practiceApi = {
   /** 场景实战卡片列表（只含题数 ≥ 2 的场景 + 该生进度） */
   scenarios: () => api.get('/practice/scenarios'),
 
-  /** 开练：按分类/难度随机抽题，或个人题集按指定题目（questionIds）组卷 */
+  /** 开练：按分类/难度随机抽题，个人题集按指定题目（questionIds），或按场景整链（scenarioKey） */
   start: (data: {
     primaryCategoryId?: string;
     secondaryCategoryId?: string;
     difficulty?: 'easy' | 'medium' | 'hard';
     count?: number;
     questionIds?: string[];
+    scenarioKey?: string;
   }) => api.post('/practice/start', data).then(r => r.data),
 
   /** 提交练习并判分 */
