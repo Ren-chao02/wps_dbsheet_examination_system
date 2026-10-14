@@ -104,7 +104,10 @@ export function PaperBank() {
           <Tooltip title={ownerTip}>
             <Button type="link" size="small" disabled={!owner} onClick={() => navigate(`/teacher/papers/${paper.id}/edit`)}>编辑</Button>
           </Tooltip>
-          <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => handleDuplicate(paper.id)}>复制</Button>
+          {/* 后端（数据范围 P1）只放行「本人创建」或「官方」试卷的复制，前端按同一口径禁用，避免点了才收到 403 */}
+          <Tooltip title={owner || paper.source === 'official' ? undefined : '仅可复制本人或官方试卷'}>
+            <Button type="link" size="small" icon={<CopyOutlined />} disabled={!owner && paper.source !== 'official'} onClick={() => handleDuplicate(paper.id)}>复制</Button>
+          </Tooltip>
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(paper.id)} okText="删除" cancelText="取消" disabled={!owner}>
             <Tooltip title={ownerTip}>
               <Button type="link" size="small" danger disabled={!owner}>删除</Button>
