@@ -16,7 +16,7 @@ const { mockPrisma } = vi.hoisted(() => ({
 vi.mock('../../config/prisma', () => ({ prisma: mockPrisma }));
 
 import {
-  makeScopeCtx, myClassIds, studentWhere, examWhere, behaviorWhere,
+  makeScopeCtx, scopeCtxOf, myClassIds, studentWhere, examWhere, behaviorWhere,
   assertExamAccess, assertBatchAccess, assertStudentAccess, assertSubmissionAccess,
 } from '../data-scope';
 
@@ -157,5 +157,16 @@ describe('assertBatchAccess / assertSubmissionAccess', () => {
     mockPrisma.exam.findUnique.mockResolvedValue({ createdBy: 't-1', assignments: [] });
     expect(await assertSubmissionAccess(OTHER(), 'sub-1')).toBe('forbidden');
     expect(await assertSubmissionAccess(TEACHER(), 'sub-1')).toBe('ok');
+  });
+});
+
+describe('ScopeCtx 院系字段（P2）', () => {
+  it('makeScopeCtx 默认 departmentId 为 null；scopeCtxOf 透传 req.user.departmentId', async () => {
+    expect(makeScopeCtx('t-1', 'teacher').departmentId).toBeNull();
+    expect(makeScopeCtx('t-1', 'teacher', 'd-1').departmentId).toBe('d-1');
+    const req: any = { user: { userId: 't-1', role: 'teacher', departmentId: 'd-2' } };
+    expect(scopeCtxOf(req).departmentId).toBe('d-2');
+    const req2: any = { user: { userId: 't-1', role: 'teacher' } };
+    expect(scopeCtxOf(req2).departmentId).toBeNull();
   });
 });
