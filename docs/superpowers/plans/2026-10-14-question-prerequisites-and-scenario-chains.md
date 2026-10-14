@@ -556,8 +556,9 @@ export function clusterScenarios(items: ClusterInput[]): ClusterResult {
   for (const [root, members] of byChain) {
     const key = [...new Set(tableOfRoot.get(root) ?? [])].sort().join(' + ');
     const ordered = topoSort(members, pending);
-    // 依赖成环时 topoSort 返回 null → 用 title 兜底，但仍标进待确认
-    const finalOrder = ordered ?? [...members].sort((a, b) => a.title.localeCompare(b.title));
+    // 依赖成环时 topoSort 返回 null → 按输入顺序兜底（同样不用 localeCompare：会随语言环境漂移），
+    // 成员已由 topoSort 标进待确认
+    const finalOrder = ordered ?? [...members];
     finalOrder.forEach((it, i) => assignments.push({ id: it.id, scenario: key, scenarioOrder: i + 1 }));
     scenarios.push({ key, questionIds: finalOrder.map(it => it.id) });
   }
