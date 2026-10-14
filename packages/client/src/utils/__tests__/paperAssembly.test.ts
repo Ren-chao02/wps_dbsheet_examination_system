@@ -126,6 +126,38 @@ describe('slotsFromItems — 编辑行展开为题位', () => {
     const roundtrip = slotsFromItems(itemsFromSlots(slots));
     expect((roundtrip[0].rule as any).schemaRefs).toEqual({ tables: ['员工信息表'] });
   });
+
+  it('教师声明的 schemaRefs 往返不丢（items → questions → items，覆盖编辑路径）', () => {
+    // 「打开旧卷 → 在组卷页声明结构 → 保存 → 再打开」这条路径必须原样回来：
+    // 声明是抽题等值校验的唯一依据，丢一次就等于静默关掉校验
+    const items: EditorItem[] = [{
+      kind: 'rule',
+      key: 'r1',
+      ruleType: 'comprehensive',
+      capabilityIds: ['cap-a'],
+      score: 10,
+      counts: { easy: 1, medium: 0, hard: 0 },
+      noDifficultyCount: 0,
+      schemaRefs: { tables: ['员工信息表'], fields: ['入职日期', '部门'] },
+    }];
+    const slots = slotsFromItems(items);
+    const back = itemsFromSlots(slots as unknown as PaperQuestion[]);
+    expect(back).toHaveLength(1);
+    expect((back[0] as RuleEditorItem).schemaRefs).toEqual({ tables: ['员工信息表'], fields: ['入职日期', '部门'] });
+  });
+
+  it('相邻但 schemaRefs 不同的规则题位不合并（分组不能把两种结构声明并成一行）', () => {
+    const slots = [
+      ruleSlot(10, 0, { capabilityIds: [], type: 'comprehensive', difficulty: 'easy', schemaRefs: { tables: ['员工信息表'] } }),
+      ruleSlot(10, 1, { capabilityIds: [], type: 'comprehensive', difficulty: 'easy', schemaRefs: { tables: ['订单表'] } }),
+      // 未声明结构（null）与已声明也不合并：一个是"不校验"，一个是"必须同一结构"
+      ruleSlot(10, 2, { capabilityIds: [], type: 'comprehensive', difficulty: 'easy' }),
+    ];
+    const items = itemsFromSlots(slots);
+    expect(items).toHaveLength(3);
+    expect((items[0] as RuleEditorItem).schemaRefs).toEqual({ tables: ['员工信息表'] });
+    expect((items[0] as RuleEditorItem).counts.easy).toBe(1);
+  });
 });
 
 describe('validateEditorItems — 保存前校验', () => {
