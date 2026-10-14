@@ -145,7 +145,7 @@ export default function AccountImport() {
             <h3>第一步：下载导入模板</h3>
             <Paragraph type="secondary" style={{ maxWidth: 480, margin: '0 auto 24px' }}>
               请先下载标准导入模板，按照模板格式填写账户信息后上传。
-            模板包含字段：用户名(必填)、密码(必填)、姓名、邮箱、角色编码。
+            模板包含字段：用户名(必填)、密码(必填)、姓名、邮箱、角色编码、院系编码（可选，第 6 列；填院系代码，留空则不归属院系）。
             </Paragraph>
             <Space>
               <Button type="primary" icon={<DownloadOutlined />} onClick={handleDownloadTemplate}>
