@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import { Select, Button, InputNumber, Popover, Input, Checkbox, Tag, Tooltip, Space, Spin } from 'antd';
 import { ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
-import type { Capability, Difficulty } from '../../../types';
+import type { Capability, Difficulty, SchemaRefs } from '../../../types';
 import { QUESTION_TYPE_LABELS } from '../../../utils/questionLabels';
 import { DIFFICULTY_LABELS, ruleItemTotal, type RuleEditorItem } from '../../../utils/paperAssembly';
 
@@ -30,12 +30,18 @@ interface RuleItemEditorProps {
 
 export function RuleItemEditor({ item, index, capabilities, onPatch, onRemove, onMove }: RuleItemEditorProps) {
   const [availability, setAvailability] = useState<Record<string, number> | null>(item.availability ?? null);
+  // 引用结构声明后的真实候选数（slot-preview 的 candidateCount）：声明写错了就是 0 道，
+  // 必须当场看见 —— 否则要到开考抽不出题才会发现
+  const [refsCandidate, setRefsCandidate] = useState<{ count: number; warning: string | null } | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [scopeSearch, setScopeSearch] = useState('');
+  const [refsOpen, setRefsOpen] = useState(false);
 
   const capsKey = (item.capabilityIds ?? []).join(',');
+  // 引用声明的比较键：声明变化要重查候选数（对象不能直接进依赖数组）
+  const refsKey = JSON.stringify(item.schemaRefs ?? null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -46,6 +52,9 @@ export function RuleItemEditor({ item, index, capabilities, onPatch, onRemove, o
         rule: {
           ...(item.ruleType ? { type: item.ruleType } : {}),
           capabilityIds: item.capabilityIds ?? [],
+          // 带上引用声明：candidateCount 必须是「声明之后真正可抽」的候选数。
+          // difficultyCounts 不受它影响（仍是分值一致口径），/N 的语义不变
+          ...(item.schemaRefs ? { schemaRefs: item.schemaRefs } : {}),
         },
         score: item.score,
       }, { signal: controller.signal })
@@ -53,6 +62,10 @@ export function RuleItemEditor({ item, index, capabilities, onPatch, onRemove, o
           const counts = res.data?.difficultyCounts ?? null;
           setAvailability(counts);
           onPatch(item.key, { availability: counts });
+          setRefsCandidate({
+            count: res.data?.candidateCount ?? 0,
+            warning: res.data?.warning ?? null,
+          });
           setLoading(false);
         })
         .catch(() => {
@@ -65,11 +78,28 @@ export function RuleItemEditor({ item, index, capabilities, onPatch, onRemove, o
     return () => { clearTimeout(timer); controller.abort(); };
     // 只在抽题条件变化时重新查询；onPatch 每次渲染都是新引用，不能进依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.key, item.ruleType, item.score, capsKey]);
+  }, [item.key, item.ruleType, item.score, capsKey, refsKey]);
+
+  /**
+   * 写回引用结构声明。两处讲究：
+   * 1. 标签先 trim + 去重：这些字符串与题目上存的表名/字段名逐字比对，多余空格会让等值校验全落空；
+   * 2. 两串都空 → 写 null 而不是 { tables: [], fields: [] }：后者是「真值」，
+   *    会被 slotsFromItems 原样发出、在服务端算出一个非空签名，反而把候选题全筛掉
+   *    （留空 = 不校验，语义必须是同一个）。
+   */
+  const writeSchemaRefs = (patch: Partial<SchemaRefs>) => {
+    const clean = (v?: string[]) => Array.from(new Set((v ?? []).map(s => s.trim()).filter(Boolean)));
+    const tables = clean(patch.tables ?? item.schemaRefs?.tables);
+    const fields = clean(patch.fields ?? item.schemaRefs?.fields);
+    onPatch(item.key, { schemaRefs: tables.length || fields.length ? { tables, fields } : null });
+  };
 
   const selectedCaps = item.capabilityIds ?? [];
   const filteredCaps = capabilities.filter(c =>
     c.name.toLowerCase().includes(scopeSearch.trim().toLowerCase()));
+  const schemaTables = item.schemaRefs?.tables ?? [];
+  const schemaFields = item.schemaRefs?.fields ?? [];
+  const schemaDeclared = schemaTables.length > 0 || schemaFields.length > 0;
 
   const toggleCap = (id: string, checked: boolean) => {
     const next = checked
@@ -172,6 +202,62 @@ export function RuleItemEditor({ item, index, capabilities, onPatch, onRemove, o
         >
           <Button size="small" style={{ minWidth: 120 }}>
             {selectedCaps.length > 0 ? `已选 ${selectedCaps.length} 个知识点` : '选择范围'}
+          </Button>
+        </Popover>
+      </div>
+
+      {/*
+        引用结构声明：同题位的候选题必须引用同一份表结构，否则变体题在学生各自的表格里做不出来。
+        声明填错（错别字、把 unions 只写了 requires 的一半）= 抽不出题，所以候选数当场回显。
+      */}
+      <div className="rule-field">
+        <label>引用结构</label>
+        <Popover
+          open={refsOpen}
+          onOpenChange={setRefsOpen}
+          trigger="click"
+          placement="bottomLeft"
+          content={
+            <div style={{ width: 320 }}>
+              <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>
+                开考抽题只会在「引用同一份表结构」的候选题里选（表名/字段名逐字比对，多为选填）。
+                留空 = 这个题位不做结构校验。
+              </div>
+              <div style={{ fontSize: 12, marginBottom: 4 }}>表名</div>
+              <Select
+                mode="tags"
+                size="small"
+                placeholder="如：员工信息表（回车添加）"
+                value={schemaTables}
+                onChange={v => writeSchemaRefs({ tables: v })}
+                style={{ width: '100%', marginBottom: 8 }}
+                tokenSeparators={[',', '，']}
+              />
+              <div style={{ fontSize: 12, marginBottom: 4 }}>字段名</div>
+              <Select
+                mode="tags"
+                size="small"
+                placeholder="如：入职日期（回车添加）"
+                value={schemaFields}
+                onChange={v => writeSchemaRefs({ fields: v })}
+                style={{ width: '100%' }}
+                tokenSeparators={[',', '，']}
+              />
+              {schemaDeclared && (
+                <div style={{ fontSize: 12, marginTop: 6, color: '#999' }}>
+                  已声明：{[...schemaTables, ...schemaFields].join('、')}
+                </div>
+              )}
+              {schemaDeclared && refsCandidate && (
+                <div style={{ fontSize: 12, marginTop: 2, color: refsCandidate.count === 0 ? 'var(--apple-red)' : '#999' }}>
+                  {refsCandidate.warning ?? `按此声明可抽的候选题：${refsCandidate.count} 道`}
+                </div>
+              )}
+            </div>
+          }
+        >
+          <Button size="small" style={{ minWidth: 120 }} type={schemaDeclared ? 'primary' : 'default'} ghost={schemaDeclared}>
+            {schemaDeclared ? `表 ${schemaTables.length} · 字段 ${schemaFields.length}` : '未声明'}
           </Button>
         </Popover>
       </div>

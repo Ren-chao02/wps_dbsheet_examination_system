@@ -40,7 +40,7 @@ export interface RuleEditorItem {
   counts: Record<Difficulty, number>;
   /** 旧版规则：未指定难度的题位数量（原样保留往返，UI 只读展示） */
   noDifficultyCount: number;
-  /** 引用结构声明（UI 不编辑，仅透传保留） */
+  /** 引用结构声明：抽题等值校验依据；教师可在组卷页编辑（留空 = 不校验） */
   schemaRefs?: SchemaRefs | null;
   /** 各难度可用题数（slot-preview 填充，仅用于显示 /N 与校验） */
   availability?: Record<Difficulty, number> | null;
