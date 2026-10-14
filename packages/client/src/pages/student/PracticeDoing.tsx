@@ -62,8 +62,9 @@ const typeLabels: Record<string, string> = {
 };
 
 /** 读步骤记忆并夹取到 [0, 题数-1]（越界/脏值/隐私模式一律回落 0，避免 currentQuestion 为 undefined）。
- *  放组件外：模块级函数引用稳定，恢复 effect 的依赖数组不用挂它（也方便两处调用点共用同一夹取口径） */
-function clampSavedStep(recordId: string | undefined, questionCount: number) {
+ *  放组件外：模块级函数引用稳定，恢复 effect 的依赖数组不用挂它（也方便两处调用点共用同一夹取口径）；
+ *  export 供回归用例直接钉夹取边界（组件级断言见 pages/student/__tests__/practice-doing-initial-step） */
+export function clampSavedStep(recordId: string | undefined, questionCount: number) {
   try {
     const saved = Number(localStorage.getItem(`practice_step:${recordId}`) ?? '0');
     if (!Number.isFinite(saved) || saved <= 0) return 0;
@@ -194,6 +195,21 @@ export function PracticeDoing() {
       const res: GradingResult = await practiceApi.submit(recordId!);
       setResult(res);
     } catch (err: any) {
+      // 409 = 这条记录已经提交过（典型：交卷后按 F5，还原的 state 把旧题面又摆出来，再点提交）。
+      // 只弹错误会把学生困在答题目上（再点还是 409）——把记录状态拉回来接进结果态/判分中态。
+      if (err.response?.status === 409 && recordId) {
+        try {
+          const snap = await practiceApi.getRecord(recordId);
+          if (snap.data.status === 'graded') {
+            if (Array.isArray(snap.data.details)) {
+              setResult(snap.data as unknown as GradingResult);
+            } else {
+              setGradingPending(true);
+            }
+            return;
+          }
+        } catch { /* 拉取失败：落回下面的通用报错 */ }
+      }
       message.error(err.response?.data?.message || '判分失败，请重试');
     } finally {
       setSubmitting(false);
