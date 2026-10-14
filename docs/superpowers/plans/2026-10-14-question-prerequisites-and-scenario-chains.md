@@ -1901,14 +1901,44 @@ const [deriveUnresolved, setDeriveUnresolved] = useState<string[]>([]);
 // import { buildRequirementHint } from '../../utils/question-refs-hint';
 ```
 
-- [ ] **Step 3: 手工验证（本地起两端）**
+- [ ] **Step 3: 服务端保存链路补 requires/creates（**不补就一保存丢光**）**
+
+> 实施时发现：`routes/questions.ts:59-62` 的 zod 只声明了 `schemaRefs: {tables, fields}`，zod 默认 **strip** 未知键 → 推导来的 `requires/creates` 在 POST/PUT 时被静默丢弃；而 `toJsonInput(data.schemaRefs)` 写的就是过滤后的对象。后果有两层：新卡片推导出的契约存不进去；**存量数据也危险**——教师任何一次编辑保存，都会把回填进去的 requires/creates 抹掉。
+
+`routes/questions.ts` 顶部（`questionSchema` 之前）加：
+
+```ts
+/** 前置契约的一组引用（表 / 表+字段 / 表+视图） */
+const refGroupSchema = z.object({
+  tables: z.array(z.string()).optional(),
+  fields: z.array(z.object({ table: z.string(), field: z.string() })).optional(),
+  views: z.array(z.object({ table: z.string(), view: z.string() })).optional(),
+});
+```
+
+并把 `questionSchema.schemaRefs` 换成：
+
+```ts
+  /** 实操题引用的表名/字段名声明（抽题等值校验用）+ 前置契约（学生提示条用） */
+  schemaRefs: z.object({
+    // requires/creates 必须显式声明：zod 默认 strip，不声明就是"一保存丢光"（实测踩过）
+    requires: refGroupSchema.optional(),
+    creates: refGroupSchema.optional(),
+    tables: z.array(z.string()).optional(),
+    fields: z.array(z.string()).optional(),
+  }).nullable().optional(),
+```
+
+**往返测试**（新增，`routes/__tests__/questions-schema-refs-roundtrip.test.ts`）：mock prisma 的 `question.create`，POST 一道带完整 `{requires, creates, tables, fields}` 的题 → 断言 `create` 收到的 data 里 `schemaRefs` **三组俱在**（含 `requires.views` / `creates.fields` 的嵌套形状）。用例必须对"zod 又漏声明"这种情况变红。
+
+- [ ] **Step 4: 手工验证（本地起两端）**
 
 Run: `npm run dev`（根目录），浏览器登录教师账号 → 题库 → 打开「创建时间字段并区分与日期字段的差异」→ 点「从判分规则自动推导」
 Expected: 「需要（表名）」出现 `员工信息表`；「学生将看到」预览出现与设计文档逐字一致的提示条。改动保存后刷新页面，值仍在。
 
 （若该题目还没跑过 Task 6 的回填，先跑一次 `--apply`。）
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 5: 提交**
 
 ```bash
 git commit -m "feat(teacher): 出题页前置契约卡片（自动推导 + 学生端预览）" -- \
