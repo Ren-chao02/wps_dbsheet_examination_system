@@ -83,6 +83,79 @@ export async function behaviorWhere(ctx: ScopeCtx): Promise<Record<string, any>>
   return { examId: { in: exams.map((e) => e.id) } };
 }
 
+// ── 院系池（P2）：departmentId 为空 = 校级资源；sharedToSchool = 显式上架校级池 ──
+
+/** 题库读范围：admin 全部；其余 = 自己 ∪ 本院系 ∪ 校级(null) ∪ 校级池(shared) */
+export async function questionWhere(ctx: ScopeCtx): Promise<Record<string, any>> {
+  if (ctx.isAdmin) return {};
+  return {
+    OR: [
+      { createdBy: ctx.userId },
+      ...(ctx.departmentId ? [{ departmentId: ctx.departmentId }] : []),
+      { departmentId: null },
+      { sharedToSchool: true },
+    ],
+  };
+}
+
+/** 试卷读范围：与题库同构 */
+export async function paperWhere(ctx: ScopeCtx): Promise<Record<string, any>> {
+  if (ctx.isAdmin) return {};
+  return {
+    OR: [
+      { createdBy: ctx.userId },
+      ...(ctx.departmentId ? [{ departmentId: ctx.departmentId }] : []),
+      { departmentId: null },
+      { sharedToSchool: true },
+    ],
+  };
+}
+
+/** 题目单资源读校验（与 questionWhere 同一套规则的三态版） */
+export async function assertQuestionRead(ctx: ScopeCtx, questionId: string): Promise<AccessVerdict> {
+  const q = await prisma.question.findUnique({
+    where: { id: questionId },
+    select: { createdBy: true, departmentId: true, sharedToSchool: true },
+  });
+  if (!q) return 'not-found';
+  if (ctx.isAdmin) return 'ok';
+  if (q.createdBy === ctx.userId) return 'ok';
+  if (q.departmentId === null) return 'ok';
+  if (q.sharedToSchool) return 'ok';
+  if (ctx.departmentId && q.departmentId === ctx.departmentId) return 'ok';
+  return 'forbidden';
+}
+
+/** 试卷单资源读校验（同规则） */
+export async function assertPaperRead(ctx: ScopeCtx, paperId: string): Promise<AccessVerdict> {
+  const p = await prisma.paper.findUnique({
+    where: { id: paperId },
+    select: { createdBy: true, departmentId: true, sharedToSchool: true },
+  });
+  if (!p) return 'not-found';
+  if (ctx.isAdmin) return 'ok';
+  if (p.createdBy === ctx.userId) return 'ok';
+  if (p.departmentId === null) return 'ok';
+  if (p.sharedToSchool) return 'ok';
+  if (ctx.departmentId && p.departmentId === ctx.departmentId) return 'ok';
+  return 'forbidden';
+}
+
+/**
+ * 抽题候选池（P2）：跟随「试卷」的归属而不是当前请求者 —— 开考生成是系统行为，
+ * 候选池必须是组卷老师当时可用的池子，否则换个人触发开考抽出来的题就变了。
+ */
+export function questionPoolWhereForPaper(paper: { createdBy: string | null; departmentId: string | null }): Record<string, any> {
+  return {
+    OR: [
+      ...(paper.createdBy ? [{ createdBy: paper.createdBy }] : []),
+      ...(paper.departmentId ? [{ departmentId: paper.departmentId }] : []),
+      { departmentId: null },
+      { sharedToSchool: true },
+    ],
+  };
+}
+
 // ── 单资源断言 ──
 
 /**
