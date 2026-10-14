@@ -43,14 +43,21 @@ batchRouter.get('/', async (req: Request, res: Response) => {
     const skip = (Number(page) - 1) * Number(pageSize);
     const take = Number(pageSize);
 
-    const where: any = {};
-    if (status) where.status = String(status);
+    // 数据范围：批次读 = admin 全部；教师仅「我创建」（与写路径 checkBatchAccess 同口径）。
+    // 用 AND 组合而非对象展开 —— 下面的 keyword 会占用 OR 字段，展开会互相覆盖。
+    const conditions: any[] = [
+      req.user!.role === 'admin' ? {} : { createdBy: req.user!.userId },
+    ];
+    if (status) conditions.push({ status: String(status) });
     if (keyword) {
-      where.OR = [
-        { name: { contains: String(keyword), mode: 'insensitive' } },
-        { description: { contains: String(keyword), mode: 'insensitive' } },
-      ];
+      conditions.push({
+        OR: [
+          { name: { contains: String(keyword), mode: 'insensitive' } },
+          { description: { contains: String(keyword), mode: 'insensitive' } },
+        ],
+      });
     }
+    const where: any = { AND: conditions };
 
     const [batches, total] = await Promise.all([
       prisma.examBatch.findMany({
@@ -98,6 +105,12 @@ batchRouter.get('/:id', async (req: Request, res: Response) => {
 
     if (!batch) {
       return res.status(404).json({ message: '批次不存在' });
+    }
+
+    // 数据范围：与写路径 checkBatchAccess 同口径（admin 或创建者），
+    // 详情里的子考试数据同样敏感，不能比写路径更宽。
+    if (req.user!.role !== 'admin' && batch.createdBy !== req.user!.userId) {
+      return res.status(403).json({ message: '无权查看该批次，请联系批次创建者或管理员' });
     }
 
     res.json(batch);
