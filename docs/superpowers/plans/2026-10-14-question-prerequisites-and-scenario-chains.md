@@ -349,11 +349,11 @@ git commit -m "feat(engine): 前置契约推导器（answerRules → requires/cr
 - Produces: `clusterScenarios(items: ClusterInput[]): ClusterResult`；类型 `ClusterInput`（`{ id, title, requires: string[], creates: string[] }`）、`ClusterAssignment`（`{ id, scenario, scenarioOrder }`）、`ClusterPending`（`{ id, reason }`）、`ClusterResult`（`{ assignments, pending, scenarios }`）
 
 **归链规则**（设计文档第五节）：
-1. 同一道题 `creates` 出的多张表用并查集合并成一条链，链名 = 表名排序后用 ` + ` 连接；
+1. 同一道题 `creates` 出的多张表用并查集合并成一条链；**有 creates 的题把它 `requires` 的表也并进来**（"这题同时用到"本身就是它们属于同一场景的证据）；链名 = 表名排序后用 ` + ` 连接；
 2. `creates` 非空的题归到这些表所在链；
 3. 只有 `requires` 的题：若其 requires 的表**没有任何题创建** → 本题自成链根（新建一条链）；若落在同一条链上 → 归该链；跨两条链 → `pending('跨链：同时引用 …')`；
 4. 无表信息的题 → `pending('规则里没有表信息')`；
-5. 链内拓扑排序：`creates(A) ∩ requires(B) ≠ ∅ ⇒ A 前 B 后`，同层按 title 排序保证确定性；成环 → 剩余按 title 排 + `pending('依赖成环，顺序需人工确认')`。
+5. 链内拓扑排序：`creates(A) ∩ requires(B) ≠ ∅ ⇒ A 前 B 后`，同层按**输入顺序**（调用方传入的即教学顺序；**不用 `localeCompare`** —— 它随语言环境变化，会让链顺序在不同机器上漂移）；成环 → 按输入顺序兜底 + 把**卡住的成员**标 `pending('依赖成环，顺序需人工确认')`。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -411,7 +411,9 @@ describe('clusterScenarios', () => {
       q('q2', '创建项目表任务表', ['项目表', '任务表']),
       q('q9', '设置关联字段允许多条记录关联', [], ['任务表', '员工信息表']),
     ]);
-    expect(r.scenarios.map(s => s.key).sort()).toEqual(['员工信息表', '任务表 + 项目表']);
+    // 链列表的顺序不是本用例要测的东西（那是输出顺序），用集合比较 ——
+    // `.sort()` 是码点序（任 U+4EFB < 员 U+5458），与人类书写顺序不同，写死数组会自相矛盾
+    expect(new Set(r.scenarios.map(s => s.key))).toEqual(new Set(['员工信息表', '任务表 + 项目表']));
     expect(r.pending).toEqual([{ id: 'q9', reason: '跨链：需要 任务表、员工信息表（分属两条链），请人工指定场景' }]);
   });
 
@@ -507,7 +509,13 @@ export function clusterScenarios(items: ClusterInput[]): ClusterResult {
   const chainOf = new Map<string, string>();          // questionId → 链根
   const pending: ClusterPending[] = [];
   for (const it of items) {
-    if (it.creates.length > 0) { chainOf.set(it.id, dsu.find(it.creates[0])); continue; }
+    if (it.creates.length > 0) {
+      // 既创建又需要别的表 = 这题把它们用在一起了 → 这些表属于同一场景，并链。
+      // （只 requires、不 creates 的跨链题仍进人工清单，不在这里并 —— 那才是要人定的）
+      for (const t of it.requires) dsu.union(it.creates[0], t);
+      chainOf.set(it.id, dsu.find(it.creates[0]));
+      continue;
+    }
 
     const owners = [...new Set(it.requires.filter(t => creatorOf.has(t)).map(t => dsu.find(t)))];
     if (it.requires.length === 0) {
@@ -554,18 +562,20 @@ export function clusterScenarios(items: ClusterInput[]): ClusterResult {
     scenarios.push({ key, questionIds: finalOrder.map(it => it.id) });
   }
 
-  // 输出排序稳定：链按 key、链内按顺序，便于测试与人工核对
-  scenarios.sort((a, b) => a.key.localeCompare(b.key));
-  assignments.sort((a, b) => a.scenario.localeCompare(b.scenario) || a.scenarioOrder - b.scenarioOrder);
-  pending.sort((a, b) => a.id.localeCompare(b.id));
+  // 输出保持首次出现顺序（链按首次出现、链内按已排好的顺序、pending 按入队顺序）。
+  // 这里**不要**按 key/id 重排：中文 localeCompare 依赖语言环境，会让链顺序在不同机器上漂移，
+  // 而链顺序是学生直接看到的。输入顺序 = 调用方给的顺序（回填脚本按分类 sortOrder → createdAt 取数）。
   return { assignments, pending, scenarios };
 }
 
 /**
  * 链内拓扑排序：creates(A) ∩ requires(B) ≠ ∅ ⇒ A 在 B 前。
- * 同层按 title 排序（确定性）。成环返回 null，由调用方兜底并标进待确认。
+ * 同层按**输入顺序**取（调用方传入的就是教学顺序）；不用 title 排序 —— 中文 localeCompare
+ * 与语言环境有关，会让顺序在不同环境下漂移。成环返回 null，由调用方兜底并标进待确认。
  */
 function topoSort(members: ClusterInput[], pending: ClusterPending[]): ClusterInput[] | null {
+  const index = new Map(members.map((m, i) => [m.id, i]));
+  const byOrder = (a: ClusterInput, b: ClusterInput) => index.get(a.id)! - index.get(b.id)!;
   const indegree = new Map<string, number>();
   const edges = new Map<string, string[]>();   // 前置题 → 后继题
   const byId = new Map(members.map(m => [m.id, m]));
@@ -579,7 +589,7 @@ function topoSort(members: ClusterInput[], pending: ClusterPending[]): ClusterIn
     }
   }
 
-  const ready = members.filter(m => (indegree.get(m.id) ?? 0) === 0).sort((a, b) => a.title.localeCompare(b.title));
+  const ready = members.filter(m => (indegree.get(m.id) ?? 0) === 0).sort(byOrder);
   const out: ClusterInput[] = [];
   while (ready.length > 0) {
     const cur = ready.shift()!;
@@ -587,12 +597,16 @@ function topoSort(members: ClusterInput[], pending: ClusterPending[]): ClusterIn
     for (const next of edges.get(cur.id) ?? []) {
       const d = (indegree.get(next) ?? 0) - 1;
       indegree.set(next, d);
-      if (d === 0) { ready.push(byId.get(next)!); ready.sort((a, b) => a.title.localeCompare(b.title)); }
+      if (d === 0) { ready.push(byId.get(next)!); ready.sort(byOrder); }
     }
   }
 
   if (out.length !== members.length) {
-    for (const m of members) pending.push({ id: m.id, reason: '依赖成环，顺序需人工确认' });
+    // 只标"卡住"的成员（入度没有归零的），不是整条链 —— 19 题的链里有一个 2 题环，
+    // 整链标记会在人工清单里刷 19 条噪声。卡住的集合含环本身 + 受环影响的下游题。
+    for (const m of members) {
+      if ((indegree.get(m.id) ?? 0) > 0) pending.push({ id: m.id, reason: '依赖成环，顺序需人工确认' });
+    }
     return null;
   }
   return out;
@@ -2861,3 +2875,8 @@ Task 17 收尾（全部）
 4. **题库的「状态标签」实现为计算字段**：不新增数据库状态列，列表接口现算 `unsupportedActions`——规则实现变化时标记自动跟着变，不会留下过期状态。
 5. **补充了设计文档第七节第 5 条第 2 项目标（组卷时过滤）**：Task 16 是写计划时补进来的，设计文档里只写了"组卷时过滤"一句，计划把它落成了具体任务。
 6. **回填脚本对「待人工确认」题的处理**：仍写入从规则推导出的 `schemaRefs` 契约，但**不写 scenario/scenarioOrder**（等教师指定）——设计文档没写这么细，计划里明确。
+7. **Task 2 的四处裁定（实施时发现简报自身矛盾，NEEDS_CONTEXT 后由控制器裁决，设计文档已同步）**：
+   ① 同层/输出排序一律用**输入顺序**，不用 `title.localeCompare`（中文 locale 依赖会让链顺序在不同环境漂移）；
+   ② 有 `creates` 的题把 `requires` 的表并进同一条链（原计划只在"同题 creates 多表"时并链，导致互相依赖的两题落在两条单题链里、环永远检测不到）；只 requires 的跨链题仍进人工清单；
+   ③ 成环时只标"卡住"的成员（环本身 + 受环影响的下游题），不标整条链；
+   ④ T4 用例的期望数组与其自身的码点序 `sort()` 打架（任何实现都过不了），改为集合比较。
