@@ -80,6 +80,7 @@ accountRouter.get('/', async (req: Request, res: Response) => {
           employeeId: true,
           accountStatus: true,
           systemRoleId: true,
+          departmentId: true, // P2：管理端编辑表单需预填所属院系
           systemRole: {
             select: { roleCode: true, roleName: true },
           },

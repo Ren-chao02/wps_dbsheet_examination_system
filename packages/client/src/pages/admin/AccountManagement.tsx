@@ -24,12 +24,17 @@ const roleColorMap: Record<string, string> = {
   student: 'green',
 };
 
+// GET /accounts 已返回 departmentId（P2），但 types 里的 Account 暂未收录该字段；
+// 这里局部扩展，避免为一个字段把改动扩散到第四个文件
+type AccountRow = Account & { departmentId?: string | null };
+
 export default function AccountManagement() {
   const navigate = useNavigate();
   const [data, setData] = useState<PaginatedResponse<Account>>({
     data: [], total: 0, page: 1, pageSize: 20,
   });
   const [roles, setRoles] = useState<SystemRole[]>([]);
+  const [departments, setDepartments] = useState<{ id: string; name: string; code: string }[]>([]);
   const [allClasses, setAllClasses] = useState<{ id: string; name: string; code: string; departmentName?: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -52,11 +57,12 @@ export default function AccountManagement() {
     } catch { /* ignore */ }
   };
 
-  // 加载全部班级列表（从院系树展平），用于教师班级分配
-  const fetchAllClasses = async () => {
+  // 加载院系树：班级展平供教师班级分配，「所属院系」下拉取自同一响应（不再多发请求）
+  const fetchDepartments = async () => {
     try {
       const res = await api.get('/departments');
       const deps = res.data.data || [];
+      setDepartments(deps.map((d: any) => ({ id: d.id, name: d.name, code: d.code })));
       const list: { id: string; name: string; code: string; departmentName?: string }[] = [];
       for (const dep of deps) {
         for (const major of dep.majors || []) {
@@ -69,7 +75,7 @@ export default function AccountManagement() {
     } catch { /* ignore */ }
   };
 
-  useEffect(() => { fetchAccounts(); fetchRoles(); fetchAllClasses(); }, []);
+  useEffect(() => { fetchAccounts(); fetchRoles(); fetchDepartments(); }, []);
 
   const handleCreate = () => {
     setEditingAccount(null);
@@ -78,7 +84,7 @@ export default function AccountManagement() {
     setModalOpen(true);
   };
 
-  const handleEdit = async (account: Account) => {
+  const handleEdit = async (account: AccountRow) => {
     setEditingAccount(account);
     let classIds: string[] = [];
     if (account.role === 'teacher') {
@@ -87,6 +93,9 @@ export default function AccountManagement() {
         classIds = (res.data.data || []).map((c: any) => c.id);
       } catch { classIds = []; }
     }
+    // 先清空再填当前账户的值：否则「切换编辑不同账户」时，上一次留在表单里的
+    // 隐藏字段（如非教师角色的 departmentId）会被误提交
+    form.resetFields();
     form.setFieldsValue({
       realName: account.realName,
       gender: account.gender,
@@ -95,6 +104,7 @@ export default function AccountManagement() {
       role: account.role,
       systemRoleId: account.systemRoleId,
       accountStatus: account.accountStatus,
+      departmentId: account.departmentId ?? undefined,
       classIds,
     });
     setModalOpen(true);
@@ -112,6 +122,7 @@ export default function AccountManagement() {
           role: values.role,
           systemRoleId: values.systemRoleId || null,
           accountStatus: values.accountStatus,
+          departmentId: values.departmentId || null,
         });
         // 教师角色：同步更新负责班级
         if (values.role === 'teacher') {
@@ -134,6 +145,7 @@ export default function AccountManagement() {
           email: values.email || null,
           role: values.role,
           systemRoleId: values.systemRoleId || null,
+          departmentId: values.departmentId || null,
         });
         message.success('创建成功');
       }
@@ -252,6 +264,10 @@ export default function AccountManagement() {
           {v === 'admin' ? '管理员' : v === 'teacher' ? '教师' : '学生'}
         </Tag>
       ),
+    },
+    {
+      title: '院系', dataIndex: 'departmentId', key: 'departmentId', width: 120, ellipsis: true,
+      render: (v: string | null | undefined) => departments.find((d) => d.id === v)?.name || '—',
     },
     {
       title: '状态', dataIndex: 'accountStatus', key: 'accountStatus', width: 80,
@@ -380,6 +396,26 @@ export default function AccountManagement() {
           </Form.Item>
           <Form.Item name="systemRoleId" label="系统角色">
             <Select allowClear placeholder="选择系统角色" options={roleOptions} />
+          </Form.Item>
+          {/* 教师角色：所属院系（决定其题库/试卷可见范围；仅当角色为 teacher 时显示） */}
+          <Form.Item shouldUpdate={(prev, cur) => prev.role !== cur.role} noStyle>
+            {({ getFieldValue }) =>
+              getFieldValue('role') === 'teacher' ? (
+                <Form.Item
+                  name="departmentId"
+                  label="所属院系"
+                  tooltip="教师归属院系决定其题库/试卷可见范围；留空 = 未分配（仅校级资源可见）"
+                >
+                  <Select
+                    allowClear
+                    placeholder="未设置（校级）"
+                    options={departments.map((d) => ({ value: d.id, label: `${d.name} (${d.code})` }))}
+                    showSearch
+                    optionFilterProp="label"
+                  />
+                </Form.Item>
+              ) : null
+            }
           </Form.Item>
           {/* 教师角色：负责班级多选（仅当角色为 teacher 时显示） */}
           <Form.Item shouldUpdate={(prev, cur) => prev.role !== cur.role} noStyle>
