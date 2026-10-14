@@ -57,6 +57,8 @@ describe('GET /api/practice/scenarios', () => {
     expect(s.questionCount).toBe(19);
     expect(s.totalScore).toBe(190);
     expect(s.running).toEqual({ recordId: 'rec-1', startedAt: '2026-10-14T01:00:00.000Z' });
+    // 学生端接口：进度查询必须按本人过滤——删掉这个 where 就等于把别人的进度发出去，必须有回归守卫
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { studentId: 's-1' } }));
   });
 
   // 卡片徽标的另一种状态：做完并判过分 → latest（简报只覆盖了 running，这条补上得分映射）
@@ -76,5 +78,49 @@ describe('GET /api/practice/scenarios', () => {
       recordId: 'rec-2', score: 150, maxScore: 190, passed: true,
       submittedAt: '2026-10-13T01:30:00.000Z',
     });
+  });
+
+  // 「进行中优先」语义：同一场景有较新的 graded + 较旧的 in_progress 时，
+  // 卡片必须显示能继续的那条（学生更关心"没做完的"），而不是最近一次成绩
+  it('较旧的 in_progress 压过较新的 graded（进行中优先）', async () => {
+    findMany.mockResolvedValueOnce([
+      {
+        id: 'rec-new-graded', status: 'graded', score: 180, maxScore: 190, passed: true,
+        startedAt: new Date('2026-10-13T01:00:00Z'), submittedAt: new Date('2026-10-13T02:00:00Z'),
+        questions: [{ questionId: 'q1', scenarioKey: '员工信息表' }],
+      },
+      {
+        id: 'rec-old-running', status: 'in_progress', score: null, maxScore: 190, passed: null,
+        startedAt: new Date('2026-10-12T01:00:00Z'), submittedAt: null,
+        questions: [{ questionId: 'q1', scenarioKey: '员工信息表' }],
+      },
+    ]);
+    const res = await request(app).get('/api/practice/scenarios');
+    expect(res.status).toBe(200);
+    const s = res.body.scenarios[0];
+    expect(s.running).toEqual({ recordId: 'rec-old-running', startedAt: '2026-10-12T01:00:00.000Z' });
+    expect(s.latest).toBeUndefined();
+  });
+
+  // 旧快照（Task 13 落 scenarioKey 之前的记录）不得计入任何场景——
+  // 否则自由练习的记录会被错认成场景进度，卡片显示错误的徽标
+  it('questions 快照缺 scenarioKey 的旧记录直接跳过（场景显示未开始）', async () => {
+    findMany.mockResolvedValueOnce([
+      {
+        id: 'rec-legacy-graded', status: 'graded', score: 100, maxScore: 190, passed: true,
+        startedAt: new Date('2026-10-10T01:00:00Z'), submittedAt: new Date('2026-10-10T02:00:00Z'),
+        questions: [],
+      },
+      {
+        id: 'rec-legacy-running', status: 'in_progress', score: null, maxScore: 190, passed: null,
+        startedAt: new Date('2026-10-09T01:00:00Z'), submittedAt: null,
+        questions: [{ questionId: 'q-legacy' }], // 首元素存在但没有 scenarioKey 键
+      },
+    ]);
+    const res = await request(app).get('/api/practice/scenarios');
+    expect(res.status).toBe(200);
+    const s = res.body.scenarios[0];
+    expect(s.running).toBeUndefined();
+    expect(s.latest).toBeUndefined();
   });
 });
