@@ -4,6 +4,7 @@ import { Card, Statistic, Row, Col, Collapse, Tag, Spin, Empty, message, Result,
 import { TrophyOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import type { StudentSubmission } from '../../types';
+import { friendlyRuleMessage } from '../../utils/rule-message';
 
 const { Title } = Typography;
 
@@ -185,7 +186,8 @@ export function ExamResultPage() {
                         {vrs.map(vr => (
                           <Tooltip
                             key={vr.id}
-                            title={vr.errorMessage || `${actionLabels[vr.action] || vr.action}`}
+                            // 缺表类错误翻成人话（"先去建这张表"）；其余 message 原样展示
+                            title={friendlyRuleMessage(vr.errorMessage) || `${actionLabels[vr.action] || vr.action}`}
                           >
                             <Tag
                               color={vr.needsReview ? 'warning' : vr.passed ? 'success' : 'error'}

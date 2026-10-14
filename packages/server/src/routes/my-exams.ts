@@ -166,9 +166,21 @@ function toStudentQuestion(q: any, extra: Record<string, unknown> = {}) {
     ? q.objectiveAnswer.options.map((o: any) => ({ key: String(o?.key ?? ''), text: String(o?.text ?? '') }))
     : undefined;
 
+  // 前置契约：只下发 requires（学生需要准备什么），creates 是预期产物、属于答案信息，绝不下发。
+  // 空 requires 不发字段，前端据此不渲染提示条。
+  const req = q?.schemaRefs?.requires;
+  const requires = req && (req.tables?.length || req.fields?.length || req.views?.length)
+    ? {
+        tables: Array.isArray(req.tables) ? req.tables.map(String) : [],
+        fields: Array.isArray(req.fields) ? req.fields.map((f: any) => ({ table: String(f?.table ?? ''), field: String(f?.field ?? '') })) : [],
+        views: Array.isArray(req.views) ? req.views.map((v: any) => ({ table: String(v?.table ?? ''), view: String(v?.view ?? '') })) : [],
+      }
+    : undefined;
+
   return {
     id, title, description, type, difficulty, score, hints, tags, primaryCategoryId, secondaryCategoryId,
     ...(options ? { options } : {}),
+    ...(requires ? { requires } : {}),
     ...extra,
   };
 }

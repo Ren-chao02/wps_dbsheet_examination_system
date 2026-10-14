@@ -1,3 +1,5 @@
+import type { StudentRequires } from '../utils/question-refs-hint';
+
 export interface User {
   id: string;
   username: string;
@@ -168,6 +170,9 @@ export interface StudentExamQuestion {
   primaryCategoryId: string | null;
   secondaryCategoryId: string | null;
   options?: ObjectiveOption[]; // 仅客观题下发，不含正确答案（见 server toStudentQuestion）
+  // 前置契约：本题要求哪些表/字段/视图先存在（服务端只下发 requires，
+  // creates 是预期产物、属于答案，绝不下发）。空要求时服务端不发该字段。
+  requires?: StudentRequires;
   scoreOverride: number | null;
   sortOrder: number;
 }
