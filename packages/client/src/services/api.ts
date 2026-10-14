@@ -71,6 +71,9 @@ export const practiceApi = {
     scenarioKey?: string;
   }) => api.post('/practice/start', data).then(r => r.data),
 
+  /** 断点续做：按 recordId 恢复题目快照（graded 时含判分结果，可直接进结果态） */
+  getRecord: (recordId: string) => api.get(`/practice/records/${recordId}`),
+
   /** 提交练习并判分 */
   submit: (recordId: string) =>
     api.post(`/practice/${recordId}/submit`).then(r => r.data),

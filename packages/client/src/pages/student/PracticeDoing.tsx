@@ -65,7 +65,7 @@ export function PracticeDoing() {
   const location = useLocation();
   const payload = (location.state as StartPayload | null);
 
-  const [questions] = useState<PracticeQuestion[]>(payload?.questions || []);
+  const [questions, setQuestions] = useState<PracticeQuestion[]>(payload?.questions || []);
   const [shareUrl, setShareUrl] = useState<string | null>(payload?.shareUrl || null);
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(!payload);
@@ -128,21 +128,48 @@ export function PracticeDoing() {
     );
   };
 
-  // 若无 state（如刷新页面），仅能恢复 shareUrl；questions 快照需后端补 GET /practice/:recordId 接口
+  // 无 state（刷新 / 换设备 / 从「继续」进来）：按 recordId 拉快照恢复。
+  // 链式练习十几步，一次误刷新就全废是不可接受的。
   useEffect(() => {
     if (payload) return;
+    let cancelled = false;
     (async () => {
       try {
-        const assignment = await practiceApi.getAssignment();
-        setShareUrl(assignment?.shareUrl || null);
-        message.warning('刷新后题目无法恢复，请返回重新开练');
+        const res = await practiceApi.getRecord(recordId!);
+        if (cancelled) return;
+        if (res.data.status === 'graded') {
+          // details 是数组才进结果态：提交后判分中的窗口里 status 已置 graded、
+          // details 还没写回，此时进结果页会因 details 为 null 白屏
+          if (Array.isArray(res.data.details)) {
+            setResult(res.data as unknown as GradingResult);
+          } else {
+            message.info('判分进行中，请稍后刷新查看结果');
+          }
+          return;
+        }
+        setQuestions(res.data.questions ?? []);
+        setShareUrl(res.data.shareUrl ?? null);
+        // 步骤记忆：同一台设备上回到上次作答的那一步（换设备则从头开始翻，不影响作答内容）。
+        // 读取单独 try/catch：存储被禁用时别把整条恢复流程带进下面的错误分支。
+        let saved = 0;
+        try { saved = Number(localStorage.getItem(`practice_step:${recordId}`) ?? '0'); } catch { /* 隐私模式忽略 */ }
+        // 越界（脏值/题目被删）回落到第一题，避免 currentQuestion 为 undefined
+        const maxStep = Math.max((res.data.questions?.length ?? 0) - 1, 0);
+        setCurrentStep(Number.isFinite(saved) && saved > 0 ? Math.min(saved, maxStep) : 0);
       } catch {
-        message.error('加载失败');
+        message.error('练习记录加载失败，请返回重新开始');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, [payload]);
+    return () => { cancelled = true; };
+  }, [payload, recordId]);
+
+  /** 切题：更新当前步并写入步骤记忆（刷新后回到这一步） */
+  const gotoStep = (n: number) => {
+    setCurrentStep(n);
+    try { localStorage.setItem(`practice_step:${recordId}`, String(n)); } catch { /* 隐私模式忽略 */ }
+  };
 
   // 按 demo-wps-embed.html「全部显示」模式加载：直接使用分享链接，不带 embed 参数；
   // iframe 加载状态/超时/重载/新标签登录后自动刷新由 useWpsEmbed 统一管理。
@@ -376,7 +403,7 @@ export function PracticeDoing() {
                     key={q.questionId}
                     type={i === currentStep ? 'primary' : 'default'}
                     shape="round" size="small"
-                    onClick={() => setCurrentStep(i)}
+                    onClick={() => gotoStep(i)}
                     style={{ minWidth: 36 }}
                   >{i + 1}</Button>
                 ))}
@@ -387,12 +414,12 @@ export function PracticeDoing() {
           {/* 底部导航 */}
           <div style={{ display: 'flex', gap: 12, padding: '12px 20px', borderTop: '1px solid #f0f0f0', background: '#fff' }}>
             <Button size="large" disabled={currentStep === 0}
-              onClick={() => setCurrentStep(s => s - 1)} style={{ flex: 1, height: 44 }}>
+              onClick={() => gotoStep(currentStep - 1)} style={{ flex: 1, height: 44 }}>
               上一题
             </Button>
             {currentStep < questions.length - 1 ? (
               <Button type="primary" size="large"
-                onClick={() => setCurrentStep(s => s + 1)} icon={<RightOutlined />}
+                onClick={() => gotoStep(currentStep + 1)} icon={<RightOutlined />}
                 style={{ flex: 1, height: 44 }}>
                 下一题
               </Button>

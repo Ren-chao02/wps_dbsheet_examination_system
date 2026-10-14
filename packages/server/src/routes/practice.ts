@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { KingsoftAdapter } from '../engine/adapters/kingsoft-adapter';
-import { gradePracticeRecord } from '../services/practice-grading-service';
+import { gradePracticeRecord, type PracticeQuestionSnapshot } from '../services/practice-grading-service';
 import { wpsConfigService } from '../services/wps-config-service';
 import { loadTablePreview } from '../services/wps-table-service';
 
@@ -368,6 +368,80 @@ practiceRouter.post('/start', async (req: Request, res: Response) => {
       return res.status(400).json({ message: '参数错误', errors: err.errors });
     }
     console.error('Practice start error:', err);
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+/** 快照落库形状：questionId/score/sortOrder 是老字段，scenarioKey/requires/creates 是场景链后加的。
+ *  全部按可选处理——老记录可能缺 sortOrder，用数组下标兜底。 */
+type PracticeSnapshotEntry = Partial<PracticeQuestionSnapshot> & {
+  questionId: string;
+  scenarioKey?: string;
+  requires?: unknown;
+  creates?: unknown;
+};
+
+/**
+ * 恢复题面：PracticeRecord.questions 落库的只是开练时冻结的元数据，题面字段都不在快照里
+ * （见 /start 的 questionsSnapshot，实测库里就是 {questionId,score,sortOrder}）——
+ * 直接回发快照，学生刷新后只能看到一张空白题卡。这里按 questionId 回查题库把展示字段并回去。
+ * 题目已被硬删除时保留快照并标注（题号/分值仍有效，不因一道题整条恢复失败）。
+ */
+async function hydrateQuestionSnapshots(raw: unknown) {
+  const snapshots = (Array.isArray(raw) ? raw : []) as PracticeSnapshotEntry[];
+  if (snapshots.length === 0) return [];
+
+  const rows = await prisma.question.findMany({
+    where: { id: { in: snapshots.map(s => s.questionId) } },
+    select: { id: true, title: true, description: true, type: true, difficulty: true, hints: true },
+  });
+  const byId = new Map(rows.map(q => [q.id, q]));
+
+  return snapshots
+    .slice()
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+    .map((s, i) => {
+      const q = byId.get(s.questionId);
+      return {
+        // 快照元数据优先：分值与顺序按开练时冻结的口径；场景链/契约字段（scenarioKey 等）跟着带出
+        ...s,
+        sortOrder: s.sortOrder ?? i,
+        ...(q
+          ? { title: q.title, description: q.description, type: q.type, difficulty: q.difficulty, hints: q.hints }
+          : { title: '（题目已从题库删除）' }),
+      };
+    });
+}
+
+/**
+ * GET /api/practice/records/:id —— 断点续做。
+ *
+ * 题面快照此前只存在浏览器路由 state 里，刷新即丢；链式练习（十几步）没有恢复接口
+ * 等于一次误刷新就全废。这里按 studentId 过滤，别人的记录直接 404（不泄露存在性）。
+ */
+practiceRouter.get('/records/:id', async (req: Request, res: Response) => {
+  try {
+    const record = await prisma.practiceRecord.findFirst({
+      where: { id: req.params.id, studentId: req.user!.userId },
+    });
+    if (!record) return res.status(404).json({ message: '练习记录不存在' });
+
+    const assignment = await prisma.practiceTableAssignment.findUnique({ where: { studentId: req.user!.userId } });
+
+    res.json({
+      recordId: record.id,
+      status: record.status,
+      questions: await hydrateQuestionSnapshots(record.questions),
+      maxScore: record.maxScore,
+      startedAt: record.startedAt,
+      shareUrl: assignment?.shareUrl ?? null,
+      // 已判分的记录顺带把结果带回去，前端可直接进结果态
+      ...(record.status === 'graded'
+        ? { score: record.score, passed: record.passed, details: record.details }
+        : {}),
+    });
+  } catch (err: any) {
+    console.error('Practice record resume error:', err);
     res.status(500).json({ message: '服务器错误' });
   }
 });
