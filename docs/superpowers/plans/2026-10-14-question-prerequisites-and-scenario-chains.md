@@ -496,35 +496,44 @@ class Dsu {
 
 export function clusterScenarios(items: ClusterInput[]): ClusterResult {
   const dsu = new Dsu();
-  // 1) 同一道题创建的多张表并入同一条链
-  for (const it of items) {
-    for (let i = 1; i < it.creates.length; i++) dsu.union(it.creates[0], it.creates[i]);
-  }
 
-  /** 某张表是否被某道题创建过（用于判断"本题所需的表归谁管"） */
+  /** 某张表是否被某道题创建过（只依赖输入，两趟共用） */
   const creatorOf = new Map<string, string>();
   for (const it of items) for (const t of it.creates) if (!creatorOf.has(t)) creatorOf.set(t, it.id);
 
-  // 2) 归属
+  // ── 第一趟：只并链，不归属 ──
+  // 必须先把所有 union 做完：DSU 的根会在后续 union 中变化，"边并边归属"会记下过期根，
+  // 把一条链拆成两个桶（其中一个没有表 → 链名成了空串）。
+  for (const it of items) {
+    for (let i = 1; i < it.creates.length; i++) dsu.union(it.creates[0], it.creates[i]);
+    // 有 creates 的题：它 requires 的表也属于同一场景（这题把它们用在一起了）
+    if (it.creates.length > 0) {
+      for (const t of it.requires) dsu.union(it.creates[0], t);
+    } else if (it.requires.length > 0 && !it.requires.some(t => creatorOf.has(t))) {
+      // 只有 requires、且所需的表没人创建 → 本题自成链根（题面自建场景，如销售报表）。
+      // 触发条件只依赖 creatorOf，是静态判断，所以能在第一趟做完
+      for (let i = 1; i < it.requires.length; i++) dsu.union(it.requires[0], it.requires[i]);
+    }
+  }
+
+  // ── 第二趟：归属（此时 DSU 已定格，find 结果不会再变）──
   const chainOf = new Map<string, string>();          // questionId → 链根
   const pending: ClusterPending[] = [];
   for (const it of items) {
-    if (it.creates.length > 0) {
-      // 既创建又需要别的表 = 这题把它们用在一起了 → 这些表属于同一场景，并链。
-      // （只 requires、不 creates 的跨链题仍进人工清单，不在这里并 —— 那才是要人定的）
-      for (const t of it.requires) dsu.union(it.creates[0], t);
-      chainOf.set(it.id, dsu.find(it.creates[0]));
+    if (it.creates.length > 0) { chainOf.set(it.id, dsu.find(it.creates[0])); continue; }
+
+    if (it.requires.length === 0) {
+      pending.push({ id: it.id, reason: '规则里没有表信息，无法归链' });
       continue;
     }
 
     const owners = [...new Set(it.requires.filter(t => creatorOf.has(t)).map(t => dsu.find(t)))];
-    if (it.requires.length === 0) {
-      pending.push({ id: it.id, reason: '规则里没有表信息，无法归链' });
-    } else if (owners.length === 0) {
-      // 需要的表没人创建 → 本题自成链根（题面自建场景，如销售报表）
-      for (let i = 1; i < it.requires.length; i++) dsu.union(it.requires[0], it.requires[i]);
+    if (owners.length === 0) {
+      // 自成链根（第一趟已把它的 requires 并成一条链）
       chainOf.set(it.id, dsu.find(it.requires[0]));
     } else if (owners.length === 1) {
+      // 注：requires 里混着"没人创建的表"时也走这里——那些表不进链名，也不单独成链，
+      // 由教师人工确认时一并看到（真实例：'配置多条件统计字段' requires 任务表 + 统计表）
       chainOf.set(it.id, owners[0]);
     } else {
       const tables = [...it.requires].sort().join('、');
