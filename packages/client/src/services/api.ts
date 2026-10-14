@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { SchemaRefs } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -82,4 +83,23 @@ export const practiceApi = {
 
   /** 错题本列表 */
   wrongQuestions: () => api.get('/practice/wrong').then(r => r.data),
+};
+
+// ============================================================
+// 题库（出题辅助）
+// ============================================================
+
+export const questionApi = {
+  /**
+   * 从判分规则推导前置契约（出题页「自动推导」按钮，POST /api/questions/derive-refs）。
+   * 服务端纯函数、不查库不联网；推不出的 action 在 unresolved 里点名交人工。
+   * 返回整个 AxiosResponse（调用方取 res.data.refs / res.data.unresolved）。
+   */
+  deriveRefs: (payload: {
+    rules: Array<{ id?: string; action: string; params?: Record<string, unknown>; score?: number }>;
+    // 题面必须一起送：服务端靠它判 check_table_exists 是"真建表"还是"前置检查"，
+    // 不传会把所有建表题都保守判成前置检查（requires 平白多出一张表、creates 恒空）
+    title?: string;
+    description?: string;
+  }) => api.post<{ refs: SchemaRefs; unresolved: string[] }>('/questions/derive-refs', payload),
 };

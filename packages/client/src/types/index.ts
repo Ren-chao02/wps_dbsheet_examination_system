@@ -72,8 +72,31 @@ export interface ObjectiveAnswer {
   correct: string[];
 }
 
-/** 实操题引用的表名/字段名声明：抽题组卷按它做等值校验（同题位候选题引用必须一致） */
+/** 前置契约里的一条字段引用：字段必有宿主表（学生提示条按表分组渲染，不允许挂在空表名下） */
+export interface SchemaFieldRef { table: string; field: string }
+/** 前置契约里的一条视图引用：视图必有宿主表 */
+export interface SchemaViewRef { table: string; view: string }
+
+/** 一组结构引用：requires = 作答前必须已存在；creates = 本题会产出 */
+export interface SchemaRefGroup {
+  tables?: string[];
+  fields?: SchemaFieldRef[];
+  views?: SchemaViewRef[];
+}
+
+/**
+ * 实操题的「前置契约」/ 引用声明（推导产物与教师手改都落在这里）。
+ *
+ * - requires/creates：服务端推导器（engine/prerequisite-deriver）的输出。
+ *   学生提示条只读 requires（考试侧由 toStudentQuestion 单独下发，见 utils/question-refs-hint）；
+ *   creates 不下发学生，供场景归链与推断用。
+ * - tables/fields：顶层字符串数组，抽题等值签名（paper-generator.schemaRefsSignature）只认这两个，
+ *   形状必须保持 string[] —— 改成对象数组会让签名里全是 "[object Object]"，等值校验静默失效。
+ * 全部可选：库里客观题的 schema_refs 是 NULL，旧题可能只有顶层 tables/fields；缺新字段不能炸。
+ */
 export interface SchemaRefs {
+  requires?: SchemaRefGroup;
+  creates?: SchemaRefGroup;
   tables?: string[];
   fields?: string[];
 }

@@ -1,9 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Form, Input, Select, InputNumber, Button, Card, Space, Tag, message, Spin, Row, Col, Tooltip, Radio, Checkbox, Alert } from 'antd';
+import { Form, Input, Select, InputNumber, Button, Card, Space, Tag, message, Spin, Row, Col, Tooltip, Radio, Checkbox, Alert, Typography } from 'antd';
 import { SaveOutlined, SettingOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
-import api from '../../services/api';
-import type { Question, QuestionCategory, AnswerRule, QuestionSkeleton, ReverseOutput, RuleSuggestion, Proposal, QuestionState, QuestionType, ObjectiveAnswer, ObjectiveOption, SchemaRefs } from '../../types';
+import api, { questionApi } from '../../services/api';
+import type { Question, QuestionCategory, AnswerRule, QuestionSkeleton, ReverseOutput, RuleSuggestion, Proposal, QuestionState, QuestionType, ObjectiveAnswer, ObjectiveOption, SchemaRefs, SchemaRefGroup } from '../../types';
+import { applyRefChipChange, normalizeQuestionRefs, summarizeRefGroup } from '../../utils/question-refs-form';
+// 学生提示条文案：预览与考试页共用同一个纯函数，避免两处文案各写一遍后漂移
+import { buildRequirementHint } from '../../utils/question-refs-hint';
 import { CategoryManagerModal } from '../../components/CategoryManagerModal';
 import { CapabilitySelector } from './components/CapabilitySelector';
 import { AnswerImporter } from './components/AnswerImporter';
@@ -100,8 +103,11 @@ export function QuestionEditor() {
   const [selectedCapabilityIds, setSelectedCapabilityIds] = useState<string[]>([]);
   /** 客观题答案（客观题题型下编辑；实操题保持 null） */
   const [objectiveAnswer, setObjectiveAnswer] = useState<ObjectiveAnswer | null>(null);
-  /** 实操题引用声明（抽题等值校验依据，选填） */
+  /** 实操题前置契约（requires/creates + 抽题签名；选填但强烈建议） */
   const [schemaRefs, setSchemaRefs] = useState<SchemaRefs | null>(null);
+  /** 「自动推导」推不出来的 action（引擎未实现 / 缺关键参数），点名后交人工填写 */
+  const [deriveUnresolved, setDeriveUnresolved] = useState<string[]>([]);
+  const [deriving, setDeriving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
@@ -209,14 +215,79 @@ export function QuestionEditor() {
     setObjectiveAnswer({ ...objectiveAnswer, correct });
   };
 
-  /** 引用声明归一化：全部为空时按 null 保存，避免题库里存一堆空对象 */
-  const normalizeSchemaRefs = (): SchemaRefs | null => {
-    if (!schemaRefs) return null;
-    const tables = (schemaRefs.tables || []).map(t => t.trim()).filter(Boolean);
-    const fields = (schemaRefs.fields || []).map(t => t.trim()).filter(Boolean);
-    if (tables.length === 0 && fields.length === 0) return null;
-    return { ...(tables.length > 0 ? { tables } : {}), ...(fields.length > 0 ? { fields } : {}) };
+  /** 前置契约补丁：只改传入的键 —— 旧题只有顶层 tables/fields，不能被整体覆盖掉 */
+  const patchSchemaRefs = (patch: Partial<SchemaRefs>) => setSchemaRefs(s => ({ ...(s ?? {}), ...patch }));
+  const patchRequires = (patch: Partial<SchemaRefGroup>) =>
+    setSchemaRefs(s => ({ ...(s ?? {}), requires: { ...(s?.requires ?? {}), ...patch } }));
+
+  /** 「需要」的表：新结构优先，旧题退回顶层 tables（旧值要能看到、能改） */
+  const requiresTables = schemaRefs?.requires?.tables ?? schemaRefs?.tables ?? [];
+  const requiresFields = schemaRefs?.requires?.fields ?? [];
+  const requiresViews = schemaRefs?.requires?.views ?? [];
+  /** 手输的字段/视图标签挂到第一张「需要」表下（学生提示条按表分组渲染） */
+  const fallbackTable = requiresTables[0] ?? '';
+
+  /**
+   * 「从判分规则自动推导」：把当前编辑中的规则 + 题面送服务端，覆盖写入 requires/creates。
+   * 推导只是"填草稿"——题面语义（check_table_exists 是真建表还是前置检查）有猜的成分，
+   * 推不出的 action 会在 unresolved 里点名，教师核对/补齐后再保存。
+   */
+  const handleDeriveRefs = async () => {
+    if (rules.length === 0) {
+      message.warning('还没有判分规则可推导：先在下面导入标准答案并应用规则，或手工填写');
+      return;
+    }
+    setDeriving(true);
+    try {
+      const res = await questionApi.deriveRefs({
+        rules: rules.map(r => ({ id: r.id, action: r.action, params: r.params, score: r.score })),
+        // 题面一起送：服务端靠它判 check_table_exists 是"真建表"还是"前置检查"，
+        // 不传会把所有建表题都保守判成前置检查（requires 平白多出一张表、creates 恒空）
+        title: form.getFieldValue('title'),
+        description: form.getFieldValue('description'),
+      });
+      setSchemaRefs(res.data.refs);
+      setDeriveUnresolved(res.data.unresolved);
+      message.success(res.data.unresolved.length > 0
+        ? `已推导，${res.data.unresolved.length} 条规则推不出来（见下方提示）`
+        : '已推导，请核对后保存');
+    } catch (err: any) {
+      message.error(err?.response?.data?.message || '推导失败，请稍后重试');
+    } finally {
+      setDeriving(false);
+    }
   };
+
+  /**
+   * 「需要（表名）」改动。旧题（没有 requires）这一列显示的是顶层 tables 的回退值，
+   * 两边必须同步写：只写 requires 的话，教师删空标签、保存、刷新后顶层旧值又回退显示出来，
+   * 看起来像"删不掉"。同步写不改变语义 —— 顶层 tables 本来也就是这张题的引用表声明。
+   */
+  const handleRequiresTablesChange = (v: string[]) => {
+    if (!schemaRefs?.requires) patchSchemaRefs({ requires: { tables: v }, tables: v });
+    else patchRequires({ tables: v });
+  };
+
+  /** 字段标签改动：已有条目保住宿主表，新增的挂到第一张「需要」表（见 applyRefChipChange） */
+  const handleRequiresFieldsChange = (chips: string[]) => {
+    const { next, rejected } = applyRefChipChange(
+      requiresFields.map(f => ({ table: f.table, name: f.field })), chips, fallbackTable,
+    );
+    if (rejected.length > 0) message.warning(`先填「需要（表名）」再挂字段：${rejected.join('、')}`);
+    patchRequires({ fields: next.map(r => ({ table: r.table, field: r.name })) });
+  };
+
+  /** 视图标签改动：同上（视图的宿主表必须是「需要」里的表，提示条才能说清建在哪张表下） */
+  const handleRequiresViewsChange = (chips: string[]) => {
+    const { next, rejected } = applyRefChipChange(
+      requiresViews.map(v => ({ table: v.table, name: v.view })), chips, fallbackTable,
+    );
+    if (rejected.length > 0) message.warning(`先填「需要（表名）」再挂视图：${rejected.join('、')}`);
+    patchRequires({ views: next.map(r => ({ table: r.table, view: r.name })) });
+  };
+
+  /** creates 只读摘要：推导产物（本题会新建哪些表/字段/视图），教师一般不用手改 */
+  const createsSummary = summarizeRefGroup(schemaRefs?.creates);
 
   /** 骨架生成成功：回填标题/描述/分值/难度 */
   const handleSkeleton = (skeleton: QuestionSkeleton) => {
@@ -301,7 +372,8 @@ export function QuestionEditor() {
         // 知识点打标：抽题组卷按它做同知识点等值替换，不打标就无法被抽中
         capabilityIds: selectedCapabilityIds,
         objectiveAnswer: objective ? objectiveAnswer : null,
-        schemaRefs: objective ? null : normalizeSchemaRefs(),
+        // requires/creates 必须原样带上：学生提示条（考试/练习）读的就是 requires
+        schemaRefs: objective ? null : normalizeQuestionRefs(schemaRefs),
       };
       if (isEdit) {
         await api.put(`/questions/${id}`, payload);
@@ -555,41 +627,115 @@ export function QuestionEditor() {
               </Card>
             )}
 
-            {/* 引用声明：抽题组卷等值校验依据（选填，但题目操作具体表/字段时建议必填） */}
+            {/* 前置契约：学生提示条（requires）与抽题等值签名（顶层 tables/fields）的唯一依据。
+                creates 是推导产物、不下发学生（只用于场景归链与人工核对），因此只读展示。 */}
             <Card
-              title={<Space><span>引用声明</span><Tag color="geekblue">抽题等值校验依据</Tag></Space>}
+              title={<Space><span>前置契约</span><Tag color="geekblue">提示条 / 抽题校验依据</Tag></Space>}
               style={{ marginBottom: 16 }}
             >
               <Alert
                 type="info"
                 showIcon
                 style={{ marginBottom: 12 }}
-                message="抽题组卷要求同题位候选题引用相同的表/字段（每个学生的表格结构不同，声明不一致的题混抽会导致部分学生做不了）。题目让学生创建或修改具体表/字段时请务必填写。"
+                message="「需要」会渲染成学生答题页的提示条（告诉学生缺表时先建）；「涉及」两列是抽题等值校验的签名（同一题位的候选题必须逐字一致）。填了它，学生才不会打开表格找不到题面说的表。"
               />
-              <Row gutter={16}>
-                <Col span={12}>
-                  <div style={{ marginBottom: 4 }}>表名（回车添加，可多个）</div>
+              <Space style={{ marginBottom: 12 }} wrap>
+                <Button size="small" loading={deriving} onClick={handleDeriveRefs}>
+                  从判分规则自动推导
+                </Button>
+                <Typography.Text type="secondary">
+                  按「判分规则 × 题面语义」推导一次，覆盖现有内容；核对后再保存。
+                </Typography.Text>
+              </Space>
+              {deriveUnresolved.length > 0 && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 12 }}
+                  message={`${deriveUnresolved.length} 条规则推不出结构引用（需人工填写）：${deriveUnresolved.join('、')}`}
+                  description="这些规则多半是引擎还没有的 action；漏填的后果是学生打开表格找不到题面里说的表。"
+                />
+              )}
+
+              <Row gutter={16} style={{ marginBottom: 12 }}>
+                <Col span={8}>
+                  <div style={{ marginBottom: 4 }}>需要（表名）</div>
                   <Select
                     mode="tags"
-                    placeholder="如：学生档案"
-                    value={schemaRefs?.tables ?? []}
-                    onChange={v => setSchemaRefs(s => ({ ...(s ?? {}), tables: v }))}
+                    value={requiresTables}
+                    onChange={handleRequiresTablesChange}
                     style={{ width: '100%' }}
                     tokenSeparators={[',', '，']}
+                    placeholder="如：员工信息表"
                   />
                 </Col>
-                <Col span={12}>
-                  <div style={{ marginBottom: 4 }}>字段名（回车添加，可多个）</div>
+                <Col span={8}>
+                  <div style={{ marginBottom: 4 }}>
+                    需要（字段名{fallbackTable ? `，挂在「${fallbackTable}」下` : ''}）
+                  </div>
                   <Select
                     mode="tags"
-                    placeholder="如：姓名、学号"
-                    value={schemaRefs?.fields ?? []}
-                    onChange={v => setSchemaRefs(s => ({ ...(s ?? {}), fields: v }))}
+                    value={requiresFields.map(f => f.field)}
+                    onChange={handleRequiresFieldsChange}
                     style={{ width: '100%' }}
                     tokenSeparators={[',', '，']}
+                    placeholder={fallbackTable ? '如：打卡时间' : '先填「需要（表名）」'}
+                  />
+                </Col>
+                <Col span={8}>
+                  <div style={{ marginBottom: 4 }}>需要（视图）</div>
+                  <Select
+                    mode="tags"
+                    value={requiresViews.map(v => v.view)}
+                    onChange={handleRequiresViewsChange}
+                    style={{ width: '100%' }}
+                    tokenSeparators={[',', '，']}
+                    placeholder={fallbackTable ? '如：员工总览' : '先填「需要（表名）」'}
                   />
                 </Col>
               </Row>
+
+              <Row gutter={16} style={{ marginBottom: 12 }}>
+                <Col span={12}>
+                  <div style={{ marginBottom: 4 }}>涉及的表（抽题等值签名）</div>
+                  <Select
+                    mode="tags"
+                    value={schemaRefs?.tables ?? []}
+                    onChange={v => patchSchemaRefs({ tables: v })}
+                    style={{ width: '100%' }}
+                    tokenSeparators={[',', '，']}
+                    placeholder="留空 = 不校验；如：员工信息表"
+                  />
+                </Col>
+                <Col span={12}>
+                  <div style={{ marginBottom: 4 }}>涉及的字段名（抽题等值签名）</div>
+                  <Select
+                    mode="tags"
+                    value={schemaRefs?.fields ?? []}
+                    onChange={v => patchSchemaRefs({ fields: v })}
+                    style={{ width: '100%' }}
+                    tokenSeparators={[',', '，']}
+                    placeholder="如：姓名、学号"
+                  />
+                </Col>
+              </Row>
+
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ marginBottom: 4 }}>本题将产出（推导产物，只读）</div>
+                {createsSummary
+                  ? <Typography.Text>{createsSummary}</Typography.Text>
+                  : <Typography.Text type="secondary">（无——推导判定本题不新建表 / 字段 / 视图）</Typography.Text>}
+              </div>
+
+              {/* 学生端预览：文案与考试页逐字一致（同一个 buildRequirementHint） */}
+              {(() => {
+                const hint = buildRequirementHint(schemaRefs?.requires);
+                return hint ? (
+                  <Alert type="success" showIcon message="学生将看到" description={hint} />
+                ) : (
+                  <Typography.Text type="secondary">未填写「需要」——学生答题页不会出现提示条。</Typography.Text>
+                );
+              })()}
             </Card>
           </>
         )}
