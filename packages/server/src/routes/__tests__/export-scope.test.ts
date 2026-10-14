@@ -90,6 +90,54 @@ describe('fetchEntityData 范围', () => {
     expect(where.AND[1]).toEqual({ createdBy: 't-1' });
   });
 
+  it('exam：教师限定「我创建/监考」的考试', async () => {
+    await fetchEntityData(TEACHER(), 'exam');
+    const where = mockPrisma.exam.findMany.mock.calls[0][0].where;
+    expect(where.AND[1]).toEqual({
+      OR: [
+        { createdBy: 't-1' },
+        { assignments: { some: { invigilators: { some: { id: 't-1' } } } } },
+      ],
+    });
+  });
+
+  it('behavior：教师限定可见考试的行为日志（关系过滤）', async () => {
+    await fetchEntityData(TEACHER(), 'behavior');
+    const where = mockPrisma.studentBehaviorLog.findMany.mock.calls[0][0].where;
+    expect(where.AND[1]).toEqual({
+      exam: {
+        OR: [
+          { createdBy: 't-1' },
+          { assignments: { some: { invigilators: { some: { id: 't-1' } } } } },
+        ],
+      },
+    });
+  });
+
+  it('room：不放范围条件（教师本就可只读全量考场，导出不放宽也不收紧）', async () => {
+    await fetchEntityData(TEACHER(), 'room');
+    const where = mockPrisma.examRoom.findMany.mock.calls[0][0].where;
+    expect(where).toEqual({});
+    expect(where.AND).toBeUndefined();
+  });
+
+  it('gradeReview：教师限定可见考试的复核记录（detail → submission → exam 关系链）', async () => {
+    await fetchEntityData(TEACHER(), 'gradeReview');
+    const where = mockPrisma.gradeReviewLog.findMany.mock.calls[0][0].where;
+    expect(where.AND[1]).toEqual({
+      detail: {
+        submission: {
+          exam: {
+            OR: [
+              { createdBy: 't-1' },
+              { assignments: { some: { invigilators: { some: { id: 't-1' } } } } },
+            ],
+          },
+        },
+      },
+    });
+  });
+
   it('audit：非管理员直接抛错（不查库）', async () => {
     await expect(fetchEntityData(TEACHER(), 'audit')).rejects.toThrow('审计日志仅校级管理员可导出');
     expect(mockPrisma.auditLog.findMany).not.toHaveBeenCalled();

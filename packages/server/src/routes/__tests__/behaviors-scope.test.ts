@@ -68,13 +68,18 @@ describe('GET /api/behaviors 列表', () => {
 });
 
 describe('报告与审核接口', () => {
+  // 路径参数须为合法 UUID：非 UUID 现在由参数校验层拦为 400（见 behaviors-params.test.ts），
+  // 本组用例要测的是「归属校验 403」，所以这里用真实形态的 id。
+  const EXAM_ID = '11111111-1111-4111-8111-111111111111';
+  const STUDENT_ID = '22222222-2222-4222-8222-222222222222';
+
   beforeEach(() => {
     mockPrisma.exam.findUnique.mockResolvedValue({ createdBy: 't-1', assignments: [] });
   });
 
   it('GET /reports/:examId（列表）范围外 → 403', async () => {
     const res = await request(makeApp())
-      .get('/api/behaviors/reports/exam-1')
+      .get(`/api/behaviors/reports/${EXAM_ID}`)
       .set('x-test-role', 'teacher')
       .set('x-test-user', 't-2');
     expect(res.status).toBe(403);
@@ -82,7 +87,7 @@ describe('报告与审核接口', () => {
 
   it('GET /reports/:examId/:studentId（单人报告）范围外 → 403', async () => {
     const res = await request(makeApp())
-      .get('/api/behaviors/reports/exam-1/s-1')
+      .get(`/api/behaviors/reports/${EXAM_ID}/${STUDENT_ID}`)
       .set('x-test-role', 'teacher')
       .set('x-test-user', 't-2');
     expect(res.status).toBe(403);
@@ -90,7 +95,7 @@ describe('报告与审核接口', () => {
 
   it('PUT /reports/:examId/:studentId/review 范围外 → 403 且不改库', async () => {
     const res = await request(makeApp())
-      .put('/api/behaviors/reports/exam-1/s-1/review')
+      .put(`/api/behaviors/reports/${EXAM_ID}/${STUDENT_ID}/review`)
       .set('x-test-role', 'teacher')
       .set('x-test-user', 't-2')
       .send({ conclusion: '正常' });
