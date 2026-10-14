@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildBackfillPlan } from '../question-refs-backfill';
 
-// description 必须透传：推导器判 check_table_exists 是"真建表 vs 前置检查"要看题面（标题+描述）。
-// 现有夹具的标题本就含「创建 + 表名」，故断言不变。
+// description 必须透传：推导器判 check_table_exists 是"真建表 vs 前置检查"**只看描述**（标题不算，
+// 见 prerequisite-deriver 的 hasCreationIntent）——凡期望落 creates 的夹具，创建动作要写在 description 里。
 const Q = (id: string, title: string, answerRules: any[], description?: string | null) => ({ id, title, answerRules, description });
 
 describe('buildBackfillPlan', () => {
@@ -39,11 +39,11 @@ describe('buildBackfillPlan', () => {
 
   it('跨链题：不给场景，pendingReason 说明原因', () => {
     const plan = buildBackfillPlan([
-      Q('q1', '创建员工信息表', [{ id: 'r', action: 'check_table_exists', params: { tableName: '员工信息表' }, score: 100 }]),
+      Q('q1', '创建员工信息表', [{ id: 'r', action: 'check_table_exists', params: { tableName: '员工信息表' }, score: 100 }], '创建一个新的数据表，命名为"员工信息表"。'),
       Q('q2', '创建项目表任务表', [
         { id: 'r1', action: 'check_table_exists', params: { tableName: '项目表' }, score: 50 },
         { id: 'r2', action: 'check_table_exists', params: { tableName: '任务表' }, score: 50 },
-      ]),
+      ], "创建两个数据表：'项目表'和'任务表'。"),
       // 夹具必须真的跨链：同时引用两条链的表、自己不建表。
       // （只引用一条链的表会走 owners.length===1 分支，压根判不到跨链路径）
       Q('q9', '允许多条记录关联', [
