@@ -22,14 +22,15 @@ async function main() {
 
   const questions = await prisma.question.findMany({
     where: { type: { in: HANDS_ON_TYPES as unknown as any } },
-    select: { id: true, title: true, answerRules: true, scenario: true },
+    // description 必须取：推导器要用题面判断 check_table_exists 是"真建表"还是"前置检查"
+    select: { id: true, title: true, description: true, answerRules: true, scenario: true },
     orderBy: { createdAt: 'asc' },
   });
 
   const targets = force ? questions : questions.filter(q => q.scenario === null);
   console.log(`实操题 ${questions.length} 道；本次处理 ${targets.length} 道（${force ? '--force 覆盖模式' : '只填空场景'}）`);
 
-  const plan = buildBackfillPlan(targets.map(q => ({ id: q.id, title: q.title, answerRules: q.answerRules })));
+  const plan = buildBackfillPlan(targets.map(q => ({ id: q.id, title: q.title, description: q.description, answerRules: q.answerRules })));
 
   console.log('\n=== 场景（自动归链结果）===');
   for (const s of plan.scenarios) console.log(`  ${s.key}：${s.questionCount} 题`);
