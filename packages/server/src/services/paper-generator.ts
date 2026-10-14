@@ -316,7 +316,8 @@ export async function previewSlotCandidates(
   return {
     /** 真正可用于抽题的候选数 */
     candidateCount: homogeneous.length,
-    /** 分值不匹配而被排除的数量（教师常见配置错误） */
+    /** 分值不匹配而被排除的数量（教师常见配置错误）。注意：**不含**因「引擎判不了」被滤掉的题
+     *  ——那类题在统计前已剔除，candidateCount=0 且 excludedByScore=0 不代表题位配置没问题 */
     excludedByScore: scoped.length - byScore.length,
     /** 候选池内部 schemaRefs 不一致：需要教师收敛引用声明 */
     schemaRefsConflict: signatures.size > 1,
