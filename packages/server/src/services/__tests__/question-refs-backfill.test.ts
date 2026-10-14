@@ -55,4 +55,14 @@ describe('buildBackfillPlan', () => {
     // 契约仍然推导出来（表名按码点序：员 U+5458 < 项 U+9879）
     expect(e.refs.requires.tables).toEqual(['员工信息表', '项目表']);
   });
+
+  it('链顺序沿用归链输出顺序：插入序优先于码点序与 locale 序', () => {
+    const plan = buildBackfillPlan([
+      Q('q1', '创建安表', [{ id: 'r', action: 'check_table_exists', params: { tableName: '安表' }, score: 100 }]),
+      Q('q2', '创建员工信息表', [{ id: 'r', action: 'check_table_exists', params: { tableName: '员工信息表' }, score: 100 }]),
+    ]);
+    // 插入序 = 教学顺序（谁先出现谁在前）。码点序会给出 ['员工信息表','安表']（员 U+5458 < 安 U+5B89），
+    // 中文 locale 序会给出 ['安表','员工信息表']（an < yuan，恰好与插入序相同）——所以任何"加回排序"的实现都会在这里暴露
+    expect(plan.scenarios.map(s => s.key)).toEqual(['安表', '员工信息表']);
+  });
 });
