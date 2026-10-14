@@ -1335,13 +1335,19 @@ describe('buildRequirementHint', () => {
     );
   });
 
-  it('多表：表名用顿号连接，字段按表分组', () => {
+  it('多表：表名相邻列出（各带引号，无需顿号），字段按表分组', () => {
     const hint = buildRequirementHint({
       tables: ['任务表', '项目表'],
       fields: [{ table: '任务表', field: '所属项目' }],
     });
     expect(hint).toBe(
       '本题需要「任务表」「项目表」（任务表含字段：所属项目）。若你的表格里还没有它们，请先在左侧新建这些表并建好对应字段，再完成题目要求。',
+    );
+  });
+
+  it('tables 为空但视图非空 → 从视图的宿主表反推表名，文案不留空指代', () => {
+    expect(buildRequirementHint({ views: [{ table: '员工信息表', view: '员工总览' }] })).toBe(
+      '本题需要「员工信息表」；另需要视图「员工总览」。若你的表格里还没有它，请先在左侧新建这张表，再完成题目要求。',
     );
   });
 
@@ -1390,9 +1396,14 @@ export interface StudentRequires {
 }
 
 export function buildRequirementHint(requires?: StudentRequires | null): string | null {
-  const tables = requires?.tables ?? [];
   const fields = requires?.fields ?? [];
   const views = requires?.views ?? [];
+  // tables 可能为空而 fields/views 非空：视图的宿主表若恰好由本题自己创建，会被服务端
+  // 从 requires.tables 里剔除。这时从 fields/views 反推表名，避免文案出现"以下结构"
+  // 这种没有指代对象的说法——这段话是在告诉学生该建什么，不能含糊。
+  const tables = requires?.tables?.length
+    ? requires.tables
+    : [...new Set([...fields.map(f => f.table), ...views.map(v => v.table)])];
   if (tables.length === 0 && fields.length === 0 && views.length === 0) return null;
 
   const quoted = tables.map(t => `「${t}」`).join('');
@@ -1416,7 +1427,7 @@ export function buildRequirementHint(requires?: StudentRequires | null): string 
     ? '若你的表格里还没有它们，请先在左侧新建这些表并建好对应字段，再完成题目要求。'
     : '若你的表格里还没有它，请先在左侧新建这张表' + (fieldGroups.size > 0 ? '并建好这些字段' : '') + '，再完成题目要求。';
 
-  return `${tables.length > 0 ? `本题需要${quoted}` : '本题需要以下结构'}${fieldText}${viewText}。${createHint}`;
+  return `本题需要${quoted}${fieldText}${viewText}。${createHint}`;
 }
 ```
 
