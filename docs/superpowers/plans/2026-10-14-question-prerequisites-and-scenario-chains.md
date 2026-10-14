@@ -827,23 +827,44 @@ git commit -m "feat(services): 回填计划构建器（推导 + 归链 + 待人�
   @@index([scenario, scenarioOrder])
 ```
 
-- [ ] **Step 2: 生成迁移**
+- [ ] **Step 2: 手写迁移（**禁止 `migrate dev`** —— 本库会触发 RESET）**
 
-Run: `cd packages/server && npx prisma migrate dev --name add_question_scenario`
-Expected: 输出 `Your database is now in sync with your schema`，并新建 `prisma/migrations/<时间戳>_add_question_scenario/migration.sql`（内容为两条 `ALTER TABLE "questions" ADD COLUMN` + 一条 `CREATE INDEX`）
+> ⚠️ 环境事实（2026-10-14 账本）：共享开发库 `_prisma_migrations` 有 6 条 baseline 之前的陈旧记录，
+> `prisma migrate dev` 会要求 **RESET 公共 schema —— 禁止执行**。本计划一律走「手写 SQL + `migrate deploy`」。
 
-- [ ] **Step 3: 验证列已存在**
+先确认没有别人留下的 pending 迁移：
 
-Run:
+Run: `cd packages/server && npx prisma migrate status`
+Expected: `Database schema is up to date!`（若列出 pending 迁移，**停下来问用户**，不要顺手 apply 别人的迁移）
+
+创建目录与 SQL（时间戳格式 `YYYYMMDDHHMMSS`，与现有迁移一致，用你执行时的真实时间）：
+
 ```bash
-cd packages/server && npx prisma db execute --stdin <<'SQL'
-SELECT column_name FROM information_schema.columns WHERE table_name='questions' AND column_name IN ('scenario','scenario_order');
+cd packages/server
+mkdir -p prisma/migrations/20261014090000_add_question_scenario
+cat > prisma/migrations/20261014090000_add_question_scenario/migration.sql <<'SQL'
+-- AlterTable
+ALTER TABLE "questions" ADD COLUMN     "scenario" VARCHAR(128),
+ADD COLUMN     "scenario_order" INTEGER;
+
+-- CreateIndex
+CREATE INDEX "questions_scenario_scenario_order_idx" ON "questions"("scenario", "scenario_order");
 SQL
 ```
-Expected: 无报错（`db execute` 不打印结果集；真正的验证在下一步的客户端类型上）
+
+- [ ] **Step 3: 应用 + 生成客户端 + 校验零差异**
+
+```bash
+cd packages/server
+npx prisma migrate deploy       # 期望：1 migration applied / Database schema is now up to date
+npx prisma generate             # migrate deploy 不会自动 generate，必须显式跑
+npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script
+```
+Expected: 最后一条输出 `-- This is an empty migration.` —— 证明手写 SQL 与 Prisma 自生成的完全一致。
+若它打出 ALTER 语句：**不要改已应用的迁移文件**（校验和会变、造成 drift），把差集内容作为一条**新的**迁移目录再 `deploy` 一次，并在报告里记录偏差。
 
 Run: `cd packages/server && npx tsc --noEmit -p tsconfig.json`
-Expected: 通过（`prisma generate` 已由 migrate dev 触发，客户端类型里应有 `scenario`）
+Expected: 通过（客户端类型里已有 `scenario`）
 
 - [ ] **Step 4: 提交（迁移目录 + schema）**
 
