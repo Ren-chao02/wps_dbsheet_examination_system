@@ -35,24 +35,24 @@ describe('buildBackfillPlan', () => {
     expect(plan.entries[0].pendingReason).toBeTruthy();
   });
 
-  it('跨链题：仍给出推导出的契约，但不给场景，pendingReason 说明原因', () => {
+  it('跨链题：不给场景，pendingReason 说明原因', () => {
     const plan = buildBackfillPlan([
       Q('q1', '创建员工信息表', [{ id: 'r', action: 'check_table_exists', params: { tableName: '员工信息表' }, score: 100 }]),
       Q('q2', '创建项目表任务表', [
         { id: 'r1', action: 'check_table_exists', params: { tableName: '项目表' }, score: 50 },
         { id: 'r2', action: 'check_table_exists', params: { tableName: '任务表' }, score: 50 },
       ]),
+      // 夹具必须真的跨链：同时引用两条链的表、自己不建表。
+      // （只引用一条链的表会走 owners.length===1 分支，压根判不到跨链路径）
       Q('q9', '允许多条记录关联', [
-        { id: 'r', action: 'check_field_link_multiple', params: { tableName: '任务表', fieldName: '负责人' }, score: 100 },
+        { id: 'r', action: 'check_linked_record', params: { tableName: '项目表', targetTable: '员工信息表' }, score: 100 },
       ]),
     ]);
     const e = plan.entries.find(x => x.id === 'q9')!;
-    if (e.pendingReason) {
-      expect(e.scenario).toBeNull();
-      expect(e.pendingReason).toContain('跨链');
-    } else {
-      // 两条链里只有 任务表 能对上（员工信息表不在 requires 里），归到任务链也是对的
-      expect(e.scenario).toBe('任务表 + 项目表');
-    }
+    expect(e.scenario).toBeNull();
+    expect(e.scenarioOrder).toBeNull();
+    expect(e.pendingReason).toContain('跨链');
+    // 契约仍然推导出来（表名按码点序：员 U+5458 < 项 U+9879）
+    expect(e.refs.requires.tables).toEqual(['员工信息表', '项目表']);
   });
 });
