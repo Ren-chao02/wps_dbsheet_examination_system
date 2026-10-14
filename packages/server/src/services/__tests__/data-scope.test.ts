@@ -11,6 +11,9 @@ const { mockPrisma } = vi.hoisted(() => ({
     user: { findUnique: vi.fn() },
     examBatch: { findUnique: vi.fn() },
     studentSubmission: { findUnique: vi.fn() },
+    // P2 院系池：题库/试卷的单资源读校验需要 findUnique
+    question: { findUnique: vi.fn() },
+    paper: { findUnique: vi.fn() },
   } as any,
 }));
 vi.mock('../../config/prisma', () => ({ prisma: mockPrisma }));
@@ -18,6 +21,7 @@ vi.mock('../../config/prisma', () => ({ prisma: mockPrisma }));
 import {
   makeScopeCtx, scopeCtxOf, myClassIds, studentWhere, examWhere, behaviorWhere,
   assertExamAccess, assertBatchAccess, assertStudentAccess, assertSubmissionAccess,
+  questionWhere, paperWhere, assertQuestionRead, assertPaperRead, questionPoolWhereForPaper,
 } from '../data-scope';
 
 // 注意：每个用例用新的 ctx 对象（请求级缓存挂在 ctx 上，避免用例间串味）
@@ -168,5 +172,79 @@ describe('ScopeCtx 院系字段（P2）', () => {
     expect(scopeCtxOf(req).departmentId).toBe('d-2');
     const req2: any = { user: { userId: 't-1', role: 'teacher' } };
     expect(scopeCtxOf(req2).departmentId).toBeNull();
+  });
+});
+
+describe('院系池规则（P2）', () => {
+  const T_WITH_DEPT = () => makeScopeCtx('t-1', 'teacher', 'd-1');
+  const T_NO_DEPT = () => makeScopeCtx('t-2', 'teacher');
+
+  it('questionWhere：admin 无过滤', async () => {
+    expect(await questionWhere(ADMIN())).toEqual({});
+  });
+
+  it('questionWhere：教师 = 自己 ∪ 本院系 ∪ 校级(null) ∪ 校级池(shared)', async () => {
+    expect(await questionWhere(T_WITH_DEPT())).toEqual({
+      OR: [
+        { createdBy: 't-1' },
+        { departmentId: 'd-1' },
+        { departmentId: null },
+        { sharedToSchool: true },
+      ],
+    });
+  });
+
+  it('questionWhere：无院系教师 = 自己 ∪ 校级（无 departmentId 分支）', async () => {
+    const where: any = await questionWhere(T_NO_DEPT());
+    expect(where.OR).toEqual([
+      { createdBy: 't-2' },
+      { departmentId: null },
+      { sharedToSchool: true },
+    ]);
+  });
+
+  it('paperWhere：与 questionWhere 同构', async () => {
+    expect(await paperWhere(T_WITH_DEPT())).toEqual({
+      OR: [
+        { createdBy: 't-1' },
+        { departmentId: 'd-1' },
+        { departmentId: null },
+        { sharedToSchool: true },
+      ],
+    });
+  });
+
+  it('assertQuestionRead：自己 / 本院系 / 校级 / 上架 可见；他院系且未上架 不可见', async () => {
+    mockPrisma.question.findUnique.mockResolvedValue({ createdBy: 't-9', departmentId: null, sharedToSchool: false });
+    expect(await assertQuestionRead(T_WITH_DEPT(), 'q-1')).toBe('ok'); // 校级
+    mockPrisma.question.findUnique.mockResolvedValue({ createdBy: 't-9', departmentId: 'd-1', sharedToSchool: false });
+    expect(await assertQuestionRead(T_WITH_DEPT(), 'q-1')).toBe('ok'); // 本院系
+    mockPrisma.question.findUnique.mockResolvedValue({ createdBy: 't-1', departmentId: 'd-9', sharedToSchool: false });
+    expect(await assertQuestionRead(T_WITH_DEPT(), 'q-1')).toBe('ok'); // 自己
+    mockPrisma.question.findUnique.mockResolvedValue({ createdBy: 't-9', departmentId: 'd-9', sharedToSchool: true });
+    expect(await assertQuestionRead(T_WITH_DEPT(), 'q-1')).toBe('ok'); // 上架
+    mockPrisma.question.findUnique.mockResolvedValue({ createdBy: 't-9', departmentId: 'd-9', sharedToSchool: false });
+    expect(await assertQuestionRead(T_WITH_DEPT(), 'q-1')).toBe('forbidden'); // 他院系
+    mockPrisma.question.findUnique.mockResolvedValue(null);
+    expect(await assertQuestionRead(T_WITH_DEPT(), 'q-9')).toBe('not-found');
+  });
+
+  it('assertPaperRead：同规则；admin 放行', async () => {
+    mockPrisma.paper.findUnique.mockResolvedValue({ createdBy: 't-9', departmentId: 'd-9', sharedToSchool: false });
+    expect(await assertPaperRead(T_WITH_DEPT(), 'p-1')).toBe('forbidden');
+    expect(await assertPaperRead(ADMIN(), 'p-1')).toBe('ok');
+  });
+
+  it('questionPoolWhereForPaper：跟随试卷归属；创建者为空时不产出 createdBy 分支', async () => {
+    expect(questionPoolWhereForPaper({ createdBy: 't-1', departmentId: 'd-1' })).toEqual({
+      OR: [
+        { createdBy: 't-1' },
+        { departmentId: 'd-1' },
+        { departmentId: null },
+        { sharedToSchool: true },
+      ],
+    });
+    const w: any = questionPoolWhereForPaper({ createdBy: null, departmentId: null });
+    expect(w.OR).toEqual([{ departmentId: null }, { sharedToSchool: true }]);
   });
 });
