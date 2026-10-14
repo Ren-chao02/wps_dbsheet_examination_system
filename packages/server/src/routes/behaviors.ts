@@ -13,9 +13,19 @@ import { z } from 'zod';
 import { BehaviorType, RiskLevel } from '@prisma/client';
 import { authenticate, authorize } from '../middleware/auth'; // ✅ 修复Bug#2：导入认证中间件
 import { prisma } from '../config/prisma';
+import { studentExamVisibilityOR } from '../utils/exam-utils';
 import { scopeCtxOf, behaviorWhere, assertExamAccess, denyAccess } from '../services/data-scope';
 
 const router = Router();
+
+// 路径参数里的 UUID 格式校验：畸形 id 必须在进库前拦下给干净的 400 ——
+// 漏到 Prisma 会因 Postgres `invalid input syntax for type uuid`（P2023）变成 500，
+// 还把引擎错误信息带进响应体。与 queryBehaviorSchema 的 uuid 校验同一口径。
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 const recordBehaviorSchema = z.object({
   examId: z.string().uuid(),
   studentId: z.string().uuid(),
@@ -115,6 +125,25 @@ router.post('/record', authenticate, async (req: Request, res: Response) => {
         success: false,
         error: '只能上报本人的行为记录',
       });
+    }
+
+    // ⚠️ 归属校验：学生只能向「自己可见」的考试写行为记录（与考试列表/成绩查询同一口径
+    // studentExamVisibilityOR）。与上面的防伪造互补：studentId 挡栽赃，examId 挡
+    // 「拿任意考试 UUID 往别人考试灌脏数据、触发报告重算」。教师/管理员保留代报能力。
+    if (!isStaff) {
+      const visible = await prisma.exam.findFirst({
+        where: {
+          id: data.examId,
+          OR: studentExamVisibilityOR(req.user!.userId),
+        },
+        select: { id: true },
+      });
+      if (!visible) {
+        return res.status(403).json({
+          success: false,
+          error: '该考试不在你的作答范围内',
+        });
+      }
     }
 
     // 自动判定风险等级
@@ -218,10 +247,14 @@ router.get('/', authenticate, authorize('teacher', 'admin'), async (req: Request
  */
 router.get('/reports/:examId/:studentId', authenticate, authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
-    const access = await assertExamAccess(scopeCtxOf(req), req.params.examId);
-    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的行为数据');
-
     const { examId, studentId } = req.params;
+    // 格式校验放在 assertExamAccess 之前：畸形 id 不进库（见文件头 UUID_RE 注释）
+    if (!isUuid(examId) || !isUuid(studentId)) {
+      return res.status(400).json({ success: false, error: '参数格式错误' });
+    }
+
+    const access = await assertExamAccess(scopeCtxOf(req), examId);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的行为数据');
 
     let report = await prisma.behaviorAnalysisReport.findUnique({
       where: {
@@ -256,10 +289,14 @@ router.get('/reports/:examId/:studentId', authenticate, authorize('teacher', 'ad
 // 任何知道 examId 的匿名请求者都能拉走，属严重隐私泄露。
 router.get('/reports/:examId', authenticate, authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
-    const access = await assertExamAccess(scopeCtxOf(req), req.params.examId);
-    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的行为数据');
-
     const { examId } = req.params;
+    // 格式校验放在 assertExamAccess 之前：畸形 id 不进库（见文件头 UUID_RE 注释）
+    if (!isUuid(examId)) {
+      return res.status(400).json({ success: false, error: '参数格式错误' });
+    }
+
+    const access = await assertExamAccess(scopeCtxOf(req), examId);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的行为数据');
     const { suspiciousOnly } = req.query; // 是否只返回可疑报告
 
     const where: any = { examId };
@@ -296,10 +333,14 @@ router.get('/reports/:examId', authenticate, authorize('teacher', 'admin'), asyn
  */
 router.put('/reports/:examId/:studentId/review', authenticate, authorize('teacher', 'admin'), async (req: Request, res: Response) => {
   try {
-    const access = await assertExamAccess(scopeCtxOf(req), req.params.examId);
-    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的行为数据');
-
     const { examId, studentId } = req.params;
+    // 格式校验放在 assertExamAccess 之前：畸形 id 不进库（见文件头 UUID_RE 注释）
+    if (!isUuid(examId) || !isUuid(studentId)) {
+      return res.status(400).json({ success: false, error: '参数格式错误' });
+    }
+
+    const access = await assertExamAccess(scopeCtxOf(req), examId);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的行为数据');
     const reviewerId = req.user?.id; // 从认证中间件获取
 
     if (!reviewerId) {
