@@ -10,6 +10,8 @@ export interface JwtPayload {
   role: string;
   realName?: string;  // ✅ 新增：支持用户真实姓名
   permissions?: string[];
+  /// P2：由 authenticate 从数据库实时覆盖（JWT 里的值可能过期，仅作兜底）
+  departmentId?: string | null;
 }
 
 declare global {
@@ -30,10 +32,11 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
   try {
     const payload = jwt.verify(token, config.jwt.secret) as JwtPayload;
 
-    // ✅ 新增：实时查询数据库验证账号状态
+    // 角色与院系以数据库为准（P2）：角色/院系调整即时生效，无需等待 token 过期；
+    // 全局角色权限判断（authorize / authorizePermission）由此自然拿到最新值。
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
-      select: { id: true, accountStatus: true },
+      select: { id: true, accountStatus: true, role: true, departmentId: true },
     });
 
     if (!user) {
@@ -50,6 +53,8 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     req.user = {
       ...payload,
       id: payload.id || payload.userId,
+      role: user.role,
+      departmentId: user.departmentId ?? null,
     };
     next();
   } catch (err) {

@@ -22,17 +22,19 @@ export interface ScopeCtx {
   userId: string;
   role: string; // 'admin' | 'teacher' | 'student'
   isAdmin: boolean;
+  /// P2：教师的院系（来自 authenticate 的数据库权威值）；为空 = 未分配院系
+  departmentId: string | null;
 }
 
 /** 从请求构造范围上下文。约定：每个 handler 只构造一次并向下传递（缓存挂在对象上）。 */
 export function scopeCtxOf(req: Request): ScopeCtx {
   const role = req.user?.role ?? 'student';
-  return { userId: req.user?.userId ?? '', role, isAdmin: role === 'admin' };
+  return { userId: req.user?.userId ?? '', role, isAdmin: role === 'admin', departmentId: req.user?.departmentId ?? null };
 }
 
-/** 便于单测直接构造 */
-export function makeScopeCtx(userId: string, role: string): ScopeCtx {
-  return { userId, role, isAdmin: role === 'admin' };
+/** 便于单测直接构造（第三参带默认值：既有两参调用不受影响） */
+export function makeScopeCtx(userId: string, role: string, departmentId: string | null = null): ScopeCtx {
+  return { userId, role, isAdmin: role === 'admin', departmentId };
 }
 
 // ── 请求级缓存（WeakMap 挂在 ctx 对象上；同一请求内多处调用只查一次库） ──
