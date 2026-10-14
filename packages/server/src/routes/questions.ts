@@ -30,6 +30,13 @@ const QUESTION_TYPE_VALUES = [
   'single_choice', 'multiple_choice', 'true_false',
 ] as const;
 
+/** 前置契约的一组引用（表 / 表+字段 / 表+视图） */
+const refGroupSchema = z.object({
+  tables: z.array(z.string()).optional(),
+  fields: z.array(z.object({ table: z.string(), field: z.string() })).optional(),
+  views: z.array(z.object({ table: z.string(), view: z.string() })).optional(),
+});
+
 // ✅ 更新Zod验证Schema：支持两级分类和元数据字段
 const questionSchema = z.object({
   // ❌ 删除原有字段
@@ -55,8 +62,13 @@ const questionSchema = z.object({
     options: z.array(z.object({ key: z.string().min(1), text: z.string().min(1) })).min(2, '至少 2 个选项').max(26),
     correct: z.array(z.string().min(1)).min(1, '至少要指定 1 个正确选项'),
   }).nullable().optional(),
-  /** 实操题引用的表名/字段名声明（抽题等值校验用） */
+  /** 实操题引用的表名/字段名声明（抽题等值校验用）+ 前置契约（学生提示条用） */
   schemaRefs: z.object({
+    // requires/creates 必须显式声明：zod 默认 strip 未知键，不声明就是"一保存丢光"
+    // （出题页推导出来的契约与回填的存量数据都会在教师下一次保存时被静默抹掉）
+    requires: refGroupSchema.optional(),
+    creates: refGroupSchema.optional(),
+    // 抽题等值签名（schemaRefsSignature）只认这两串，形状必须保持 string[]
     tables: z.array(z.string()).optional(),
     fields: z.array(z.string()).optional(),
   }).nullable().optional(),
