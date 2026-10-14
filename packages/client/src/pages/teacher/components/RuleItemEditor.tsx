@@ -19,6 +19,29 @@ const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard'];
 
 const TYPE_OPTIONS = Object.entries(QUESTION_TYPE_LABELS).map(([value, label]) => ({ value, label }));
 
+/**
+ * 0 候选的两种成因、两套文案（slot-preview 已返回区分所需的字段，不许瞎猜）：
+ * - 池子问题（scoreMatchedCount=0）：分值一致且引擎判得了的题一道都没有。
+ *   pickQuestionForSlot 的三级放宽（strict / relax-schemaRefs / relax-difficulty）
+ *   每一级都保留「分值一致 + 引擎判得了」过滤，所以放宽引用结构也抽不出来，
+ *   开考时该题位直接空掉 —— 这时让教师去调声明是徒劳的；
+ * - 声明问题（scoreMatchedCount>0）：池里有分值一致的题，是这份声明把结构对不上的
+ *   题全筛没了。开考会退到 relax-schemaRefs 静默抽一道引用结构不同的题
+ *   （结构不一致的学生根本做不了），所以别把教师往能力点/难度/分值上引。
+ */
+function zeroCandidateHint(
+  r: { scoreMatchedCount: number; excludedByScore: number },
+  score: number,
+): string {
+  if (r.scoreMatchedCount > 0) {
+    return '按此声明没有候选题；开考时会放宽引用结构、可能抽到引用不同表/字段的题（结构不一致的学生做不了），请调整声明或改回留空。';
+  }
+  const detail = r.excludedByScore > 0
+    ? `（另有 ${r.excludedByScore} 道因分值不符被排除）`
+    : '（题量不足、能力点/题型对不上，或候选题都被「判分规则引擎未支持」滤掉了）';
+  return `当前题池里没有可用题：${score} 分的候选题为 0 道${detail}；放宽引用结构也救不了，开考时该题位会空掉，请先补充题库或调整分值。`;
+}
+
 interface RuleItemEditorProps {
   item: RuleEditorItem;
   index: number;
@@ -32,7 +55,15 @@ export function RuleItemEditor({ item, index, capabilities, onPatch, onRemove, o
   const [availability, setAvailability] = useState<Record<string, number> | null>(item.availability ?? null);
   // 引用结构声明后的真实候选数（slot-preview 的 candidateCount）：声明写错了就是 0 道，
   // 必须当场看见 —— 否则要到开考抽不出题才会发现
-  const [refsCandidate, setRefsCandidate] = useState<{ count: number; warning: string | null } | null>(null);
+  // scoreMatchedCount = difficultyCounts 合计 = 分值一致且引擎判得了的题数：
+  // 0 候选时用它区分两种成因 —— 全 0 是池子里就没有可用题（放宽引用结构也抽不出来），
+  // >0 才是这份声明把池里已有的题筛没了；excludedByScore 作为池子问题的补充线索回显
+  const [refsCandidate, setRefsCandidate] = useState<{
+    count: number;
+    warning: string | null;
+    scoreMatchedCount: number;
+    excludedByScore: number;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
@@ -62,12 +93,14 @@ export function RuleItemEditor({ item, index, capabilities, onPatch, onRemove, o
         score: item.score,
       }, { signal: controller.signal })
         .then(res => {
-          const counts = res.data?.difficultyCounts ?? null;
+          const counts: Record<string, number> | null = res.data?.difficultyCounts ?? null;
           setAvailability(counts);
           onPatch(item.key, { availability: counts });
           setRefsCandidate({
             count: res.data?.candidateCount ?? 0,
             warning: res.data?.warning ?? null,
+            scoreMatchedCount: Object.values(counts ?? {}).reduce((s, n) => s + (Number(n) || 0), 0),
+            excludedByScore: Number(res.data?.excludedByScore) || 0,
           });
           setLoading(false);
         })
@@ -253,10 +286,7 @@ export function RuleItemEditor({ item, index, capabilities, onPatch, onRemove, o
               {schemaDeclared && refsCandidate && !failed && (
                 <div style={{ fontSize: 12, marginTop: 2, color: refsCandidate.count === 0 ? 'var(--apple-red)' : '#999' }}>
                   {refsCandidate.count === 0
-                    // 后果必须说准：开考不会"抽不出题"，而是退到 relax-schemaRefs 静默抽一道
-                    // 引用结构不同的题（结构不一致的学生根本做不了），所以别把教师往
-                    // 能力点/难度/分值上引 —— 问题在他刚编辑的这份声明
-                    ? '按此声明没有候选题；开考时会放宽引用结构、可能抽到引用不同表/字段的题（结构不一致的学生做不了），请调整声明或改回留空。'
+                    ? zeroCandidateHint(refsCandidate, item.score)
                     : (refsCandidate.warning ?? `按此声明可抽的候选题：${refsCandidate.count} 道`)}
                 </div>
               )}

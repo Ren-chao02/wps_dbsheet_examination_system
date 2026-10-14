@@ -43,3 +43,26 @@ export function buildChainAttribution(details?: GradingDetailLike[] | null): Cha
 export function hasNeedsReview(ruleResults?: Array<{ needsReview?: boolean }>): boolean {
   return (ruleResults ?? []).some(r => r.needsReview);
 }
+
+/** 题级结论三态（与规则级「needsReview 优先于 passed」同一口径） */
+export type QuestionVerdict = 'correct' | 'needs_review' | 'incorrect';
+
+/**
+ * 题级结论：哪些"失败"不该算学生做错。
+ *
+ * 判分服务对 needsReview 规则记 passed=false（拿不到数据、引擎拒绝硬判），
+ * 只按 isCorrect 下结论会把系统原因标成「错误」，与下方规则明细（标「待人工复核」）
+ * 自相矛盾，学生以为自己哪里做错了。所以题级按「失败规则的性质」定调：
+ * - 'needs_review'：失败规则里只要有一条 needsReview —— 系统给不出结论，不能算做错
+ *   （混合情形也按此走：题里可能确有做错的规则，规则明细会逐条标出，
+ *    而"这题的结论待定"是更不误导学生的题级口径）；
+ * - 'incorrect'：确实有 passed=false 且 needsReview=false 的规则（真的做错了）；
+ * - 'correct'：没有失败规则。
+ */
+export function questionVerdict(detail: GradingDetailLike): QuestionVerdict {
+  const failedRules = (detail.ruleResults ?? []).filter(r => !r.passed);
+  if (failedRules.some(r => r.needsReview)) return 'needs_review';
+  if (failedRules.length > 0) return 'incorrect';
+  // 没有失败规则（含无规则的兜底题：判分服务给 isCorrect=false、score=0）时以 isCorrect 为准
+  return detail.isCorrect === false ? 'incorrect' : 'correct';
+}

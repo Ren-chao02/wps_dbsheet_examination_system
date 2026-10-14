@@ -153,6 +153,9 @@ export interface Question {
   objectiveAnswer?: ObjectiveAnswer | null;
   /** 实操题引用的表/字段声明（抽题等值校验依据，选填） */
   schemaRefs?: SchemaRefs | null;
+  /** 场景链：同一场景的题按 scenarioOrder 在练习「场景实战」里成链出给学生；null = 不属于任何场景 */
+  scenario?: string | null;
+  scenarioOrder?: number | null;
   hints: string | null;
   /** 解析（官方题库导入的题目自带；教师出题时可选填） */
   analysis?: string | null;
