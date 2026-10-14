@@ -49,6 +49,33 @@ describe('derivePrerequisites', () => {
     expect(refs.requires.tables).toEqual(['员工信息表']);
   });
 
+  it('不把字段的创建算到表头上（真实题：使用查找引用字段实现跨表数据同步）', () => {
+    const { refs } = derivePrerequisites(
+      [
+        rule('check_table_exists', { tableName: '销售明细表' }),
+        rule('check_table_exists', { tableName: '产品主数据表' }),
+      ],
+      {
+        title: '使用查找引用字段实现跨表数据同步',
+        description: "在'销售明细表'中创建查找引用字段，根据'产品编号'从'产品主数据表'同步'产品名称'和'规格型号'两个字段的值。",
+      },
+    );
+    expect(refs.creates.tables).toEqual([]);
+    expect(refs.requires.tables).toEqual(['产品主数据表', '销售明细表']);   // 码点序：产 U+4EA7 < 销 U+9500
+  });
+
+  it('题面有创建动词但没点名这张表 → 只是前提', () => {
+    const { refs } = derivePrerequisites(
+      [rule('check_table_exists', { tableName: '任务表' }), rule('check_table_exists', { tableName: '项目表' })],
+      {
+        title: '创建统计字段实现计数功能',
+        description: "创建统计字段'任务数量'，统计每个项目负责人名下的任务总数（使用计数统计方式）。",
+      },
+    );
+    expect(refs.creates.tables).toEqual([]);
+    expect(refs.requires.tables).toEqual(['任务表', '项目表']);
+  });
+
   it('加字段题（真实题：创建时间字段「打卡时间」）→ requires 员工信息表 + creates 该字段', () => {
     const { refs } = derivePrerequisites([
       rule('check_field', { tableName: '员工信息表', fieldName: '打卡时间', fieldType: 'Time' }),
