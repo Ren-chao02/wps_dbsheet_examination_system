@@ -9,6 +9,7 @@ import {
   RightOutlined,
   ReloadOutlined,
   QuestionCircleOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import type { ObjectiveAnswerValue, StudentExamQuestion } from '../../types';
@@ -23,6 +24,7 @@ import { WpsTablePanel } from '../../components/wps/WpsTablePanel';
 import { useExamSession } from '../../hooks/useExamSession';
 import { computeExamDeadline, serverNow, syncServerTime } from '../../utils/exam-time';
 import { groupByQuestionType, toChineseIndex } from '../../utils/questionLabels';
+import { buildRequirementHint } from '../../utils/question-refs-hint';
 
 const { Text, Paragraph, Title } = Typography;
 
@@ -514,6 +516,23 @@ export function WpsExamDoingPage() {
                       </Paragraph>
                     </Card>
                   )}
+
+                  {/* 前置提示条：告诉学生"没有这张表是正常的，先建它" —— 自包含化就靠这一条。
+                      无 requires（或为空）时返回 null，整条不渲染（客观题/老数据自然豁免） */}
+                  {(() => {
+                    const hint = buildRequirementHint(currentQuestion.requires);
+                    if (!hint) return null;
+                    return (
+                      <Alert
+                        type="info"
+                        showIcon
+                        icon={<InfoCircleOutlined />}
+                        message="开始前请确认表格结构"
+                        description={hint}
+                        style={{ marginBottom: 16 }}
+                      />
+                    );
+                  })()}
 
                   {currentQuestion.hints && (
                     <Alert type="info" showIcon message="操作提示" description={currentQuestion.hints} style={{ marginBottom: 16 }} />
