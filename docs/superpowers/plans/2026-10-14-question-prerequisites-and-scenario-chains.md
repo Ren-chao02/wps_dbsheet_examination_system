@@ -65,6 +65,10 @@
 
 创建 `packages/server/src/engine/__tests__/prerequisite-deriver.test.ts`：
 
+> ⚠️ 本测试块已被「附三：创建语义门槛」修订：凡期望 `check_table_exists` 落 creates 的用例，
+> 必须同时传题面（`derivePrerequisites(rules, { title, description })`），并新增门槛用例。
+> 以附三给出的最终测试文本为准。
+
 ```ts
 /**
  * 前置契约推导器测试。
@@ -180,8 +184,10 @@ Expected: FAIL —— `Failed to resolve import "../prerequisite-deriver"`
 /**
  * 前置契约推导器：从题目的判分规则（answerRules）反推「这题需要什么 / 会产出什么」。
  *
- * 为什么能推：规则处理器的语义是稳定的 —— check_table_exists 的考点就是"把表建出来"（creates），
- * check_field_* 的考点是"字段配对了"（creates 字段），而它引用的表必须已存在（requires）。
+ * 为什么能推：规则处理器的语义是稳定的 —— check_field_* 的考点是"字段配对了"（creates 字段），
+ * 它引用的表必须已存在（requires）；check_view_* 同理。
+ * 唯一有歧义的是 check_table_exists：它既可能是"把这张表建出来"（真建表），
+ * 也可能是"表得在，我才配得上字段"（前置检查）—— 所以要用题面语义来判（见 hasCreationIntent）。
  * 推导结果只用于提示 / 归链 / 组卷签名，**判分一行都不看它**；推错最多多显示一条提示。
  */
 import type { AnswerRule } from './rule-engine';
@@ -213,10 +219,35 @@ export interface DeriveResult {
   unresolved: string[];
 }
 
-/** 考点 = "这张表建出来/建对了" → creates */
+/** 考点 = "这张表建出来/建对了" → 但**要过题面语义门槛**（见 hasCreationIntent） */
 const CREATES_TABLE = new Set([
   'check_table_exists', 'check_table_name', 'check_table_count', 'check_table_fields',
 ]);
+
+/** 题面上下文：判断"这题是在建这张表吗"要用 */
+export interface QuestionContext {
+  title?: string | null;
+  description?: string | null;
+}
+
+/** 题面里的创建语义 */
+const CREATION_VERBS = /创建|新建|搭建|构建|导入/;
+
+/**
+ * 这道题是在"建"这张表，还是只是"用了"这张表？
+ *
+ * 实证：题库里 15 道题带 check_table_exists，其中只有一两道是真建表，其余都是前置检查——
+ * 一律当 creates 会把「设置关联字段允许多条记录关联」（检查 任务表+员工信息表 存在）
+ * 判成"创建了这两张表"，把两条本不相干的链焊成一条 25 题大链。
+ * 判定：题面（标题+描述）点名了这张表，且带创建语义 ⇒ 建；否则 ⇒ 只是前提。
+ * 没有题面时保守判"不创建"（宁可该表暂时没有创建者，也不要错误合并链）。
+ */
+function hasCreationIntent(table: string, question?: QuestionContext | null): boolean {
+  const text = `${question?.title ?? ''}\n${question?.description ?? ''}`;
+  if (!text.trim()) return false;
+  if (!text.includes(table)) return false;
+  return CREATION_VERBS.test(text);
+}
 /** 考点 = "字段配对了" → creates 字段；所在表属 requires */
 const FIELD_ACTIONS = new Set([
   'check_field', 'check_field_count', 'check_field_default', 'check_field_format', 'check_field_formula',
@@ -248,7 +279,12 @@ const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const dedupeRefs = <T extends { table: string } & Record<string, string>>(xs: T[]): T[] =>
   [...new Map(xs.map(x => [refKey(x), x])).values()].sort((a, b) => cmp(refKey(a), refKey(b)));
 
-export function derivePrerequisites(rules: AnswerRule[]): DeriveResult {
+export function derivePrerequisites(
+  rules: AnswerRule[],
+  // 题面（标题+描述）：判 check_table_exists 是"真建表"还是"前置检查"的唯一依据。
+  // 只有一个调用方拿不到题面（无），两个真实调用方（回填脚本、出题页推导按钮）都必须传
+  question?: QuestionContext | null,
+): DeriveResult {
   const requires: RefGroup = { tables: [], fields: [], views: [] };
   const creates: RefGroup = { tables: [], fields: [], views: [] };
   const unresolved: string[] = [];
@@ -262,7 +298,12 @@ export function derivePrerequisites(rules: AnswerRule[]): DeriveResult {
 
     if (CREATES_TABLE.has(action)) {
       if (!table) { unresolved.push(action); continue; }
-      creates.tables.push(table);
+      // check_table_exists 有两种含义：真建表（"创建一个数据表，命名为 X"）与前置检查
+      // （"表得在，我才配得上关联字段"）。只有题面带创建语义且点名了这张表，才算本题产物。
+      // 误判代价不对称：错判成 creates 会把两条链焊死（实测出现过 25 题大链），
+      // 错判成 requires 只是该表暂时没有创建者、题目自成链根——后者人工一改就好。
+      if (hasCreationIntent(table, question)) creates.tables.push(table);
+      else requires.tables.push(table);
     } else if (FIELD_ACTIONS.has(action)) {
       if (!table || !field) { unresolved.push(action); continue; }
       requires.tables.push(table);
@@ -756,6 +797,8 @@ import type { AnswerRule } from '../engine/rule-engine';
 export interface BackfillInput {
   id: string;
   title: string;
+  /** 描述：推导器判"真建表 vs 前置检查"要用（见 prerequisite-deriver 的 hasCreationIntent） */
+  description?: string | null;
   /** 直接来自 Prisma 的 Json 列，可能是任意脏数据 */
   answerRules: unknown;
 }
@@ -790,7 +833,8 @@ export function buildBackfillPlan(questions: BackfillInput[]): BackfillPlan {
   const derived = new Map<string, DeriveResult>();
   for (const q of questions) {
     try {
-      derived.set(q.id, derivePrerequisites(asRules(q.answerRules)));
+      // 题面一起传进去：check_table_exists 是不是"真建表"要看题面语义
+      derived.set(q.id, derivePrerequisites(asRules(q.answerRules), { title: q.title, description: q.description }));
     } catch {
       // 脏规则（不是数组 / 结构异常）不该让整批回填失败
       derived.set(q.id, { refs: emptyRefs(), unresolved: ['(规则解析失败)'] });
@@ -1042,6 +1086,9 @@ import { derivePrerequisites } from '../engine/prerequisite-deriver';
  * 纯函数、不查库不联网；推不出来的 action 在 unresolved 里点名，交人工处理。
  */
 const deriveRefsSchema = z.object({
+  // 题面随规则一起传：check_table_exists 是"真建表"还是"前置检查"要靠题面判
+  title: z.string().optional(),
+  description: z.string().optional(),
   rules: z
     .array(
       z.object({
@@ -1059,7 +1106,8 @@ questionRouter.post('/derive-refs', authorize('teacher', 'admin'), async (req: R
   if (!parsed.success) {
     return res.status(400).json({ message: '参数错误', errors: parsed.error.flatten() });
   }
-  res.json(derivePrerequisites(parsed.data.rules as AnswerRule[]));
+  const { title, description, rules } = parsed.data;
+  res.json(derivePrerequisites(rules as AnswerRule[], { title, description }));
 });
 ```
 
@@ -1119,14 +1167,15 @@ async function main() {
 
   const questions = await prisma.question.findMany({
     where: { type: { in: HANDS_ON_TYPES as unknown as any } },
-    select: { id: true, title: true, answerRules: true, scenario: true },
+    // description 必须取：推导器要用题面判断 check_table_exists 是"真建表"还是"前置检查"
+    select: { id: true, title: true, description: true, answerRules: true, scenario: true },
     orderBy: { createdAt: 'asc' },
   });
 
   const targets = force ? questions : questions.filter(q => q.scenario === null);
   console.log(`实操题 ${questions.length} 道；本次处理 ${targets.length} 道（${force ? '--force 覆盖模式' : '只填空场景'}）`);
 
-  const plan = buildBackfillPlan(targets.map(q => ({ id: q.id, title: q.title, answerRules: q.answerRules })));
+  const plan = buildBackfillPlan(targets.map(q => ({ id: q.id, title: q.title, description: q.description, answerRules: q.answerRules })));
 
   console.log('\n=== 场景（自动归链结果）===');
   for (const s of plan.scenarios) console.log(`  ${s.key}：${s.questionCount} 题`);
@@ -2913,3 +2962,53 @@ Task 17 收尾（全部）
    ② 有 `creates` 的题把 `requires` 的表并进同一条链（原计划只在"同题 creates 多表"时并链，导致互相依赖的两题落在两条单题链里、环永远检测不到）；只 requires 的跨链题仍进人工清单；
    ③ 成环时只标"卡住"的成员（环本身 + 受环影响的下游题），不标整条链；
    ④ T4 用例的期望数组与其自身的码点序 `sort()` 打架（任何实现都过不了），改为集合比较。
+
+## 附三：创建语义门槛（2026-10-14 回填实跑后追加，用户裁定走 A）
+
+**背景**：回填实跑发现 25 道题被合成**一条**链（「任务表 + 员工信息表 + 统计表 + 项目表」），而预估是「员工信息表 ~20」+「项目/任务 ~4」。根因：`check_table_exists` 有**两种含义**——真建表（「在左侧导航面板中创建新的数据表」）与前置检查（「设置关联字段允许多条记录关联」里的"表得在"）；题库 15 道用它，只有一两道是真建表，其余全被判成"创建"，把两条链焊死。
+
+**裁定（用户选 A）**：`check_table_exists / check_table_name / check_table_count / check_table_fields` → **creates 表 T 仅当题面（标题+描述）带创建语义（`/创建|新建|搭建|构建|导入/`）且点名了 T**；否则 → **requires T**。改动落在 Task 1（见上方已同步的代码：`QuestionContext` / `CREATION_VERBS` / `hasCreationIntent` / 第二参数）、Task 3（`BackfillInput.description` + 调用传题面）、Task 5（zod 增 `title`/`description` 并透传）、Task 6（select 增 `description`）。
+
+**Task 1 测试的最终形态**（取代上方测试块中与建表相关的三条；其余用例不受影响）：
+
+```ts
+  it('建表题（真实题：在左侧导航面板中创建新的数据表）→ creates 该表，requires 为空', () => {
+    const { refs, unresolved } = derivePrerequisites(
+      [rule('check_table_exists', { tableName: '员工信息表' })],
+      {
+        title: '在左侧导航面板中创建新的数据表',
+        description: '在已创建的多维表格中，通过左侧导航面板的"+"按钮创建一个新的数据表，命名为"员工信息表"。',
+      },
+    );
+    expect(refs.creates.tables).toEqual(['员工信息表']);
+    expect(refs.requires.tables).toEqual([]);
+    expect(refs.tables).toEqual(['员工信息表']);
+    expect(unresolved).toEqual([]);
+  });
+
+  it('前置检查不是创建（真实题：设置关联字段允许多条记录关联）→ 两张表都进 requires', () => {
+    const { refs } = derivePrerequisites(
+      [
+        rule('check_table_exists', { tableName: '任务表' }),
+        rule('check_table_exists', { tableName: '员工信息表' }),
+        rule('check_field', { tableName: '任务表', fieldName: '负责人', type: 'link' }),
+      ],
+      {
+        title: '设置关联字段允许多条记录关联',
+        description: "在单向关联或双向关联字段设置中，开启'允许关联多条记录'开关，使一个任务可以关联多个负责人。",
+      },
+    );
+    expect(refs.creates.tables).toEqual([]);
+    expect(refs.requires.tables).toEqual(['任务表', '员工信息表']);   // 码点序：任 U+4EFB < 员 U+5458
+  });
+
+  it('没有题面时保守判"不创建"（宁可该表暂时没有创建者，也不要错并链）', () => {
+    const { refs } = derivePrerequisites([rule('check_table_exists', { tableName: '员工信息表' })]);
+    expect(refs.creates.tables).toEqual([]);
+    expect(refs.requires.tables).toEqual(['员工信息表']);
+  });
+```
+
+同题多表（「创建单向关联字段连接两个数据表」）与"先建表再建字段"两条用例：补题面（`{ title: '创建单向关联字段连接两个数据表', description: "创建两个数据表：'项目表'和'任务表'。在'任务表'中新建单向关联字段'所属项目'，关联到'项目表'。" }` / `{ title: '创建员工信息表', description: '创建一个新的数据表，命名为"员工信息表"。' }`），断言不变。
+
+**重跑要求**：改动落地后 `npx tsx scripts/backfill-question-refs.ts --apply --force` 覆盖重写（脚本幂等），并用只读 SQL 核对新链结构；预期能读回「员工信息表 ≈20」「任务表 + 项目表 + 统计表 ≈4」这样的分链，桥接题进待人工清单。
