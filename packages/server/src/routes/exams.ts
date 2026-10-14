@@ -4,7 +4,7 @@ import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { autoEndExpiredExams, finalizeExamSubmissions } from '../utils/exam-utils';
 import { checkExamAccess, denyAccess } from '../middleware/exam-ownership';
-import { scopeCtxOf, examWhere, assertExamAccess } from '../services/data-scope';
+import { scopeCtxOf, examWhere, assertExamAccess, assertPaperRead, questionWhere } from '../services/data-scope';
 import { emitStudentSubmit, emitStudentUpdate } from '../services/socket';
 
 export const examRouter = Router();
@@ -234,12 +234,22 @@ examRouter.post('/', async (req: Request, res: Response) => {
     }
 
     const { paperId, batchId, ...rest } = data;
+
+    // 数据范围 P2：绑定的试卷必须在自己可见的池内（本院系/校级/本人），
+    // 否则拿到 ID 直连提交就能绕过列表可见性；校验必须在 create 之前
+    if (paperId) {
+      const access = await assertPaperRead(scopeCtxOf(req), paperId);
+      if (access !== 'ok') return denyAccess(res, access, '该试卷不在你可见的范围内');
+    }
+
     const exam = await prisma.exam.create({
       data: {
         ...rest,
         startTime: data.startTime ? new Date(data.startTime) : null,
         endTime: data.endTime ? new Date(data.endTime) : null,
         createdBy: req.user!.userId,
+        // 默认归属创建者院系（无院系 = 校级 null），与题目/试卷创建同口径
+        departmentId: req.user!.departmentId ?? null,
         paperId: paperId ?? null,
         batchId: batchId ?? null,
       },
@@ -364,6 +374,13 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
         data.startTime = null;
         data.endTime = null;
       }
+    }
+
+    // 数据范围 P2：显式更换试卷时校验新试卷在可见池内（院校池/本人）。
+    // 只看 data.paperId 的有值情形——不传 paperId 的普通编辑不受影响，置空（解绑）也无需判定。
+    if (data.paperId) {
+      const access = await assertPaperRead(scopeCtxOf(req), data.paperId);
+      if (access !== 'ok') return denyAccess(res, access, '该试卷不在你可见的范围内');
     }
 
     const { paperId, batchId, ...rest } = data;
@@ -505,6 +522,20 @@ examRouter.put('/:id/questions', async (req: Request, res: Response) => {
     }
 
     const { questionIds } = examQuestionSchema.parse(req.body);
+
+    // 数据范围 P2：只能挂载自己可见池（本院系/校级/本人）里的题目。
+    // 必须在 deleteMany 之前 —— 先删后报错会把考试原有题目清光
+    const scope = scopeCtxOf(req);
+    const ids = [...new Set(questionIds.map(q => q.questionId))];
+    if (ids.length > 0) {
+      const visible = await prisma.question.findMany({
+        where: { AND: [{ id: { in: ids } }, await questionWhere(scope)] },
+        select: { id: true },
+      });
+      if (visible.length !== ids.length) {
+        return res.status(403).json({ message: '包含不在你可见题库范围内的题目（本院系 / 校级 / 本人）' });
+      }
+    }
 
     // Delete existing and create new
     await prisma.examQuestion.deleteMany({ where: { examId: req.params.id } });
