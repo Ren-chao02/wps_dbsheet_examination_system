@@ -29,6 +29,7 @@ packages/server/scripts/*
 !packages/server/scripts/import-official-questions.ts
 !packages/server/scripts/init-categories.ts
 !packages/server/scripts/update-question-type.ts
+!packages/server/scripts/backfill-question-refs.ts
 !packages/server/scripts/diag-missing-table.ts
 !packages/server/scripts/probe-practice-reset.ts
 !packages/server/scripts/probe-v7-delete.ts
