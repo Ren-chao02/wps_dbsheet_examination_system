@@ -24,6 +24,7 @@
 import { createHash } from 'crypto';
 import { prisma } from '../config/prisma';
 import type { Prisma } from '@prisma/client';
+import { questionPoolWhereForPaper } from './data-scope';
 
 export interface SlotRule {
   /** 要求命中的能力点（知识点）：候选题必须**全部覆盖**这些能力点 */
@@ -95,6 +96,15 @@ export async function generateStudentPaper(
     return { created: 0, total: existing, unfilledSlots: [] };
   }
 
+  // ── 数据范围 P2：抽题候选池跟随试卷归属 ──
+  // 生成是系统行为（开考瞬间由考生触发，也可能被重试/脚本触发），不能按"当前请求者"
+  // 收口；以试卷归属为准（本院系 / 校级 / 作者本人 / 上架），与组卷页预览同池 ——
+  // 否则换个人触发开考，抽出来的题就"越界"了。
+  // 一次生成只查一次、全题位共用；没有抽题题位则不查（固定题位不碰候选池）。
+  const poolWhere = slots.some(s => s.slotType === 'rule')
+    ? await loadQuestionPoolWhereForExamPaper(examId, tx)
+    : undefined;
+
   const rows: Prisma.StudentExamQuestionCreateManyInput[] = [];
   const unfilledSlots: Array<{ slotIndex: number; reason: string }> = [];
   const usedQuestionIds = new Set<string>();
@@ -126,7 +136,7 @@ export async function generateStudentPaper(
     // ── 抽题题位 ──
     const rule = (slot.rule || {}) as SlotRule;
     const picked = await pickQuestionForSlot({
-      examId, slotIndex, rule, slotScore, usedQuestionIds,
+      examId, slotIndex, rule, slotScore, usedQuestionIds, poolWhere,
       seed: `${examId}:${studentId}:${slotIndex}`, tx,
     });
 
@@ -154,6 +164,24 @@ export async function generateStudentPaper(
 }
 
 /**
+ * 读取本场考试试卷归属决定的候选题池条件（数据范围 P2）。
+ * 考试未绑试卷 / 试卷已删 → 返回 undefined：调用方不加池条件，行为与收口前一致
+ * （不放宽也不收窄；不放宽是安全底线，收窄会让历史考试的补建有题抽不到）。
+ */
+async function loadQuestionPoolWhereForExamPaper(
+  examId: string,
+  tx: Prisma.TransactionClient,
+): Promise<Record<string, any> | undefined> {
+  const exam = await tx.exam.findUnique({ where: { id: examId }, select: { paperId: true } });
+  if (!exam?.paperId) return undefined;
+  const paper = await tx.paper.findUnique({
+    where: { id: exam.paperId },
+    select: { createdBy: true, departmentId: true },
+  });
+  return paper ? questionPoolWhereForPaper(paper) : undefined;
+}
+
+/**
  * 为单个抽题题位挑选题目。
  *
  * 严格优先、逐级放宽：
@@ -169,14 +197,21 @@ async function pickQuestionForSlot(params: {
   rule: SlotRule;
   slotScore: number;
   usedQuestionIds: Set<string>;
+  /** 数据范围 P2：试卷归属决定的候选池条件；缺省（未绑卷/试卷已删）则不加 */
+  poolWhere?: Record<string, any>;
   seed: string;
   tx: Prisma.TransactionClient;
 }) {
-  const { examId, slotIndex, rule, slotScore, usedQuestionIds, seed, tx } = params;
+  const { examId, slotIndex, rule, slotScore, usedQuestionIds, poolWhere, seed, tx } = params;
 
   const baseWhere: Prisma.QuestionWhereInput = { status: 'published' };
   if (rule.capabilityIds?.length) baseWhere.capabilityIds = { hasEvery: rule.capabilityIds };
   if (rule.type) baseWhere.type = rule.type as any;
+  // 池条件挂在 AND 上而不是覆盖顶层字段 —— status/capabilityIds/type 的既有语义
+  // 保持原样；attempts 都从 baseWhere 派生，一处挂载即三条放宽路径全部生效
+  if (poolWhere && Object.keys(poolWhere).length > 0) {
+    (baseWhere as any).AND = [poolWhere];
+  }
 
   const attempts: Array<{ where: Prisma.QuestionWhereInput; label: string }> = [
     { where: { ...baseWhere, ...(rule.difficulty ? { difficulty: rule.difficulty as any } : {}) }, label: 'strict' },

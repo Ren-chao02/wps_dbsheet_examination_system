@@ -14,11 +14,14 @@ const { mockPrisma } = vi.hoisted(() => ({
     examQuestion: { findMany: vi.fn() },
     studentExamQuestion: { count: vi.fn(), createMany: vi.fn(), findMany: vi.fn(), groupBy: vi.fn() },
     question: { findMany: vi.fn() },
+    exam: { findUnique: vi.fn() },
+    paper: { findUnique: vi.fn() },
   } as any,
 }));
 vi.mock('../../config/prisma', () => ({ prisma: mockPrisma }));
 
 import { generateStudentPaper } from '../paper-generator';
+import { questionPoolWhereForPaper } from '../data-scope';
 
 /** 构造候选题：能力点 tables.1，难度 easy，10 分 */
 function candidate(id: string, overrides: Partial<{ capabilityIds: string[]; difficulty: string; score: number; schemaRefs: any }> = {}) {
@@ -38,6 +41,9 @@ beforeEach(() => {
   // 默认无人抽过题（各候选题使用次数均为 0 → 走种子哈希选择）
   mockPrisma.studentExamQuestion.groupBy.mockResolvedValue([]);
   mockPrisma.studentExamQuestion.createMany.mockResolvedValue({ count: 1 });
+  // 默认「考试未绑试卷」→ 不加候选池条件，既有用例按收口前行为跑
+  mockPrisma.exam.findUnique.mockResolvedValue(null);
+  mockPrisma.paper.findUnique.mockResolvedValue(null);
 });
 
 describe('固定题位', () => {
@@ -156,6 +162,71 @@ describe('抽题题位', () => {
     await generateStudentPaper('exam-1', 'stu-1');
     const rows = mockPrisma.studentExamQuestion.createMany.mock.calls[0][0].data;
     expect(new Set(rows.map((r: any) => r.questionId)).size).toBe(rows.length);
+  });
+});
+
+describe('数据范围 P2：抽题候选池跟随试卷归属', () => {
+  const slot = {
+    slotIndex: 0, sortOrder: 0, slotType: 'rule', questionId: null, scoreOverride: 10,
+    rule: { capabilityIds: ['tables.1'], difficulty: 'easy' },
+    question: null,
+  };
+
+  it('候选查询把池条件挂在 AND 上：既有过滤不丢，三条放宽路径都生效', async () => {
+    mockPrisma.examQuestion.findMany.mockResolvedValue([slot]);
+    mockPrisma.exam.findUnique.mockResolvedValue({ paperId: 'p-1' });
+    mockPrisma.paper.findUnique.mockResolvedValue({ createdBy: 't-1', departmentId: 'd-1' });
+    // 前两次判空、第三次命中：一次生成走满「严格 → 放宽 schemaRefs → 放宽难度」三条路径
+    mockPrisma.question.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([candidate('q-pooled')]);
+
+    const result = await generateStudentPaper('exam-1', 'stu-1');
+
+    expect(result.created).toBe(1);
+    expect(mockPrisma.studentExamQuestion.createMany.mock.calls[0][0].data[0].questionId).toBe('q-pooled');
+
+    const wantPool = questionPoolWhereForPaper({ createdBy: 't-1', departmentId: 'd-1' });
+    expect(mockPrisma.question.findMany).toHaveBeenCalledTimes(3);
+    for (const call of mockPrisma.question.findMany.mock.calls) {
+      const where = call[0].where;
+      expect(where.AND).toEqual([wantPool]); // 池条件（本院系 / 校级 / 作者本人 / 上架）
+      // 池条件挂在 AND 上，不覆盖既有的 published / 能力点过滤
+      expect(where.status).toBe('published');
+      expect(where.capabilityIds).toEqual({ hasEvery: ['tables.1'] });
+    }
+  });
+
+  it('考试未绑试卷 / 试卷已删 → 不加池条件，行为与收口前一致', async () => {
+    mockPrisma.examQuestion.findMany.mockResolvedValue([slot]);
+    mockPrisma.question.findMany.mockResolvedValue([candidate('q-any')]);
+
+    // ① 考试未绑试卷：连 paper 都不查（少一次无谓查询），正常生成
+    mockPrisma.exam.findUnique.mockResolvedValue({ paperId: null });
+    const r1 = await generateStudentPaper('exam-1', 'stu-1');
+    expect(r1.created).toBe(1);
+    expect(mockPrisma.paper.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.question.findMany.mock.calls[0][0].where.AND).toBeUndefined();
+
+    // ② 试卷已被删（exam.paperId 指向不存在的试卷）：同样不加池条件、不崩
+    mockPrisma.question.findMany.mockClear();
+    mockPrisma.exam.findUnique.mockResolvedValue({ paperId: 'p-gone' });
+    mockPrisma.paper.findUnique.mockResolvedValue(null);
+    const r2 = await generateStudentPaper('exam-1', 'stu-2');
+    expect(r2.created).toBe(1);
+    expect(mockPrisma.paper.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'p-gone' } }));
+    expect(mockPrisma.question.findMany.mock.calls[0][0].where.AND).toBeUndefined();
+  });
+
+  it('纯固定题位考试不查试卷（不产生无谓查询）', async () => {
+    mockPrisma.examQuestion.findMany.mockResolvedValue([
+      { slotIndex: 0, sortOrder: 0, slotType: 'fixed', questionId: 'q-1', scoreOverride: null, rule: null, question: { id: 'q-1', score: 5 } },
+    ]);
+
+    await generateStudentPaper('exam-1', 'stu-1');
+    expect(mockPrisma.exam.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.paper.findUnique).not.toHaveBeenCalled();
   });
 });
 
