@@ -186,8 +186,11 @@ Expected: FAIL —— `Failed to resolve import "../prerequisite-deriver"`
  */
 import type { AnswerRule } from './rule-engine';
 
-export interface FieldRef { table: string; field: string }
-export interface ViewRef { table: string; view: string }
+// 用 type 而非 interface：下面的去重工具用了 `T extends { table: string } & Record<string, string>`，
+// interface 没有隐式索引签名会报 TS2345；type 别名可以（实现时踩过——
+// esbuild 不查类型，vitest 全绿会掩盖它，必须靠 tsc 才发现）
+export type FieldRef = { table: string; field: string };
+export type ViewRef = { table: string; view: string };
 
 export interface RefGroup {
   tables: string[];
