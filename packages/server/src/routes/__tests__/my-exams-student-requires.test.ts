@@ -46,8 +46,11 @@ const { mockPrisma, questionRow } = vi.hoisted(() => {
     analysis: '标准答案是……',
     schemaRefs: {
       requires: { tables: ['员工信息表'], fields: [{ table: '员工信息表', field: '姓名' }], views: [] },
-      creates: { tables: [], fields: [{ table: '员工信息表', field: '打卡时间' }], views: [] },
-      tables: ['员工信息表'],
+      creates: { tables: ['统计表'], fields: [{ table: '员工信息表', field: '打卡时间' }], views: [] },
+      // 生产里 tables = requires ∪ creates（推导器去重并集）：夹具必须复现这个形状，
+      // 否则「toStudentQuestion 误读 schemaRefs.tables」的回归测不出来 —— 那会把
+      // 应当由学生创建的表名当提示发出去，等于漏答案。
+      tables: ['员工信息表', '统计表'],
       fields: ['姓名', '打卡时间'],
     },
     sortOrder: 0,
@@ -90,6 +93,8 @@ describe('学生题目下发的前置契约', () => {
     // 取法贴合 /api/my-exams/:id 的真实返回：题目在 body.questions 上
     const q = res.body.questions?.[0];
     expect(q).toBeTruthy();
+    // 只含 requires：统计表只存在于 creates，出现在这里 = 误读 schemaRefs.tables（漏答案）
+    expect(q.requires.tables).toEqual(['员工信息表']);
     expect(q.requires).toEqual({
       tables: ['员工信息表'],
       fields: [{ table: '员工信息表', field: '姓名' }],
@@ -101,20 +106,32 @@ describe('学生题目下发的前置契约', () => {
     expect(body).not.toContain('answerRules');   // 判分规则
     expect(body).not.toContain('标准答案是');     // analysis 解析
     expect(body).not.toContain('打卡时间');       // creates / answerRules 独有的字段名（泄露金丝雀）
+    expect(body).not.toContain('统计表');         // 只存在于 creates 的表名（同金丝雀）
     expect(q.creates).toBeUndefined();
     expect(q.answerRules).toBeUndefined();
     expect(q.analysis).toBeUndefined();
   });
 
-  it('无前置要求时不下发 requires 字段（前端据此不渲染提示条）', async () => {
+  it('无前置要求时不下发 requires 字段（哪怕 schemaRefs.tables 非空——那是 creates 侧）', async () => {
+    // 场景：本题只"创建"统计表、不需要任何已存在的结构。若实现误读 schemaRefs.tables，
+    // 就会给学生发出一条"先建「统计表」"的错误指令——这里必须保持不发。
     mockPrisma.studentExamQuestion.findMany.mockResolvedValueOnce([
       {
         questionId: 'q-1', sortOrder: 0, score: 10,
-        question: { ...questionRow, schemaRefs: { requires: { tables: [], fields: [], views: [] }, tables: [], fields: [] } },
+        question: {
+          ...questionRow,
+          schemaRefs: {
+            requires: { tables: [], fields: [], views: [] },
+            creates: { tables: ['统计表'], fields: [], views: [] },
+            tables: ['统计表'],
+            fields: [],
+          },
+        },
       },
     ]);
     const res = await request(app).get('/api/my-exams/e-1');
     expect(res.status).toBe(200);
     expect(res.body.questions[0].requires).toBeUndefined();
+    expect(JSON.stringify(res.body)).not.toContain('统计表');
   });
 });

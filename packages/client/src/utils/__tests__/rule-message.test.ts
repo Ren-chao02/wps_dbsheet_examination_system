@@ -17,4 +17,9 @@ describe('friendlyRuleMessage', () => {
     expect(friendlyRuleMessage(null)).toBeUndefined();
     expect(friendlyRuleMessage('')).toBeUndefined();
   });
+
+  it('表单/视图缺失不误判成缺表（引擎真会下发这两种措辞，改写会给出错误指令）', () => {
+    expect(friendlyRuleMessage('未找到表单「报名表」')).toBe('未找到表单「报名表」');
+    expect(friendlyRuleMessage('视图「员工总览」不存在')).toBe('视图「员工总览」不存在');
+  });
 });
