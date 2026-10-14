@@ -163,6 +163,18 @@ describe('抽题题位', () => {
     const rows = mockPrisma.studentExamQuestion.createMany.mock.calls[0][0].data;
     expect(new Set(rows.map((r: any) => r.questionId)).size).toBe(rows.length);
   });
+
+  it('候选只有引擎判不了的题 → 跳过，题位未填（不排人工卷）', async () => {
+    mockPrisma.examQuestion.findMany.mockResolvedValue([ruleSlot]);
+    mockPrisma.question.findMany.mockResolvedValue([
+      { ...candidate('q-bad'), answerRules: [{ action: 'verify_dashboard_chart', params: {} }] },
+    ]);
+
+    const result = await generateStudentPaper('exam-1', 'stu-1');
+
+    expect(result.created).toBe(0);
+    expect(result.unfilledSlots).toHaveLength(1);
+  });
 });
 
 describe('数据范围 P2：抽题候选池跟随试卷归属', () => {

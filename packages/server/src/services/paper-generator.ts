@@ -25,6 +25,7 @@ import { createHash } from 'crypto';
 import { prisma } from '../config/prisma';
 import type { Prisma } from '@prisma/client';
 import { questionPoolWhereForPaper } from './data-scope';
+import { unsupportedRuleActions } from '../engine/rule-engine';
 
 export interface SlotRule {
   /** 要求命中的能力点（知识点）：候选题必须**全部覆盖**这些能力点 */
@@ -222,7 +223,8 @@ async function pickQuestionForSlot(params: {
   for (const attempt of attempts) {
     const candidates = await tx.question.findMany({
       where: attempt.where,
-      select: { id: true, score: true, schemaRefs: true, capabilityIds: true, difficulty: true },
+      // answerRules 只用于过滤「引擎判不了」的题（下方 pool 内判断），不参与抽题条件
+      select: { id: true, score: true, schemaRefs: true, capabilityIds: true, difficulty: true, answerRules: true },
       orderBy: { id: 'asc' }, // 稳定排序：同样的候选集得到同样的顺序
     });
 
@@ -231,6 +233,9 @@ async function pickQuestionForSlot(params: {
       // 分值必须一致：等值替换的前提是每人这道题占的分一样
       if ((c.score ?? 0) !== slotScore) return false;
       if (usedQuestionIds.has(c.id)) return false;
+      // 规则里有引擎不认识的 action = 判分必然转人工，不能进考试抽题池。
+      // 逐级放宽也保留这个过滤器：放宽的是 schemaRefs/难度，不是"能不能自动判分"
+      if (unsupportedRuleActions(c.answerRules).length > 0) return false;
       // 只有第一级强制 schemaRefs 一致（严格路径）
       if (attempt.label === 'strict' && wanted) {
         return schemaRefsSignature(c.schemaRefs) === wanted;
@@ -283,11 +288,16 @@ export async function previewSlotCandidates(
   // ① 按 rule.difficulty 过滤后的候选池（单题位预览，原有语义）
   // ② 三个难度各自有多少「分值一致」的可用题（组卷规则行的 简单/中等/困难 数量框显示 /N）
   // 若拆成两次查询，两次之间题库变动会让两个数字对不上
-  const rows = await prisma.question.findMany({
+  const fetched = await prisma.question.findMany({
     where,
-    select: { id: true, title: true, type: true, difficulty: true, score: true, schemaRefs: true, capabilityIds: true },
+    select: { id: true, title: true, type: true, difficulty: true, score: true, schemaRefs: true, capabilityIds: true, answerRules: true },
     orderBy: { id: 'asc' },
   });
+
+  // 规则引擎判不了的题不算候选（与 pickQuestionForSlot 同一判断 unsupportedRuleActions）。
+  // 预览的候选数必须与真实能抽到的数一致，否则教师看到"有 3 道候选"、开考却一道都抽不出来；
+  // 后续所有统计（scoped/byScore/homogeneous/signatures/difficultyCounts）都基于过滤后的 rows。
+  const rows = fetched.filter(r => unsupportedRuleActions(r.answerRules).length === 0);
 
   const scoped = rule.difficulty ? rows.filter(r => r.difficulty === rule.difficulty) : rows;
   const byScore = scoped.filter(r => (r.score ?? 0) === slotScore);
