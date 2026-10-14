@@ -242,8 +242,11 @@ const FORM_ACTIONS = new Set([
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 const uniqSorted = (xs: string[]) => [...new Set(xs)].sort();
 const refKey = (r: { table: string } & Record<string, string>) => `${r.table}\u0000${Object.values(r).join('\u0000')}`;
+// 排序用码点比较（与 uniqSorted 一致），**不用 localeCompare**：这些 refs 会落库成
+// schemaRefs JSON，locale 一变排序就变，同一份规则在不同机器上写出不同的库内容
+const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const dedupeRefs = <T extends { table: string } & Record<string, string>>(xs: T[]): T[] =>
-  [...new Map(xs.map(x => [refKey(x), x])).values()].sort((a, b) => refKey(a).localeCompare(refKey(b)));
+  [...new Map(xs.map(x => [refKey(x), x])).values()].sort((a, b) => cmp(refKey(a), refKey(b)));
 
 export function derivePrerequisites(rules: AnswerRule[]): DeriveResult {
   const requires: RefGroup = { tables: [], fields: [], views: [] };
@@ -1168,7 +1171,8 @@ async function main() {
       where: { id: e.id },
       data: {
         schemaRefs: e.refs as any,
-        // 待人工确认的题：场景留空（教师后续在题库页指定），契约仍然写入（推导出的部分是可信的）
+        // 待人工确认的题：场景留空（教师后续在题库页指定），契约仍然写入（推导出的部分是可信的）。
+        // 含成环题：它的 scenarioOrder 只是 topoSort 的兜底顺序（参考用），落库一律不写
         ...(e.scenario && !e.pendingReason ? { scenario: e.scenario, scenarioOrder: e.scenarioOrder } : {}),
       },
     });
