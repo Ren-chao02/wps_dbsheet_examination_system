@@ -69,12 +69,16 @@ export function applyRefChipChange(
 type CleanGroup = { tables: string[]; fields: SchemaFieldRef[]; views: SchemaViewRef[] };
 
 /**
- * 保存前归一化：全空按 null 保存（题库里不留空对象；顺带与客观题的 NULL 语义对齐），
- * 非空则 trim + 去重 + 按码点排序，**完整保留 requires/creates**（服务端提示条读 requires）。
+ * 保存前归一化：trim + 去重 + 按码点排序，**完整保留 requires/creates**（服务端提示条读 requires）。
  *
- * 为什么空对象必须变 null：空对象是「真值」，抽题签名会把 `{tables:[],fields:[]}` 当成
- * 已声明（签名非空），候选池一道都匹配不上 —— 留空与"不校验"必须同一语义（同 paperAssembly
- * 的 normalizeSchemaRefs，但那个只保留顶层签名用的两串，这里是题目契约、必须保形状）。
+ * 实际口径（与下面 cleanGroup 的行为一一对应，别按更严的版本理解）：
+ * - **整体全空**（四组怎么摆都空）→ null：题库里不留空对象，顺带与客观题的 NULL 语义对齐。
+ *   留空的陷阱在顶层两串上：`{tables:[],fields:[]}` 是「真值」，抽题签名会把空数组当已声明
+ *   （签名 `"T:#F:"` 非空），候选题一道都匹配不上 —— 顶层留空与"不校验"必须同一语义
+ *   （同 paperAssembly.normalizeSchemaRefs，但那个只保留顶层签名用的两串，这里是题目契约、必须保形状）。
+ * - requires/creates **里有内容的组**原样保留（含组内允许存在的空数组，如 `fields: []`）；
+ *   全空的组裁掉，不在库里留空壳。
+ * - 顶层 tables/fields 为空时整键省略（不写空数组，理由同上一条的签名陷阱）。
  */
 export function normalizeQuestionRefs(refs?: SchemaRefs | null): SchemaRefs | null {
   if (!refs || typeof refs !== 'object') return null;

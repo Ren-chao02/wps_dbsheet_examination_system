@@ -120,6 +120,9 @@ export function QuestionEditor() {
   const isObjective = OBJECTIVE_TYPES.includes(questionType);
 
   useEffect(() => {
+    // 换题（:id 变）必须清掉上一题留下的「推不出」清单：组件实例在路由间会被复用，
+    // 不清的话上一条题的告警会跟着教师跑到下一题，看起来像这题也推不出来
+    setDeriveUnresolved([]);
     // ✅ 获取分类列表并扁平化（用于两级分类选择）
     api.get('/categories?mode=tree')
       .then(res => {
@@ -160,6 +163,10 @@ export function QuestionEditor() {
       }).catch(() => message.error('加载失败')).finally(() => setLoading(false));
     }
   }, [id]);
+
+  // 规则一变，上一次推导的「推不出」清单就过期了：教师补齐规则（或应用 AI 建议）后
+  // 告警必须消失，否则他会对着一条已经解决的提示反复排查
+  useEffect(() => { setDeriveUnresolved([]); }, [rules]);
 
   /** 能力变化时清空建议（能力变了需重新反向生成） */
   const handleCapabilityChange = (ids: string[]) => {
@@ -220,10 +227,18 @@ export function QuestionEditor() {
   const patchRequires = (patch: Partial<SchemaRefGroup>) =>
     setSchemaRefs(s => ({ ...(s ?? {}), requires: { ...(s?.requires ?? {}), ...patch } }));
 
-  /** 「需要」的表：新结构优先，旧题退回顶层 tables（旧值要能看到、能改） */
-  const requiresTables = schemaRefs?.requires?.tables ?? schemaRefs?.tables ?? [];
+  /**
+   * 「需要」只认契约里的 requires，**不回退、也不写穿顶层 tables**。
+   * 为什么不回退：顶层 tables 是抽题等值签名（口径 = 需要 ∪ 产出），与提示条口径不同；
+   * 显示成同一列会让人以为它们是同一个值。旧题（只有顶层、没有 requires）改用 placeholder
+   * 只读提示，要想让提示条生效就点推导或手工填 —— 两列各代表一件事，谁都不偷偷改谁。
+   */
+  const requiresTables = schemaRefs?.requires?.tables ?? [];
   const requiresFields = schemaRefs?.requires?.fields ?? [];
   const requiresViews = schemaRefs?.requires?.views ?? [];
+  /** 顶层 tables 有值但「需要」还空着（旧题）——只在 placeholder 里提示，不代填 */
+  const topLevelTablesNotInRequires =
+    requiresTables.length === 0 ? (schemaRefs?.tables ?? []) : [];
   /** 手输的字段/视图标签挂到第一张「需要」表下（学生提示条按表分组渲染） */
   const fallbackTable = requiresTables[0] ?? '';
 
@@ -256,16 +271,6 @@ export function QuestionEditor() {
     } finally {
       setDeriving(false);
     }
-  };
-
-  /**
-   * 「需要（表名）」改动。旧题（没有 requires）这一列显示的是顶层 tables 的回退值，
-   * 两边必须同步写：只写 requires 的话，教师删空标签、保存、刷新后顶层旧值又回退显示出来，
-   * 看起来像"删不掉"。同步写不改变语义 —— 顶层 tables 本来也就是这张题的引用表声明。
-   */
-  const handleRequiresTablesChange = (v: string[]) => {
-    if (!schemaRefs?.requires) patchSchemaRefs({ requires: { tables: v }, tables: v });
-    else patchRequires({ tables: v });
   };
 
   /** 字段标签改动：已有条目保住宿主表，新增的挂到第一张「需要」表（见 applyRefChipChange） */
@@ -637,7 +642,7 @@ export function QuestionEditor() {
                 type="info"
                 showIcon
                 style={{ marginBottom: 12 }}
-                message="「需要」会渲染成学生答题页的提示条（告诉学生缺表时先建）；「涉及」两列是抽题等值校验的签名（同一题位的候选题必须逐字一致）。填了它，学生才不会打开表格找不到题面说的表。"
+                message="「需要」会渲染成学生答题页的提示条（告诉学生缺表时先建）；「涉及」两列是抽题等值校验的签名（口径 = 「需要」∪「产出」，同一题位的候选题必须逐字一致）。两列各自独立：改完「需要」后若想让签名跟上，请再点一次「自动推导」或手工改「涉及」。"
               />
               <Space style={{ marginBottom: 12 }} wrap>
                 <Button size="small" loading={deriving} onClick={handleDeriveRefs}>
@@ -663,10 +668,12 @@ export function QuestionEditor() {
                   <Select
                     mode="tags"
                     value={requiresTables}
-                    onChange={handleRequiresTablesChange}
+                    onChange={v => patchRequires({ tables: v })}
                     style={{ width: '100%' }}
                     tokenSeparators={[',', '，']}
-                    placeholder="如：员工信息表"
+                    placeholder={topLevelTablesNotInRequires.length > 0
+                      ? `顶层已有：${topLevelTablesNotInRequires.join('、')}（点「自动推导」或在此重填）`
+                      : '如：员工信息表'}
                   />
                 </Col>
                 <Col span={8}>
