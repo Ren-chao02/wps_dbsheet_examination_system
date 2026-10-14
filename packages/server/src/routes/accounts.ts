@@ -436,6 +436,8 @@ accountRouter.get('/import-template', async (_req: Request, res: Response) => {
       { header: '姓名', key: 'realName', width: 12 },
       { header: '邮箱', key: 'email', width: 24 },
       { header: '角色编码(如TEACHER)', key: 'roleCode', width: 20 },
+      // P2：院系编码取 Department.code（可选列，留空则不归属院系）
+      { header: '院系编码', key: 'departmentCode', width: 16 },
     ];
 
     const headerRow = worksheet.getRow(1);
@@ -479,6 +481,22 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
     const allRoles = await prisma.systemRole.findMany({ select: { id: true, roleCode: true } });
     const roleMap = new Map(allRoles.map((r) => [r.roleCode, r.id]));
 
+    // P2：院系编码是可选列（第 6 列）。先扫一遍收集文件里出现的编码，再按 in 一次性预加载
+    // 映射——不逐行查库；未知编码留给主循环逐行报错，不在这里整份拦截。
+    const deptCodes = new Set<string>();
+    for (let i = 2; i <= worksheet.rowCount; i++) {
+      const code = String(worksheet.getRow(i).getCell(6).value || '').trim();
+      if (code) deptCodes.add(code);
+    }
+    const departmentMap = new Map<string, string>(); // code → id
+    if (deptCodes.size > 0) {
+      const departments = await prisma.department.findMany({
+        where: { code: { in: [...deptCodes] } },
+        select: { id: true, code: true },
+      });
+      for (const d of departments) departmentMap.set(d.code, d.id);
+    }
+
     let totalRows = 0;
     let successRows = 0;
     let failedRows = 0;
@@ -496,7 +514,7 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
       },
     });
 
-    // 模板列：1=用户名, 2=密码, 3=姓名, 4=邮箱, 5=角色编码
+    // 模板列：1=用户名, 2=密码, 3=姓名, 4=邮箱, 5=角色编码, 6=院系编码(可选)
     for (let i = 2; i <= worksheet.rowCount; i++) {
       const row = worksheet.getRow(i);
       const username = String(row.getCell(1).value || '').trim();
@@ -504,9 +522,10 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
       const realName = String(row.getCell(3).value || '').trim();
       const email = String(row.getCell(4).value || '').trim();
       const roleCode = String(row.getCell(5).value || '').trim().toUpperCase() || 'TEACHER';
+      const departmentCode = String(row.getCell(6).value || '').trim();
 
       if (!username || !password) {
-        if (username || password || realName || email) {
+        if (username || password || realName || email || departmentCode) {
           totalRows++;
           failedRows++;
           errors.push({ row: i, username: username || `(第${i}行)`, error: '用户名和密码不能为空' });
@@ -525,6 +544,15 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
         totalRows++;
         failedRows++;
         errors.push({ row: i, username, error: '邮箱格式不正确' });
+        continue;
+      }
+
+      // 院系编码可选；填了就必须能匹配到院系。与班级编码导入同一口径：
+      // 只标记该行错误，其余行照常导入（整份拒绝会让老师面对一个错别字重传全部）
+      if (departmentCode && !departmentMap.has(departmentCode)) {
+        totalRows++;
+        failedRows++;
+        errors.push({ row: i, username, error: '院系编码不存在' });
         continue;
       }
 
@@ -557,6 +585,8 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
             email: email || null,
             role: userRole,
             systemRoleId: systemRoleId || null,
+            // 未填编码 → 显式落 null（与单个创建同一口径，不依赖数据库默认值）
+            departmentId: departmentMap.get(departmentCode) ?? null,
           },
         });
         successRows++;
