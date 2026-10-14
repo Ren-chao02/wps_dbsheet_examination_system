@@ -164,16 +164,18 @@ describe('抽题题位', () => {
     expect(new Set(rows.map((r: any) => r.questionId)).size).toBe(rows.length);
   });
 
-  it('候选只有引擎判不了的题 → 跳过，题位未填（不排人工卷）', async () => {
+  it('候选池混有引擎判不了的题 → 只跳过坏题，好题照常可抽（不排人工卷）', async () => {
     mockPrisma.examQuestion.findMany.mockResolvedValue([ruleSlot]);
     mockPrisma.question.findMany.mockResolvedValue([
       { ...candidate('q-bad'), answerRules: [{ action: 'verify_dashboard_chart', params: {} }] },
+      candidate('q-good'),   // 混池：坏题被跳过，好题照常可抽（防"有坏题即整池丢弃"）
     ]);
 
     const result = await generateStudentPaper('exam-1', 'stu-1');
 
-    expect(result.created).toBe(0);
-    expect(result.unfilledSlots).toHaveLength(1);
+    expect(result.created).toBe(1);
+    const picked = mockPrisma.studentExamQuestion.createMany.mock.calls[0][0].data[0];
+    expect(picked.questionId).toBe('q-good');
   });
 });
 
