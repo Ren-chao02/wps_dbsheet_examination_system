@@ -1434,7 +1434,7 @@ export function buildRequirementHint(requires?: StudentRequires | null): string 
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `cd packages/client && npx vitest run src/utils/__tests__/question-refs-hint.test.ts`
-Expected: PASS（5 个用例全绿）
+Expected: PASS（6 个用例全绿）
 
 - [ ] **Step 5: 提交**
 
@@ -1808,11 +1808,15 @@ git commit -m "fix(papers): rule 题位 schemaRefs 可见可编辑并原样落�
 
 ```ts
   /** 从判分规则推导前置契约（出题页「自动推导」按钮） */
-  deriveRefs: (rules: Array<{ id?: string; action: string; params?: Record<string, unknown>; score?: number }>) =>
-    api.post<{ refs: SchemaRefs; unresolved: string[] }>('/questions/derive-refs', { rules }),
+  deriveRefs: (payload: {
+    rules: Array<{ id?: string; action: string; params?: Record<string, unknown>; score?: number }>;
+    // 题面必须一起送：服务端靠它判 check_table_exists 是"真建表"还是"前置检查"
+    title?: string;
+    description?: string;
+  }) => api.post<{ refs: SchemaRefs; unresolved: string[] }>('/questions/derive-refs', payload),
 ```
 
-（`SchemaRefs` 类型从 `../types` 引入；若 types 里还没有，按 Task 1 的服务端形状补 `interface SchemaRefs { requires: {...}; creates: {...}; tables?: string[]; fields?: string[] }`。）
+（`SchemaRefs` 类型从 `../types` 引入；types 里的现有定义是 `{ tables?: string[]; fields?: string[] }`，**扩成完整形状**：`{ requires?: { tables?: string[]; fields?: {table,field}[]; views?: {table,view}[] }; creates?: 同左; tables?: string[]; fields?: string[] }`（requires/creates 可选，兼容旧数据——库里 `schema_refs` 有 203 道客观题是 NULL）。）
 
 - [ ] **Step 2: 改造卡片**
 
@@ -1835,7 +1839,12 @@ git commit -m "fix(papers): rule 题位 schemaRefs 可见可编辑并原样落�
       size="small"
       onClick={async () => {
         try {
-          const res = await questionApi.deriveRefs(rules.map(r => ({ action: r.action, params: r.params, score: r.score })));
+          const res = await questionApi.deriveRefs({
+            rules: rules.map(r => ({ action: r.action, params: r.params, score: r.score })),
+            // 题面一起送，否则服务端会保守判定（check_table_exists 全算前置检查）
+            title: form.getFieldValue('title'),
+            description: form.getFieldValue('description'),
+          });
           setSchemaRefs(res.data.refs);
           setDeriveUnresolved(res.data.unresolved);
           message.success(res.data.unresolved.length > 0
