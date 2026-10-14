@@ -6,6 +6,7 @@ import { authenticate, authorize } from '../middleware/auth';
 import { skeletonGenerator } from '../engine/skeleton-generator';
 import { answerReverser } from '../engine/answer-reverser';
 import { wpsConfigService } from '../services/wps-config-service';
+import { scopeCtxOf, questionWhere, assertQuestionRead, denyAccess } from '../services/data-scope';
 
 export const questionRouter = Router();
 questionRouter.use(authenticate);
@@ -111,43 +112,46 @@ questionRouter.get('/', async (req: Request, res: Response) => {
     const skip = (Number(page) - 1) * Number(pageSize);
     const take = Number(pageSize);
 
-    // 构建动态查询条件
-    const where: any = {};
+    // 数据范围（P2）：教师 = 自己创建 ∪ 本院系 ∪ 校级(null) ∪ 校级池(shared)；admin 不受限。
+    // 用 AND 组合而非对象展开 —— 下面的 search 会占用 OR 字段，展开会互相覆盖。
+    const conditions: any[] = [await questionWhere(scopeCtxOf(req))];
 
     // 基础搜索
     if (search) {
-      where.OR = [
-        { title: { contains: String(search), mode: 'insensitive' } },
-        { description: { contains: String(search), mode: 'insensitive' } },
-      ];
+      conditions.push({
+        OR: [
+          { title: { contains: String(search), mode: 'insensitive' } },
+          { description: { contains: String(search), mode: 'insensitive' } },
+        ],
+      });
     }
 
     // 基础筛选
-    if (difficulty) where.difficulty = String(difficulty);
-    if (status) where.status = String(status);
+    if (difficulty) conditions.push({ difficulty: String(difficulty) });
+    if (status) conditions.push({ status: String(status) });
 
     // 题型筛选：支持逗号分隔多选（题库列表与试卷选题页的"题型"过滤器共用同一参数）
     if (type) {
       const types = String(type).split(',').map(s => s.trim()).filter(Boolean);
       const valid = types.filter(t => (QUESTION_TYPE_VALUES as readonly string[]).includes(t));
-      if (valid.length > 0) where.type = { in: valid };
+      if (valid.length > 0) conditions.push({ type: { in: valid } });
     }
 
     // 来源筛选：official = 官方题库 / school = 校本题库（题库页页签）
-    if (source) where.source = String(source);
+    if (source) conditions.push({ source: String(source) });
 
     // ✨ 新增：出题老师模糊匹配
     if (teacherName) {
-      where.teacherName = { contains: String(teacherName), mode: 'insensitive' };
+      conditions.push({ teacherName: { contains: String(teacherName), mode: 'insensitive' } });
     }
 
     // ✨ 新增：一级分类筛选（支持ID或名称）
     if (primaryCategory) {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(primaryCategory));
       if (isUuid) {
-        where.primaryCategoryId = String(primaryCategory);
+        conditions.push({ primaryCategoryId: String(primaryCategory) });
       } else {
-        where.primaryCategory = { name: { contains: String(primaryCategory), mode: 'insensitive' } };
+        conditions.push({ primaryCategory: { name: { contains: String(primaryCategory), mode: 'insensitive' } } });
       }
     }
 
@@ -155,25 +159,29 @@ questionRouter.get('/', async (req: Request, res: Response) => {
     if (secondaryCategory) {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(secondaryCategory));
       if (isUuid) {
-        where.secondaryCategoryId = String(secondaryCategory);
+        conditions.push({ secondaryCategoryId: String(secondaryCategory) });
       } else {
-        where.secondaryCategory = { name: { contains: String(secondaryCategory), mode: 'insensitive' } };
+        conditions.push({ secondaryCategory: { name: { contains: String(secondaryCategory), mode: 'insensitive' } } });
       }
     }
 
     // ✨ 新增：创建时间范围筛选
     if (createdAtStart || createdAtEnd) {
-      where.createdAt = {};
-      if (createdAtStart) where.createdAt.gte = new Date(String(createdAtStart));
-      if (createdAtEnd) where.createdAt.lte = new Date(String(createdAtEnd));
+      const createdAt: any = {};
+      if (createdAtStart) createdAt.gte = new Date(String(createdAtStart));
+      if (createdAtEnd) createdAt.lte = new Date(String(createdAtEnd));
+      conditions.push({ createdAt });
     }
 
     // ✨ 新增：更新时间范围筛选
     if (updatedAtStart || updatedAtEnd) {
-      where.updatedAt = {};
-      if (updatedAtStart) where.updatedAt.gte = new Date(String(updatedAtStart));
-      if (updatedAtEnd) where.updatedAt.lte = new Date(String(updatedAtEnd));
+      const updatedAt: any = {};
+      if (updatedAtStart) updatedAt.gte = new Date(String(updatedAtStart));
+      if (updatedAtEnd) updatedAt.lte = new Date(String(updatedAtEnd));
+      conditions.push({ updatedAt });
     }
+
+    const where: any = { AND: conditions };
 
     const [questions, total] = await Promise.all([
       prisma.question.findMany({
@@ -203,6 +211,11 @@ questionRouter.get('/', async (req: Request, res: Response) => {
 // GET /api/questions/:id - 返回完整题目信息
 questionRouter.get('/:id', async (req: Request, res: Response) => {
   try {
+    // 数据范围（P2）：题库含 answerRules（=标准答案），读范围必须与列表一致收口 ——
+    // 院系池 / 校级池 / 本人之外一律拒绝，避免绕过列表直接按 ID 拉取。
+    const access = await assertQuestionRead(scopeCtxOf(req), req.params.id);
+    if (access !== 'ok') return denyAccess(res, access, '该题目不在你可见的题库范围内（本院系 / 校级 / 本人）');
+
     const question = await prisma.question.findUnique({
       where: { id: req.params.id },
       include: {
@@ -242,6 +255,7 @@ questionRouter.post('/', authorize('teacher', 'admin'), async (req: Request, res
         objectiveAnswer: toJsonInput(data.objectiveAnswer),
         schemaRefs: toJsonInput(data.schemaRefs),
         createdBy: req.user!.userId,
+        departmentId: req.user!.departmentId ?? null, // P2：默认归属创建者院系；无院系 = 校级
         // 如果未提供teacherName，使用当前用户姓名
         teacherName: data.teacherName || req.user?.realName || undefined,
       },
