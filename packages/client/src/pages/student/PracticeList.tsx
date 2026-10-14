@@ -165,9 +165,12 @@ export function PracticeList() {
           <Row gutter={[12, 12]}>
             {scenarios.map(s => {
               const overLimit = s.questionCount > MAX_SCENARIO_QUESTIONS;
-              // 超限场景服务端会 400，卡片直接禁掉（别让学生点了才被拒）；
+              const noAssignment = hasAssignment === false;
+              // 两种"点了必被服务端拒"的情况，卡片先禁掉：
+              //  1) 未注册练习表 → /start 必 400「尚未分配练习表格」（与自由练习按钮同一守卫）
+              //  2) 题量超限 → 400「该场景题目过多…」
               // 但已有进行中的记录例外——「继续」不走 /start，禁掉反而把学生的进度锁死
-              const blocked = overLimit && !s.running;
+              const blocked = (noAssignment || overLimit) && !s.running;
               return (
                 <Col key={s.key} xs={24} sm={12} lg={8}>
                   <Card
@@ -182,13 +185,14 @@ export function PracticeList() {
                       共 {s.questionCount} 步 · 满分 {s.totalScore}
                     </div>
                     {overLimit && <Tag color="error">题量超限，请联系教师拆分场景</Tag>}
+                    {noAssignment && <Tag>需先注册练习文件</Tag>}
                     {s.running && <Tag color="processing">进行中，可继续</Tag>}
                     {!s.running && s.latest && (
                       <Tag color={s.latest.passed ? 'success' : 'default'}>
                         已完成 {s.latest.score}/{s.latest.maxScore}
                       </Tag>
                     )}
-                    {!s.running && !s.latest && !overLimit && <Tag>未开始</Tag>}
+                    {!s.running && !s.latest && !overLimit && !noAssignment && <Tag>未开始</Tag>}
                   </Card>
                 </Col>
               );
