@@ -9,8 +9,9 @@ import { loadTablePreview } from '../services/wps-table-service';
 
 export const practiceRouter = Router();
 
-/** 练习支持的题型：仅实操题（判分依赖 WPS 表格 Schema） */
-const PRACTICE_QUESTION_TYPES = ['create_table', 'add_field', 'config_view', 'create_form', 'comprehensive'];
+/** 练习支持的题型：仅实操题（判分依赖 WPS 表格 Schema）。as const 是为了让 Prisma
+ *  的 `type: { in: ... }`（枚举过滤）通过类型检查，直接传 string[] 会被拒 */
+const PRACTICE_QUESTION_TYPES = ['create_table', 'add_field', 'config_view', 'create_form', 'comprehensive'] as const;
 practiceRouter.use(authenticate);
 practiceRouter.use(authorize('student'));
 
@@ -144,6 +145,76 @@ practiceRouter.get('/questions/catalog', async (_req: Request, res: Response) =>
       difficulties,
     });
   } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+/**
+ * GET /api/practice/scenarios —— 「场景实战」卡片列表。
+ *
+ * 只出题数 ≥ 2 的场景（单题场景在自由练习里抽得到，做成卡片反而奇怪）。
+ * 进度取该生最近一条记录：进行中的给 running，已判分的给 latest。
+ */
+practiceRouter.get('/scenarios', async (req: Request, res: Response) => {
+  try {
+    const studentId = req.user!.userId;
+
+    const groups = await prisma.question.groupBy({
+      by: ['scenario'],
+      where: { scenario: { not: null }, status: 'published', type: { in: [...PRACTICE_QUESTION_TYPES] } },
+      _count: { _all: true },
+      _sum: { score: true },
+    });
+
+    const multi = groups.filter(g => g.scenario && g._count._all >= 2);
+
+    // 该生最近 200 条练习记录里，每个场景取"最新一条"：进行中优先于已完成
+    const records = await prisma.practiceRecord.findMany({
+      where: { studentId },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      select: {
+        id: true, status: true, score: true, maxScore: true, passed: true,
+        startedAt: true, submittedAt: true, questions: true,
+      },
+    });
+
+    const byScenario = new Map<string, typeof records[number]>();
+    for (const r of records) {
+      const key = (r.questions as any[])?.[0]?.scenarioKey;
+      if (!key) continue;
+      const cur = byScenario.get(key);
+      // 进行中的记录优先展示（学生更关心"没做完的那条"）
+      if (!cur || (cur.status === 'graded' && r.status === 'in_progress')) byScenario.set(key, r);
+    }
+
+    res.json({
+      scenarios: multi
+        .map(g => {
+          const rec = byScenario.get(g.scenario!);
+          return {
+            key: g.scenario!,
+            name: g.scenario!,
+            questionCount: g._count._all,
+            totalScore: g._sum.score ?? 0,
+            running: rec?.status === 'in_progress'
+              ? { recordId: rec.id, startedAt: rec.startedAt.toISOString() }
+              : undefined,
+            latest: rec?.status === 'graded'
+              ? {
+                  recordId: rec.id,
+                  score: rec.score ?? 0,
+                  maxScore: rec.maxScore,
+                  passed: rec.passed ?? false,
+                  submittedAt: rec.submittedAt?.toISOString() ?? rec.startedAt.toISOString(),
+                }
+              : undefined,
+          };
+        })
+        .sort((a, b) => a.key.localeCompare(b.key)),
+    });
+  } catch (err: any) {
+    console.error('Practice scenarios error:', err);
     res.status(500).json({ message: '服务器错误' });
   }
 });

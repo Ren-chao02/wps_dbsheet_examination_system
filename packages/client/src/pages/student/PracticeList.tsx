@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Card, Select, InputNumber, Button, Alert, Spin, Typography, Space, Row, Col, message,
+  Card, Select, InputNumber, Button, Alert, Spin, Typography, Space, Row, Col, Tag, message,
 } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 import { practiceApi } from '../../services/api';
@@ -27,6 +27,16 @@ interface StartResponse {
   shareUrl: string | null;
 }
 
+/** 场景实战卡片：只含题数 ≥ 2 的场景（单题场景走自由练习），progress 二选一 */
+interface ScenarioSummary {
+  key: string;
+  name: string;
+  questionCount: number;
+  totalScore: number;
+  running?: { recordId: string; startedAt: string };
+  latest?: { recordId: string; score: number; maxScore: number; passed: boolean; submittedAt: string };
+}
+
 const difficultyLabels: Record<string, { label: string; color: string }> = {
   easy: { label: '简单', color: 'success' },
   medium: { label: '中等', color: 'warning' },
@@ -39,6 +49,7 @@ export function PracticeList() {
   const [starting, setStarting] = useState(false);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [hasAssignment, setHasAssignment] = useState<boolean | null>(null);
+  const [scenarios, setScenarios] = useState<ScenarioSummary[]>([]);
 
   const [primaryId, setPrimaryId] = useState<string | undefined>();
   const [secondaryId, setSecondaryId] = useState<string | undefined>();
@@ -53,6 +64,13 @@ export function PracticeList() {
       })
       .catch(() => message.error('加载失败'))
       .finally(() => setLoading(false));
+  }, []);
+
+  // 场景列表独立加载：失败静默（整个卡片区不渲染），不能拖垮自由练习入口
+  useEffect(() => {
+    practiceApi.scenarios()
+      .then((res) => setScenarios((res.data?.scenarios || []) as ScenarioSummary[]))
+      .catch(() => { /* 静默：无卡片区 */ });
   }, []);
 
   const primaryCategories = (catalog?.categories || []).filter(c => c.level === 1);
@@ -101,6 +119,31 @@ export function PracticeList() {
           message="尚未分配练习表格"
           description="请联系教师为你注册一个 WPS 多维表格作为练习文件，注册后即可开始练习。"
         />
+      )}
+
+      {scenarios.length > 0 && (
+        <Card title="场景实战（按顺序做完整条任务链）" style={{ marginTop: 16, marginBottom: 16 }}>
+          <Row gutter={[12, 12]}>
+            {scenarios.map(s => (
+              <Col key={s.key} xs={24} sm={12} lg={8}>
+                {/* data-scenario 先埋好；「开练」的 onClick 与确认框在 Task 13 接上 */}
+                <Card size="small" hoverable data-scenario={s.key}>
+                  <div style={{ fontWeight: 600 }}>{s.name}</div>
+                  <div style={{ fontSize: 12, color: '#888', margin: '4px 0 8px' }}>
+                    共 {s.questionCount} 步 · 满分 {s.totalScore}
+                  </div>
+                  {s.running && <Tag color="processing">进行中，可继续</Tag>}
+                  {!s.running && s.latest && (
+                    <Tag color={s.latest.passed ? 'success' : 'default'}>
+                      已完成 {s.latest.score}/{s.latest.maxScore}
+                    </Tag>
+                  )}
+                  {!s.running && !s.latest && <Tag>未开始</Tag>}
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        </Card>
       )}
 
       <Card style={{ marginTop: 16 }}>
