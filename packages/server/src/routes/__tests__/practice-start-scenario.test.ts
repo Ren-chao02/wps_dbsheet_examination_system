@@ -72,6 +72,16 @@ describe('POST /api/practice/start 按场景开练', () => {
     expect(res.body.questions.map((x: any) => x.questionId)).toEqual(['q1', 'q2', 'q-null']);
   });
 
+  // 教师可在题库页改序号（questions.ts PUT 已放行 scenarioOrder），撞车不再是不可能：
+  // 不能靠 DB 返回序赌运气，必须按 id 码点序兜底（localeCompare 会随语言环境漂移，禁用）
+  it('scenarioOrder 撞车时按 id 码点序兜底，顺序确定', async () => {
+    // 夹具故意把 q-b 排在 q-a 前：若没有 id 兜底，稳定排序会保留输入序（q-b 在前）
+    findMany.mockResolvedValue([q('q-b', 1), q('q-0', null), q('q-a', 1)]);
+    const res = await request(app).post('/api/practice/start').send({ scenarioKey: '员工信息表' });
+    expect(res.status).toBe(200);
+    expect(res.body.questions.map((x: any) => x.questionId)).toEqual(['q-a', 'q-b', 'q-0']);
+  });
+
   it('场景题数超过 50 → 400 且不重置文件', async () => {
     findMany.mockResolvedValue(Array.from({ length: 51 }, (_, i) => q(`q${i}`, i + 1)));
     const res = await request(app).post('/api/practice/start').send({ scenarioKey: '员工信息表' });

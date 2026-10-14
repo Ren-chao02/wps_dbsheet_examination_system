@@ -40,13 +40,23 @@ app.use(express.json());
 app.use('/api/practice', practiceRouter);
 
 // 夹具与真实落库形状一致：PracticeRecord.questions 只存开练时冻结的元数据
-// （见 /start 的 questionsSnapshot，实测库里就是 {questionId,score,sortOrder}），
-// 题面（title/description/type/difficulty/hints）不在快照里，必须回查题库补齐
+// （见 /start 的 questionsSnapshot），题面（title/description/type/difficulty/hints）不在快照里，
+// 必须回查题库补齐；场景链记录的快照里还冻结着 requires/creates（前置契约与预期产物）
 const row = {
   id: 'rec-1', studentId: 's-1', status: 'in_progress', maxScore: 20, startedAt: new Date('2026-10-14T01:00:00Z'),
   submittedAt: null, score: null, passed: null, details: null,
   questions: [
-    { questionId: 'q1', score: 10, sortOrder: 0, scenarioKey: '员工信息表' },
+    {
+      questionId: 'q1', score: 10, sortOrder: 0, scenarioKey: '员工信息表',
+      // requires/creates 属内部快照数据：creates 是答案信息（本题该产出哪些表/字段/视图），
+      // 绝不能回发学生。金丝雀表名只写在 creates 里，响应整包 JSON 都不得出现它
+      requires: { tables: ['员工信息表'], fields: [], views: [] },
+      creates: {
+        tables: ['答案考勤表_金丝雀'],
+        fields: [{ table: '答案考勤表_金丝雀', field: '打卡时间' }],
+        views: [],
+      },
+    },
   ],
 };
 const q1Display = {
@@ -90,6 +100,23 @@ describe('GET /api/practice/records/:id', () => {
     const select = questionFindMany.mock.calls[0][0].select;
     expect(select).not.toHaveProperty('answerRules');
     expect(select).not.toHaveProperty('analysis');
+  });
+
+  // 安全不变量（与考试侧 toStudentQuestion 同一口径）：快照里冻结着 requires/creates，
+  // creates 属答案信息——恢复接口必须逐字段挑拣回发，绝不能把整个快照 `...s` 甩出去。
+  // 把 hydrateQuestionSnapshots 的挑拣改回 `...s` 时这条必须变红
+  it('回发题面时裁掉 requires/creates（金丝雀表名不得出现在响应里）', async () => {
+    findFirst.mockResolvedValue(row);
+    const res = await request(app).get('/api/practice/records/rec-1');
+    expect(res.status).toBe(200);
+    const body = JSON.stringify(res.body);
+    // ① 场景链续做标注要留着（同场景多题时前端据此提示"接着做"）
+    expect(res.body.questions[0].scenarioKey).toBe('员工信息表');
+    // ② 契约字段名整包不得出现
+    expect(body).not.toContain('creates');
+    expect(body).not.toContain('requires');
+    // ③ 金丝雀（只写在 creates 里的表名）也不得出现
+    expect(body).not.toContain('答案考勤表_金丝雀');
   });
 
   // 简报只覆盖 in_progress；判分结果的回发分支（前端"直接进结果态"依赖）单独钉住
