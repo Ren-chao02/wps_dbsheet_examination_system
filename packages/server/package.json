@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "SHUTDOWN_GRACE_MS=1500 tsx watch src/index.ts",
+    "dev": "SHUTDOWN_GRACE_MS=1500 tsx watch --exclude './dist/**' --exclude './coverage/**' --exclude './uploads/**' src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest run",
