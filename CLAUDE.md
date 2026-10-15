@@ -121,6 +121,8 @@ Socket.IO 在 `index.ts` 里 `initSocketIO(httpServer)`（监考推送 + 通知�
 - **后端"没反应"时的排查顺序**（2026-10-13 真实发生过：静默下线一个半小时，期间所有页面都连不上）：
   1. `curl -s localhost:3002/api/health` —— 无响应就是后端没了
   2. 看后端日志尾部（`npm run dev` 的终端输出，或 `/tmp/dev-server.log`）有没有在刷 `Process hasn't exited. Killing process...`
-  3. 看到那一行就是 **`tsx watch` 自己卡死**了（连续快速重启触发；会留下"孤儿 + 没有子进程"的僵尸 watcher，`pgrep -f "tsx watch"` 能看到）。重启即可。
+  3. 看到那一行就是 **`tsx watch` 自己卡死**了（连续快速重启触发；会留下"孤儿 + 没有子进程"的僵尸 watcher，`pgrep -f "tsx watch"` 能看到）。重启即可——**注意普通 `kill` 常常杀不掉它，要 `pkill -9 -f "tsx watch"`**，否则残留的旧 watcher 会和新的抢 3002。
+  - 已做的减免：dev 脚本用 `--exclude` 把 `dist/`、`coverage/`、`uploads/` 排除在 watch 之外（跑 `npm run build` / 覆盖率时不再触发一整轮重启，那正是"连续快速重启"的主要燃料）。
+  - 可选自愈：`nohup bash packages/server/scripts/dev-watchdog.sh >> /tmp/dev-watchdog.log 2>&1 &` —— 每 20s 探 `/api/health`，连续 3 次无响应就清僵尸并自动拉起。**停服务前先停看门狗**，否则它会把你故意停掉的服务再拉起来。
   生产用 `node dist/index.js`，没有这个毛病；`SHUTDOWN_GRACE_MS`（dev 脚本设为 1500）只是让我们这边不拖后腿，治不了 tsx 自身。
 - 生产构建产物由 server 托管（`NODE_ENV=production` 时 `app.ts` 静态托管 `packages/client/dist` 并做 SPA fallback）。

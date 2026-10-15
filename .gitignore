@@ -31,6 +31,7 @@ packages/server/scripts/*
 !packages/server/scripts/update-question-type.ts
 !packages/server/scripts/backfill-question-refs.ts
 !packages/server/scripts/diag-missing-table.ts
+!packages/server/scripts/dev-watchdog.sh
 !packages/server/scripts/probe-practice-reset.ts
 !packages/server/scripts/probe-v7-delete.ts
 !packages/server/scripts/probe-view-data.ts
