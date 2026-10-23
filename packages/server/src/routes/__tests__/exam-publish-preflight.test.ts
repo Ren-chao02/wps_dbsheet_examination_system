@@ -121,9 +121,10 @@ describe('POST /api/exams/:id/publish —— 组卷预检', () => {
     expect(res.status).toBe(200);
     expect(res.body.paperGeneration).toEqual({ status: 'failed' });
     expect(examUpdate).toHaveBeenCalled();
-    // upsert 成功后调度才炸：尽力把状态行标 failed（updateMany 兜住"行可能不存在"）
+    // upsert 成功后调度才炸：尽力把状态行标 failed（updateMany 兜住"行可能不存在"）。
+    // 同样带 status:'pending' 守卫：迟到的 job 已写成 done 时不能倒回 failed
     expect(generationUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { examId: 'e-1' },
+      where: { examId: 'e-1', status: 'pending' },
       data: expect.objectContaining({ status: 'failed' }),
     }));
   });

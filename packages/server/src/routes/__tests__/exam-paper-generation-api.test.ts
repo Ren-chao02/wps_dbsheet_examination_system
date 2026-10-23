@@ -52,10 +52,18 @@ vi.mock('../../config/prisma', () => {
     studentExamQuestion: { findMany: sqFindMany, deleteMany: sqDeleteMany },
     studentSubmission: { count: submissionCount },
   };
-  // 路由在事务内取 advisory lock：$transaction 直接把 mock 自己当 tx 传回，
-  // $executeRaw 模拟 pg_advisory_xact_lock 的执行结果（无实际锁语义）。
-  prismaMock.$transaction = vi.fn((fn: any) => fn(prismaMock));
-  prismaMock.$executeRaw = vi.fn().mockResolvedValue(1);
+  // 路由必须在事务内取 advisory lock：$transaction 把 mock 自己当 tx 传回，
+  // $executeRaw 校验当前确实处于事务上下文 —— 将来若把 lockExam 挪到事务外，
+  // 这里会直接抛错让用例失败，而不是"碰巧还能过"。
+  const txState = { inTx: false };
+  prismaMock.$transaction = vi.fn(async (fn: any) => {
+    txState.inTx = true;
+    try { return await fn(prismaMock); } finally { txState.inTx = false; }
+  });
+  prismaMock.$executeRaw = vi.fn(async () => {
+    if (!txState.inTx) throw new Error('lockExam must be called inside a transaction');
+    return 1;
+  });
   return { prisma: prismaMock };
 });
 

@@ -68,7 +68,7 @@ beforeEach(() => {
   batchUpdate.mockImplementation(async (args: any) => ({ ...batchRow, ...args.data }));
   examUpdateMany.mockResolvedValue({ count: 1 });
   examFindMany.mockResolvedValue([]);
-  rescheduleMock.mockResolvedValue('queued');
+  rescheduleMock.mockResolvedValue('pending');
 });
 
 describe('PUT /api/batches/:id/status —— 激活时的预生成调度', () => {

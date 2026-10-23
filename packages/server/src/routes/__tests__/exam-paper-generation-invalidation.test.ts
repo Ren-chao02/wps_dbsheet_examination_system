@@ -61,9 +61,17 @@ vi.mock('../../config/prisma', () => {
     examPaperGeneration: { upsert: genUpsert, updateMany: genUpdateMany },
   };
   // 换卷/改题的题位重建 + 快照失效在事务内取考试锁：
-  // $transaction 把 mock 自身当 tx 传回，$executeRaw 模拟 advisory lock 的执行结果。
-  prismaMock.$transaction = vi.fn((fn: any) => fn(prismaMock));
-  prismaMock.$executeRaw = vi.fn().mockResolvedValue(1);
+  // $transaction 把 mock 自身当 tx 传回，$executeRaw 校验当前确实处于事务上下文 ——
+  // 将来若把 lockExam 挪到事务外，这里会直接抛错让用例失败。
+  const txState = { inTx: false };
+  prismaMock.$transaction = vi.fn(async (fn: any) => {
+    txState.inTx = true;
+    try { return await fn(prismaMock); } finally { txState.inTx = false; }
+  });
+  prismaMock.$executeRaw = vi.fn(async () => {
+    if (!txState.inTx) throw new Error('lockExam must be called inside a transaction');
+    return 1;
+  });
   return { prisma: prismaMock };
 });
 vi.mock('../../utils/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
