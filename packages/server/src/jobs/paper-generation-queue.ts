@@ -7,6 +7,7 @@
  * 入队与 Worker 在同一文件：发布路径只依赖入队，Worker 只在 listen 成功后启动。
  */
 
+import { randomUUID } from 'crypto';
 import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
 import { config } from '../config';
 import { prisma } from '../config/prisma';
@@ -81,12 +82,17 @@ export async function enqueuePaperGeneration(examId: string): Promise<{ queued: 
     let jobId = baseJobId;
     await Promise.race([
       (async () => {
-        // 旧 job 在 completed/failed 集合里 → remove 后复用同一 jobId；
-        // 任务正在运行 → remove 抛 locked，此时若仍用同 jobId，add 会被 BullMQ
-        // 静默去重，改卷后的重新生成永远不会发生。改用带时间戳的后继 jobId，
-        // 生成本身幂等（已有快照早退），两轮任务先后/并发都安全。
+        // BullMQ 的 Queue.remove 对 locked/active job 返回 0（不抛错）。
+        // 0 = 任务正在运行：同 jobId 的 add 会被静默去重，本轮重建就永远不会跑，
+        // 因此改用带 UUID 的后继 jobId 再排一个任务（生成幂等，两轮先后/并发都安全）。
+        // remove 抛错（Redis/客户端异常）同样按"不确定"处理，用后继 id，避免撞上残留 job。
         // remove 与 add 放在同一个 race 里：Redis 假死时 remove 也会挂住，不能只给 add 兜超时。
-        try { await q.remove(baseJobId); } catch { jobId = `${baseJobId}-${Date.now()}`; }
+        try {
+          const removed = await q.remove(baseJobId);
+          if (removed === 0) jobId = `${baseJobId}-${randomUUID()}`;
+        } catch {
+          jobId = `${baseJobId}-${randomUUID()}`;
+        }
         await q.add('generate', { examId }, {
           jobId,
           attempts: 3,
