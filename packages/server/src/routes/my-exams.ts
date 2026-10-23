@@ -612,7 +612,7 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
             },
           }).catch(() => { /* 同上 */ });
           return created;
-        });
+        }, { timeout: 15_000 });
       } catch (err: any) {
         // 双击/双标签同时入场：唯一约束 @@unique([examId, studentId]) 会拦下后到者，
         // 这不是错误，直接复用已创建的那份答卷
