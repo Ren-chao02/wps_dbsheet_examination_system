@@ -169,7 +169,7 @@ export async function generateStudentPaper(
  * 考试未绑试卷 / 试卷已删 → 返回 undefined：调用方不加池条件，行为与收口前一致
  * （不放宽也不收窄；不放宽是安全底线，收窄会让历史考试的补建有题抽不到）。
  */
-async function loadQuestionPoolWhereForExamPaper(
+export async function loadQuestionPoolWhereForExamPaper(
   examId: string,
   tx: Prisma.TransactionClient,
 ): Promise<Record<string, any> | undefined> {
@@ -182,6 +182,59 @@ async function loadQuestionPoolWhereForExamPaper(
   return paper ? questionPoolWhereForPaper(paper) : undefined;
 }
 
+export type CandidateLevel = 'strict' | 'relax-schemaRefs' | 'relax-difficulty';
+
+export interface SlotCandidate {
+  id: string;
+  score: number | null;
+  difficulty: string | null;
+  schemaRefs: unknown;
+  answerRules: unknown;
+}
+
+/**
+ * 候选枚举的**唯一入口**：预检、生成、修复三处共用。
+ *
+ * 为什么必须唯一：如果预检和生成各写一套过滤，就会出现"预检说有候选、开考抽不出来"
+ * ——这正是 `schemaRefs` 校验最初断链时的形态。三档放宽的语义也集中在这里：
+ *   strict            —— 带难度条件 + 结构签名必须一致
+ *   relax-schemaRefs  —— 带难度条件，结构签名不再比较
+ *   relax-difficulty  —— 去掉难度条件，其余（分值/已用/可判分/池范围）仍生效
+ */
+export async function listSlotCandidates(params: {
+  rule: SlotRule;
+  slotScore: number;
+  level: CandidateLevel;
+  usedQuestionIds?: ReadonlySet<string>;
+  poolWhere?: Record<string, any>;
+  tx?: Prisma.TransactionClient | { question: { findMany: (args: any) => Promise<any[]> } };
+}): Promise<SlotCandidate[]> {
+  const { rule, slotScore, level, usedQuestionIds, poolWhere, tx = prisma } = params;
+
+  const where: Prisma.QuestionWhereInput = { status: 'published' };
+  if (rule.capabilityIds?.length) where.capabilityIds = { hasEvery: rule.capabilityIds };
+  if (rule.type) where.type = rule.type as any;
+  if (poolWhere && Object.keys(poolWhere).length > 0) (where as any).AND = [poolWhere];
+  // 只有 relax-difficulty 才去掉难度条件；strict 与 relax-schemaRefs 的 where 相同
+  if (level !== 'relax-difficulty' && rule.difficulty) where.difficulty = rule.difficulty as any;
+
+  const rows = (await (tx as any).question.findMany({
+    where,
+    select: { id: true, score: true, difficulty: true, schemaRefs: true, answerRules: true },
+    orderBy: { id: 'asc' }, // 稳定排序：同样候选集得到同样顺序（确定性前提）
+  })) as SlotCandidate[];
+
+  const wanted = rule.schemaRefs ? schemaRefsSignature(rule.schemaRefs) : '';
+  return rows.filter(c => {
+    if ((c.score ?? 0) !== slotScore) return false;
+    if (usedQuestionIds?.has(c.id)) return false;
+    // 引擎判不了的题不进任何一档：放宽的是结构与难度，不是"能不能自动判分"
+    if (unsupportedRuleActions(c.answerRules).length > 0) return false;
+    if (level === 'strict' && wanted) return schemaRefsSignature(c.schemaRefs) === wanted;
+    return true;
+  });
+}
+
 /**
  * 为单个抽题题位挑选题目。
  *
@@ -190,6 +243,7 @@ async function loadQuestionPoolWhereForExamPaper(
  *   2. 放宽 schemaRefs（题库未维护引用声明时的兜底）
  *   3. 放宽难度
  * 每一级内部都排除「本卷已用过」的题目，避免同一份卷子出现重复题。
+ * 候选枚举委托给 listSlotCandidates —— 与预检/修复共用同一入口，避免两套过滤断链。
  * 仍无可选则返回 null，由调用方记录待关注题位。
  */
 async function pickQuestionForSlot(params: {
@@ -205,44 +259,9 @@ async function pickQuestionForSlot(params: {
 }) {
   const { examId, slotIndex, rule, slotScore, usedQuestionIds, poolWhere, seed, tx } = params;
 
-  const baseWhere: Prisma.QuestionWhereInput = { status: 'published' };
-  if (rule.capabilityIds?.length) baseWhere.capabilityIds = { hasEvery: rule.capabilityIds };
-  if (rule.type) baseWhere.type = rule.type as any;
-  // 池条件挂在 AND 上而不是覆盖顶层字段 —— status/capabilityIds/type 的既有语义
-  // 保持原样；attempts 都从 baseWhere 派生，一处挂载即三条放宽路径全部生效
-  if (poolWhere && Object.keys(poolWhere).length > 0) {
-    (baseWhere as any).AND = [poolWhere];
-  }
-
-  const attempts: Array<{ where: Prisma.QuestionWhereInput; label: string }> = [
-    { where: { ...baseWhere, ...(rule.difficulty ? { difficulty: rule.difficulty as any } : {}) }, label: 'strict' },
-    { where: { ...baseWhere, ...(rule.difficulty ? { difficulty: rule.difficulty as any } : {}) }, label: 'relax-schemaRefs' },
-    { where: { ...baseWhere }, label: 'relax-difficulty' },
-  ];
-
-  for (const attempt of attempts) {
-    const candidates = await tx.question.findMany({
-      where: attempt.where,
-      // answerRules 只用于过滤「引擎判不了」的题（下方 pool 内判断），不参与抽题条件
-      select: { id: true, score: true, schemaRefs: true, capabilityIds: true, difficulty: true, answerRules: true },
-      orderBy: { id: 'asc' }, // 稳定排序：同样的候选集得到同样的顺序
-    });
-
-    const wanted = rule.schemaRefs ? schemaRefsSignature(rule.schemaRefs) : '';
-    const pool = candidates.filter(c => {
-      // 分值必须一致：等值替换的前提是每人这道题占的分一样
-      if ((c.score ?? 0) !== slotScore) return false;
-      if (usedQuestionIds.has(c.id)) return false;
-      // 规则里有引擎不认识的 action = 判分必然转人工，不能进考试抽题池。
-      // 逐级放宽也保留这个过滤器：放宽的是 schemaRefs/难度，不是"能不能自动判分"
-      if (unsupportedRuleActions(c.answerRules).length > 0) return false;
-      // 只有第一级强制 schemaRefs 一致（严格路径）
-      if (attempt.label === 'strict' && wanted) {
-        return schemaRefsSignature(c.schemaRefs) === wanted;
-      }
-      return true;
-    });
-
+  const levels: CandidateLevel[] = ['strict', 'relax-schemaRefs', 'relax-difficulty'];
+  for (const level of levels) {
+    const pool = await listSlotCandidates({ rule, slotScore, level, usedQuestionIds, poolWhere, tx });
     if (pool.length > 0) {
       // ── 按「本场考试该题位已分配次数」均衡取材 ──
       // 纯随机抽在只有 3 道候选时会有约 1/3 的概率让两个学生撞题，
@@ -260,7 +279,6 @@ async function pickQuestionForSlot(params: {
       return leastUsed[seededPickIndex(seed, leastUsed.length)];
     }
   }
-
   return null;
 }
 
