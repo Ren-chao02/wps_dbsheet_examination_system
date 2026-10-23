@@ -2303,6 +2303,10 @@ git commit -m "feat(teacher): 组卷报告补难度分布/降级统计 + 异常�
 | 17 | `fill-missing` 的 upsert 不清 startedAt/finishedAt/summary（展示残留） | 纯展示；Worker 完成时覆盖 |
 | 18 | 修复器对 `NaN`/非数值目标无防御（`sum <= 0` 不拦 NaN），且 `key in dist` 有原型链风险 | 目标写入路径由 Task 9 校验；Task 9 落地后风险闭合，否则 P1c 补 `Number.isFinite` + Set 判定 |
 | 19 | Task 9（试卷 API/编辑器难度目标）**未完成**：并行会话未提交改动占用 `routes/papers.ts` / `PaperEditor.tsx` | 待并行会话提交后补做；在此之前用户无法在 UI 配置难度目标（Task 10/13 的链路已就绪） |
+| 20 | `PUT /:id` 换卷的 `update → syncPaperIntoExam → invalidate → reschedule` 非事务：若失效/重排抛错，接口 500 但卷已换；重试同一请求因 `effectivePaperId` 已相等不会再次触发 | 终审修复引入的边界；P1c 包事务（或先 sync 后 update，失败整体回滚） |
+| 21 | 批次激活级联发布**不跑预检阻断**，只逐场补预生成调度 | 终审裁定「先补调度、不阻断整批」；是否阻断请产品决定（建议 P1c 用 `paper-generation-scheduler` 统一三入口） |
+| 22 | `POST /publish` 未收敛到共享 `reschedulePaperGeneration`（行为一致、逻辑重复三处：publish/retry/lifecycle） | P1c 抽 `paper-generation-scheduler`（附二 #6 的第三个理由） |
+| 23 | 名单去重只在 job 的 `listStudents` 与进度查询；publish/retry 的 `totalStudents` 仍按 `examRoomStudent` 行数（同一学生分到多考场时略高） | 同一学生跨考场属边缘数据；P1c 统一用 `countDistinctStudents` |
 
 ## 附：任务依赖图
 
