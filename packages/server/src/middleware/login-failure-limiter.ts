@@ -21,6 +21,10 @@ export function createLoginFailureLimiter(
   let lastSweep = 0;
 
   return (req: Request, res: Response, next: NextFunction) => {
+    // key 用 req.ip：它只在 trust proxy 配置正确时可信。app.ts 生产默认 1 跳
+    // （应用只绑定 127.0.0.1，同机反向代理追加真实客户端 IP），开发默认 false；
+    // 严禁 TRUST_PROXY=true（app.ts 会 fail-fast）。不能用 socket.remoteAddress：
+    // 代理后面它永远是代理 IP，会把所有客户端合并成同一个限流桶。
     const key = ipKeyGenerator(req.ip || 'unknown');
     const now = Date.now();
 
