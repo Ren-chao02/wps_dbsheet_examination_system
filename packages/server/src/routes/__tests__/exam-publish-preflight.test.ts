@@ -20,7 +20,7 @@ vi.mock('../../middleware/auth', async (importOriginal) => {
 // 否则会在模块初始化前访问到 TDZ 里的 const 而直接抛 ReferenceError。
 const {
   preflightMock, enqueueMock, examFindUnique, examUpdate,
-  examRoomStudentFindMany, tableFindMany, generationUpsert, generationUpdate, generationUpdateMany,
+  examRoomStudentFindMany, tableFindMany, generationUpsert, generationUpdateMany,
 } = vi.hoisted(() => ({
   preflightMock: vi.fn(),
   enqueueMock: vi.fn(),
@@ -29,7 +29,6 @@ const {
   examRoomStudentFindMany: vi.fn(),
   tableFindMany: vi.fn(),
   generationUpsert: vi.fn(),
-  generationUpdate: vi.fn(),
   generationUpdateMany: vi.fn(),
 }));
 
@@ -42,7 +41,7 @@ vi.mock('../../config/prisma', () => ({
     exam: { findUnique: examFindUnique, update: examUpdate },
     examRoomStudent: { findMany: examRoomStudentFindMany },
     examTableAssignment: { findMany: tableFindMany },
-    examPaperGeneration: { upsert: generationUpsert, update: generationUpdate, updateMany: generationUpdateMany },
+    examPaperGeneration: { upsert: generationUpsert, updateMany: generationUpdateMany },
   },
 }));
 vi.mock('../../services/data-scope', async (importOriginal) => {
@@ -69,7 +68,6 @@ beforeEach(() => {
   examRoomStudentFindMany.mockResolvedValue([{ studentId: 's-1' }, { studentId: 's-2' }]);
   tableFindMany.mockResolvedValue([{ studentId: 's-1' }, { studentId: 's-2' }]);
   generationUpsert.mockResolvedValue({});
-  generationUpdate.mockResolvedValue({});
   generationUpdateMany.mockResolvedValue({ count: 1 });
   enqueueMock.mockResolvedValue({ queued: true });
 });
@@ -107,8 +105,10 @@ describe('POST /api/exams/:id/publish —— 组卷预检', () => {
     const res = await request(app).post('/api/exams/e-1/publish');
     expect(res.status).toBe(200);
     expect(res.body.paperGeneration).toEqual({ status: 'failed' });
-    // 先 upsert(pending)，队列不可用后再 update 成 failed
-    expect(generationUpdate).toHaveBeenCalledWith(expect.objectContaining({
+    // 先 upsert(pending)，队列不可用后再 updateMany 成 failed。
+    // scheduler 统一用带 status:'pending' 守卫的 updateMany：迟到 job 已写成 done 时不倒回 failed
+    expect(generationUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { examId: 'e-1', status: 'pending' },
       data: expect.objectContaining({ status: 'failed' }),
     }));
   });

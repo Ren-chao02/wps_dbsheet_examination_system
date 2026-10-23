@@ -289,11 +289,16 @@ batchRouter.put('/:id/status', async (req: Request, res: Response) => {
           where: { id: { in: readyExams.map(e => e.id) } },
           data: { status: 'published' },
         });
-        for (const e of readyExams) {
-          // 批次激活是集中统一考试的主发布路径；不补调度的话质量卡片会永远"暂无记录"
-          await reschedulePaperGeneration(e.id).catch((err) => {
-            logger.warn({ examId: e.id, err }, '批次级联发布后的组卷预生成调度失败');
-          });
+        // 批次激活是集中统一考试的主发布路径；不补调度的话质量卡片会永远"暂无记录"。
+        // 逐场串行会让激活耗时随考试数线性增长（每场都要等一次 Redis 入队），
+        // 这里并行调度、用 allSettled 收敛：单场失败只记日志，不拖垮整批激活。
+        const settled = await Promise.allSettled(
+          readyExams.map(e => reschedulePaperGeneration(e.id)),
+        );
+        for (const [i, r] of settled.entries()) {
+          if (r.status === 'rejected') {
+            logger.warn({ examId: readyExams[i].id, err: r.reason }, '批次级联发布后的组卷预生成调度失败');
+          }
         }
         cascadePublished = readyExams.length;
       }

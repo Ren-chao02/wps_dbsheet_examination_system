@@ -7,7 +7,7 @@
  */
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
-import { enqueuePaperGeneration } from '../jobs/paper-generation-queue';
+import { schedulePaperGeneration } from './paper-generation-scheduler';
 import { STARTED_SUBMISSION_STATUSES } from './submission-statuses';
 
 /** 删除未开考学生的快照（原子守卫：开考事务与快照同事务提交，单条 DELETE 的可见性即安全） */
@@ -39,28 +39,14 @@ export async function countDistinctStudents(
 
 /**
  * 题位变化后重新调度预生成（仅对已发布/待考考试）。
- * 清空上一轮 summary/时间戳再入队；队列不可用标 failed（开考现场生成兜底）。
+ * 状态行重置/入队/failed 约定的唯一实现在 scheduler，这里只做「是否该调度」的前置判断。
  */
-export async function reschedulePaperGeneration(examId: string): Promise<'skipped' | 'queued' | 'failed'> {
+export async function reschedulePaperGeneration(examId: string): Promise<'skipped' | 'pending' | 'failed'> {
   const exam = await prisma.exam.findUnique({ where: { id: examId }, select: { status: true } });
   if (!exam || (exam.status !== 'published' && exam.status !== 'scheduled')) return 'skipped';
-  const totalStudents = await countDistinctStudents(examId);
-  await prisma.examPaperGeneration.upsert({
-    where: { examId },
-    create: { examId, status: 'pending', totalStudents },
-    update: {
-      status: 'pending', totalStudents,
-      queuedAt: new Date(), startedAt: null, finishedAt: null, error: null,
-      summary: Prisma.JsonNull, unfilledSlots: Prisma.JsonNull,
-    },
+  return schedulePaperGeneration({
+    examId,
+    totalStudents: await countDistinctStudents(examId),
+    mode: 'reset',
   });
-  const enq = await enqueuePaperGeneration(examId);
-  if (!enq.queued) {
-    await prisma.examPaperGeneration.updateMany({
-      where: { examId, status: 'pending' },
-      data: { status: 'failed', error: '组卷队列不可用（Redis 未启动）；开考时将现场生成' },
-    });
-    return 'failed';
-  }
-  return 'queued';
 }
