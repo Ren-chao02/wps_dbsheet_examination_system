@@ -2310,8 +2310,10 @@ git commit -m "feat(teacher): 组卷报告补难度分布/降级统计 + 异常�
 | 24 | 预生成 job 运行中改卷时同 jobId 被静默去重 | **P1c 已闭合**：`Queue.remove` 返回 0（locked）或抛错时改用 `${baseJobId}-${randomUUID()}` 的后继 jobId（真实契约，非抛错假设）。残留：waiting/delayed 的 UUID 后继不被显式清理，靠 removeOnComplete/Fail 20 截断 + 幂等消化 |
 | 25 | 批次激活逐场 `reschedule` 串行 | **P1c 已闭合**：改 `Promise.allSettled` 并行（单场失败只 warn，不影响批次响应）；极端多考试时并发上界=就绪考试数 |
 | 26 | `total=created` 后，并发下 `createMany` 全跳过时该生被计为 `missing`（卷子其实由开考路径插入） | 纯展示、极罕见；P1c 可在汇总里区分「并发已存在」 |
-| 27 | `PUT /:id` 的 `startTime`/`endTime`/`batchId` 仍写预读值（与 paperId 修掉前同类的 lost-update） | 普通编辑并发场景；P1c 后续按「未显式提供就不写」同口径处理 |
-| 28 | 旧版 `ExamForm` 保存时总会回显加载时的 `paperId`，可覆盖并发换卷 | 服务端语义是「显式值胜出」；客户端编辑表单改造留 P1c |
+| 27 | `PUT /:id` 的 `startTime`/`endTime`/`batchId` lost-update | **服务端 P1c 已闭合**（只在显式提供时写入）；客户端 ExamForm 仍回显这三项（见 #30） |
+| 28 | 旧版 `ExamForm` 保存时总会回显加载时的 `paperId` | **P1c 已闭合**：`buildExamPayload` 编辑且 paperId 未变化时不回传（含单测）；创建/变更/解绑仍回传 |
+| 29 | `ExamForm` 保存成功后不刷新 `existingExam`：同标签页先换卷再保存，可能把已保存的旧值当「变更」重发，覆盖别处的并发换卷 | 窄场景；P1c 后续保存成功后重载/刷新基线 |
+| 30 | `ExamForm` 仍回显 `startTime/endTime/batchId`（服务端只保护省略字段的调用方） | 与 #27 同源；P1c 后续按「只发变更字段」重构表单 payload |
 
 ## 附：任务依赖图
 
