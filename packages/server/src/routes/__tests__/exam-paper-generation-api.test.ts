@@ -18,7 +18,7 @@ vi.mock('../../middleware/auth', async (importOriginal) => {
 
 const {
   preflightMock, enqueueMock,
-  genFindUnique, genDeleteMany, genCreate, genUpdate,
+  genFindUnique, genDeleteMany, genCreate, genUpdate, genUpsert,
   studentCount, sqFindMany, sqDeleteMany, submissionCount, examFindUnique,
 } = vi.hoisted(() => ({
   preflightMock: vi.fn(),
@@ -27,6 +27,7 @@ const {
   genDeleteMany: vi.fn(),
   genCreate: vi.fn(),
   genUpdate: vi.fn(),
+  genUpsert: vi.fn(),
   studentCount: vi.fn(),
   sqFindMany: vi.fn(),
   sqDeleteMany: vi.fn(),
@@ -44,7 +45,7 @@ vi.mock('../../jobs/paper-generation-queue', async (importOriginal) => {
 vi.mock('../../config/prisma', () => ({
   prisma: {
     exam: { findUnique: examFindUnique },
-    examPaperGeneration: { findUnique: genFindUnique, deleteMany: genDeleteMany, create: genCreate, update: genUpdate },
+    examPaperGeneration: { findUnique: genFindUnique, deleteMany: genDeleteMany, create: genCreate, update: genUpdate, upsert: genUpsert },
     examRoomStudent: { count: studentCount },
     studentExamQuestion: { findMany: sqFindMany, deleteMany: sqDeleteMany },
     studentSubmission: { count: submissionCount },
@@ -71,6 +72,7 @@ beforeEach(() => {
   genDeleteMany.mockResolvedValue({ count: 0 });
   genCreate.mockResolvedValue({});
   genUpdate.mockResolvedValue({});
+  genUpsert.mockResolvedValue({});
   sqDeleteMany.mockResolvedValue({ count: 0 });
   preflightMock.mockResolvedValue({ ok: true, issues: [] });
 });
@@ -92,6 +94,10 @@ describe('POST /api/exams/:id/paper-generation/retry', () => {
     expect(res.status).toBe(200);
     expect(res.body.mode).toBe('fill-missing');
     expect(sqDeleteMany).not.toHaveBeenCalled();
+    expect(submissionCount).toHaveBeenCalledWith({
+      where: { examId: 'e-1', status: { in: ['in_progress', 'submitted', 'grading', 'graded'] } },
+    });
+    expect(genUpsert).toHaveBeenCalledWith(expect.objectContaining({ where: { examId: 'e-1' } }));
     expect(enqueueMock).toHaveBeenCalledWith('e-1');
   });
 
@@ -101,10 +107,17 @@ describe('POST /api/exams/:id/paper-generation/retry', () => {
     expect(res.status).toBe(200);
     expect(res.body.mode).toBe('regenerate');
     expect(preflightMock).toHaveBeenCalledWith('e-1');
-    expect(sqDeleteMany).toHaveBeenCalledWith({ where: { examId: 'e-1' } });
-    expect(genCreate).toHaveBeenCalledWith({
-      data: { examId: 'e-1', status: 'pending', totalStudents: 10 },
+    expect(sqDeleteMany).toHaveBeenCalledWith({
+      where: {
+        examId: 'e-1',
+        student: {
+          submissions: {
+            none: { examId: 'e-1', status: { in: ['in_progress', 'submitted', 'grading', 'graded'] } },
+          },
+        },
+      },
     });
+    expect(genUpsert).toHaveBeenCalledWith(expect.objectContaining({ where: { examId: 'e-1' } }));
     expect(enqueueMock).toHaveBeenCalledWith('e-1');
   });
 
@@ -121,6 +134,46 @@ describe('POST /api/exams/:id/paper-generation/retry', () => {
     examFindUnique.mockResolvedValue({ id: 'e-1', status: 'ended', paperId: 'p-1', createdBy: 't-1', assignments: [] });
     const res = await request(app).post('/api/exams/e-1/paper-generation/retry');
     expect(res.status).toBe(409);
+  });
+
+  it('草稿考试 → 409（发布前不允许预生成，避免改卷后快照不生效）', async () => {
+    examFindUnique.mockResolvedValue({ id: 'e-1', status: 'draft', createdBy: 't-1', assignments: [] });
+    const res = await request(app).post('/api/exams/e-1/paper-generation/retry');
+    expect(res.status).toBe(409);
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it('考试已取消 → 409', async () => {
+    examFindUnique.mockResolvedValue({ id: 'e-1', status: 'cancelled', createdBy: 't-1', assignments: [] });
+    const res = await request(app).post('/api/exams/e-1/paper-generation/retry');
+    expect(res.status).toBe(409);
+  });
+
+  it('组卷任务正在执行 → 409（不删快照、不入队）', async () => {
+    genFindUnique.mockResolvedValue({ examId: 'e-1', status: 'running' });
+    const res = await request(app).post('/api/exams/e-1/paper-generation/retry');
+    expect(res.status).toBe(409);
+    expect(sqDeleteMany).not.toHaveBeenCalled();
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it('尚无组卷记录 → GET 返回 status:none，进度仍可读', async () => {
+    genFindUnique.mockResolvedValue(null);
+    const res = await request(app).get('/api/exams/e-1/paper-generation');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('none');
+    expect(res.body).toMatchObject({ totalStudents: 10, generatedStudents: 2 });
+  });
+
+  it('补生成时队列不可用 → 503 且状态行标 failed', async () => {
+    submissionCount.mockResolvedValue(1);
+    enqueueMock.mockResolvedValue({ queued: false });
+    const res = await request(app).post('/api/exams/e-1/paper-generation/retry');
+    expect(res.status).toBe(503);
+    expect(genUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { examId: 'e-1' },
+      data: expect.objectContaining({ status: 'failed' }),
+    }));
   });
 
   it('队列不可用 → 503 且状态行标 failed（开考现场生成兜底）', async () => {

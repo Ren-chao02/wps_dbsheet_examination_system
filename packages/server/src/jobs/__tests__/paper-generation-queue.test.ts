@@ -93,4 +93,31 @@ describe('enqueuePaperGeneration 降级契约', () => {
     await expect(enqueuePaperGeneration('e-1')).resolves.toEqual({ queued: true });
     expect(mockQueueAdd).toHaveBeenCalled();
   });
+
+  it('remove 未 settle 前不会 add（防止 fire-and-forget 去重竞态）', async () => {
+    const { enqueuePaperGeneration } = await loadQueue('redis://127.0.0.1:6379');
+    let resolveRemove!: (v: unknown) => void;
+    mockQueueRemove.mockReturnValue(new Promise((resolve) => { resolveRemove = resolve; }));
+    mockQueueAdd.mockResolvedValue({ id: 'job-4' });
+    const pending = enqueuePaperGeneration('e-1');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockQueueAdd).not.toHaveBeenCalled();
+    resolveRemove(1);
+    await expect(pending).resolves.toEqual({ queued: true });
+    expect(mockQueueAdd).toHaveBeenCalled();
+  });
+
+  it('remove 永不 settle（Redis 假死）→ 同样受 3s 超时保护', async () => {
+    vi.useFakeTimers();
+    try {
+      const { enqueuePaperGeneration } = await loadQueue('redis://127.0.0.1:6379');
+      mockQueueRemove.mockReturnValue(new Promise(() => {}));
+      const pending = enqueuePaperGeneration('e-1');
+      await vi.advanceTimersByTimeAsync(3000);
+      await expect(pending).resolves.toEqual({ queued: false });
+      expect(mockQueueAdd).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

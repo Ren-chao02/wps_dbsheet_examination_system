@@ -40,6 +40,18 @@ describe('processPaperGeneration', () => {
     expect(deps.markStatus).toHaveBeenLastCalledWith('e-1', expect.objectContaining({ status: 'failed' }));
   });
 
+  it('考试已归档 → 停止并标 failed', async () => {
+    const deps = {
+      listStudents: vi.fn().mockResolvedValue([{ studentId: 's-0' }]),
+      generate: vi.fn().mockResolvedValue({ created: 1, total: 1, unfilledSlots: [] }),
+      getExamStatus: vi.fn().mockResolvedValue('archived'),
+      markStatus: vi.fn().mockResolvedValue(undefined),
+    };
+    const out = await processPaperGeneration('e-1', deps as any);
+    expect(out.generated).toBe(0);
+    expect(deps.markStatus).toHaveBeenLastCalledWith('e-1', expect.objectContaining({ status: 'failed' }));
+  });
+
   it('生成抛错 → 状态写回 failed，并把异常抛给 BullMQ 重试', async () => {
     const deps = {
       listStudents: vi.fn().mockResolvedValue([{ studentId: 's-0' }]),

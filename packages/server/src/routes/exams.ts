@@ -718,6 +718,9 @@ examRouter.get('/:id/paper-generation', async (req: Request, res: Response) => {
   }
 });
 
+// 「已开考」状态集合：这些提交一旦存在，对应学生的卷子快照绝不能再动
+const STARTED_SUBMISSION_STATUSES = ['in_progress', 'submitted', 'grading', 'graded'] as const;
+
 // POST /api/exams/:id/paper-generation/retry —— 补生成 / 重新组卷
 examRouter.post('/:id/paper-generation/retry', async (req: Request, res: Response) => {
   try {
@@ -729,22 +732,44 @@ examRouter.post('/:id/paper-generation/retry', async (req: Request, res: Respons
       select: { status: true },
     });
     if (!exam) return res.status(404).json({ message: '考试不存在' });
-    if (exam.status === 'ended' || exam.status === 'cancelled') {
+    if (exam.status === 'draft') {
+      // 草稿期预生成的快照会在发布后被幂等早退保留，教师随后改卷就不生效了——只允许发布后触发
+      return res.status(409).json({ message: '考试尚未发布，发布后会自动预生成' });
+    }
+    if (exam.status === 'ended' || exam.status === 'cancelled' || exam.status === 'archived') {
       return res.status(409).json({ message: '考试已结束/取消，无法重新组卷' });
     }
 
-    // 「已开考」= 存在任何已开始的提交。这些学生手里已经拿着题目，
-    // 清空快照等于换卷——只能补缺，不能重来。
+    // 已有任务在跑时重试只会"删了快照但任务被去重忽略"，直接拒绝
+    const gen = await prisma.examPaperGeneration.findUnique({
+      where: { examId: req.params.id },
+      select: { status: true },
+    });
+    if (gen?.status === 'running') {
+      return res.status(409).json({ message: '组卷任务正在执行，请等待完成后再试' });
+    }
+
     const started = await prisma.studentSubmission.count({
-      where: {
-        examId: req.params.id,
-        status: { in: ['in_progress', 'submitted', 'grading', 'graded'] },
-      },
+      where: { examId: req.params.id, status: { in: [...STARTED_SUBMISSION_STATUSES] } },
     });
 
     if (started > 0) {
+      // 补生成：只补缺，不动已有快照。状态行可能因历史原因缺失，先确保它存在，
+      // 否则 Worker 的 updateMany 无处可写，GET 会一直显示 status:'none'。
+      const totalStudents = await prisma.examRoomStudent.count({ where: { assignment: { examId: req.params.id } } });
+      await prisma.examPaperGeneration.upsert({
+        where: { examId: req.params.id },
+        create: { examId: req.params.id, status: 'pending', totalStudents },
+        update: { status: 'pending', error: null, queuedAt: new Date() },
+      });
       const enq = await enqueuePaperGeneration(req.params.id);
-      if (!enq.queued) return res.status(503).json({ message: '组卷队列不可用，请稍后重试' });
+      if (!enq.queued) {
+        await prisma.examPaperGeneration.update({
+          where: { examId: req.params.id },
+          data: { status: 'failed', error: '组卷队列不可用（Redis 未启动）；开考时将现场生成' },
+        });
+        return res.status(503).json({ message: '组卷队列不可用，请稍后重试' });
+      }
       return res.json({ mode: 'fill-missing' });
     }
 
@@ -753,11 +778,34 @@ examRouter.post('/:id/paper-generation/retry', async (req: Request, res: Respons
     if (!preflight.ok) {
       return res.status(400).json({ message: '组卷预检未通过', preflight: preflight.issues });
     }
-    await prisma.studentExamQuestion.deleteMany({ where: { examId: req.params.id } });
-    await prisma.examPaperGeneration.deleteMany({ where: { examId: req.params.id } });
-    const studentCount = await prisma.examRoomStudent.count({ where: { assignment: { examId: req.params.id } } });
-    await prisma.examPaperGeneration.create({
-      data: { examId: req.params.id, status: 'pending', totalStudents: studentCount },
+
+    // 原子守卫：只删「该生没有任何已开始提交」的快照。
+    // 上面的 count 与此处 DELETE 之间学生可能恰好开考——开考事务把 submission 与
+    // 快照一起提交，而这条 DELETE 在单条语句的可见性快照里求值：
+    //   · 已提交开考 → 子查询看得到 submission → 该生快照不会被删；
+    //   · 尚未提交 → 其快照对本语句不可见 → 也删不到。
+    // 因此「已开考绝不动快照」不依赖 count 与 delete 之间的时间窗。
+    await prisma.studentExamQuestion.deleteMany({
+      where: {
+        examId: req.params.id,
+        student: {
+          submissions: {
+            none: { examId: req.params.id, status: { in: [...STARTED_SUBMISSION_STATUSES] } },
+          },
+        },
+      },
+    });
+
+    const totalStudents = await prisma.examRoomStudent.count({ where: { assignment: { examId: req.params.id } } });
+    // upsert 而非 delete+create：双击/并发重试不会撞 examId 唯一约束变成 500
+    await prisma.examPaperGeneration.upsert({
+      where: { examId: req.params.id },
+      create: { examId: req.params.id, status: 'pending', totalStudents },
+      update: {
+        status: 'pending', totalStudents,
+        queuedAt: new Date(), startedAt: null, finishedAt: null, error: null,
+        summary: Prisma.JsonNull, unfilledSlots: Prisma.JsonNull,
+      },
     });
     const enq = await enqueuePaperGeneration(req.params.id);
     if (!enq.queued) {
