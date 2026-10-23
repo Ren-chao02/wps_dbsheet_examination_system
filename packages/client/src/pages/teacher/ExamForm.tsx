@@ -5,6 +5,7 @@ import { SaveOutlined, ArrowLeftOutlined, BookOutlined, EyeOutlined, LinkOutline
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { Paper, PaperQuestion } from '../../types';
+import { showPreflightError } from '../../components/exam/PreflightIssueModal';
 
 const { TextArea } = Input;
 
@@ -273,7 +274,9 @@ export function ExamForm() {
             <Space>
               <Button onClick={async () => {
                 try { await api.post(`/exams/${id}/publish`); message.success('已发布'); navigate('/teacher/exams'); }
-                catch (err: any) { message.error(err.response?.data?.message || '发布失败'); }
+                catch (err: any) {
+                  if (!showPreflightError(err)) message.error(err.response?.data?.message || '发布失败');
+                }
               }}>发布考试</Button>
               <Button onClick={async () => {
                 try { await api.post(`/exams/${id}/end`); message.success('考试已结束'); window.location.reload(); }

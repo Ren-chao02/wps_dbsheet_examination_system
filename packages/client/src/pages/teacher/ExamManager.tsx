@@ -8,6 +8,7 @@ import api from '../../services/api';
 import type { Exam, PaginatedResponse } from '../../types';
 import { ExamConfigWizard } from './ExamConfigWizard';
 import { ExamDetailDrawer } from './ExamDetailDrawer';
+import { showPreflightError } from '../../components/exam/PreflightIssueModal';
 import { EmptyState } from '../../components/common/EmptyState';
 import { useAuthStore } from '../../stores/auth';
 import { modeLabels, statusLabels, formatTimeSlot, formatRoomSettings, countAssignedStudents, examEditGuard } from '../../utils/examDisplay';
@@ -47,7 +48,7 @@ export function ExamManager() {
       message.success('考试已发布');
       fetchExams();
     } catch (err: any) {
-      message.error(err.response?.data?.message || '发布失败');
+      if (!showPreflightError(err)) message.error(err.response?.data?.message || '发布失败');
     }
   };
 
