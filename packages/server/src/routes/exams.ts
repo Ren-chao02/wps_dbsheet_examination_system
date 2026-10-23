@@ -656,6 +656,60 @@ examRouter.get('/:id/paper-generation', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/exams/:id/paper-generation/anomalies —— 放宽/修复过的卷子（教师排查用）
+// 与上面的状态汇总同源：pickMeta.level 由组卷器写入，strict 以外的档位都说明该题位
+// 是「降级」选出来的，教师需要知道哪些学生的卷子受影响，才能决定换卷还是接受。
+examRouter.get('/:id/paper-generation/anomalies', async (req: Request, res: Response) => {
+  try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的组卷状态');
+
+    const rows = await prisma.studentExamQuestion.findMany({
+      where: { examId: req.params.id },
+      select: {
+        studentId: true, slotIndex: true, questionId: true, pickMeta: true,
+        question: { select: { title: true } },
+      },
+      // 确定性：分页/截断结果稳定
+      orderBy: [{ studentId: 'asc' }, { slotIndex: 'asc' }],
+    });
+
+    const byStudent = new Map<string, Array<{
+      slotIndex: number; questionId: string; title: string; level: string; repairedFrom: string | null;
+    }>>();
+    for (const r of rows) {
+      const meta = r.pickMeta as any;
+      const level = meta?.level;
+      // 无 pickMeta 的历史快照无从判断档位，按 strict 处理（不制造噪音）
+      if (!level || level === 'strict') continue;
+      const list = byStudent.get(r.studentId) ?? [];
+      list.push({
+        slotIndex: r.slotIndex,
+        questionId: r.questionId,
+        title: r.question?.title ?? '',
+        level,
+        repairedFrom: meta?.repairedFrom ?? null,
+      });
+      byStudent.set(r.studentId, list);
+    }
+
+    // 上限 50 人：这个接口是排查用，不是导出；超出的部分教师可以按学号定位后重查
+    const allIds = [...byStudent.keys()];
+    const ids = allIds.slice(0, 50);
+    const users = ids.length > 0
+      ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, realName: true, username: true } })
+      : [];
+    const nameOf = new Map(users.map(u => [u.id, u.realName || u.username]));
+    res.json({
+      truncated: allIds.length > ids.length,
+      students: ids.map(id => ({ studentId: id, name: nameOf.get(id) ?? id, slots: byStudent.get(id) })),
+    });
+  } catch (err) {
+    logger.error({ err, examId: req.params.id }, '读取异常卷子失败');
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
 // 「已开考」状态集合：这些提交一旦存在，对应学生的卷子快照绝不能再动
 const STARTED_SUBMISSION_STATUSES = ['in_progress', 'submitted', 'grading', 'graded'] as const;
 

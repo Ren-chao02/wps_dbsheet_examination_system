@@ -67,6 +67,21 @@ interface PaperGenerationState {
   error: string | null;
 }
 
+// pickMeta.level 的中文标签；级别越高说明组卷让步越多，教师据此判断卷子等值性
+const levelLabels: Record<string, string> = {
+  'relax-schemaRefs': '放宽结构',
+  'relax-difficulty': '放宽难度',
+  repair: '修复',
+};
+
+interface AnomalyStudent {
+  studentId: string;
+  name: string;
+  slots: Array<{ slotIndex: number; questionId: string; title: string; level: string; repairedFrom?: string | null }>;
+}
+
+const fmtDist = (d: any) => (d ? `易${d.easy ?? 0}/中${d.medium ?? 0}/难${d.hard ?? 0}` : '未设置');
+
 interface ExamDetailDrawerProps {
   exam: Exam | null;
   open: boolean;
@@ -108,6 +123,12 @@ export function ExamDetailDrawer({ exam, open, onClose }: ExamDetailDrawerProps)
   const [genLoading, setGenLoading] = useState(false);
   const [genError, setGenError] = useState(false);
 
+  // 异常卷子弹窗：只在打开时按需加载，same exam 内复用已加载结果
+  const [anomaliesOpen, setAnomaliesOpen] = useState(false);
+  const [anomalies, setAnomalies] = useState<AnomalyStudent[] | null>(null);
+  const [anomaliesLoading, setAnomaliesLoading] = useState(false);
+  const [anomaliesTruncated, setAnomaliesTruncated] = useState(false);
+
   // 抽屉常驻，切换考试时旧请求可能后到；用 ref 记下当前考试，过期响应一律丢弃
   const currentExamIdRef = useRef<string | null>(null);
   useEffect(() => { currentExamIdRef.current = exam?.id ?? null; }, [exam?.id]);
@@ -132,10 +153,32 @@ export function ExamDetailDrawer({ exam, open, onClose }: ExamDetailDrawerProps)
     }
   }, [exam?.id]);
 
+  const openAnomalies = async () => {
+    const id = exam?.id;
+    if (!id) return;
+    setAnomaliesOpen(true);
+    if (anomalies) return;   // 同一场考试已加载过
+    setAnomaliesLoading(true);
+    try {
+      const res = await api.get(`/exams/${id}/paper-generation/anomalies`);
+      if (currentExamIdRef.current !== id) return;
+      setAnomalies(res.data?.students ?? []);
+      setAnomaliesTruncated(!!res.data?.truncated);
+    } catch {
+      if (currentExamIdRef.current === id) message.error('加载异常卷子失败');
+    } finally {
+      if (currentExamIdRef.current === id) setAnomaliesLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!open || !exam?.id) return;
     setGen(null); // 先清空，避免上一场的数据短暂冒充本场
     setGenError(false);
+    setAnomalies(null);
+    setAnomaliesTruncated(false);
+    // 弹窗若还开着会立刻以空列表重新出现，一并关掉
+    setAnomaliesOpen(false);
     loadGeneration();
   }, [open, exam?.id, loadGeneration]);
 
@@ -259,6 +302,22 @@ export function ExamDetailDrawer({ exam, open, onClose }: ExamDetailDrawerProps)
                 </Tag>
                 进度：{gen.generatedStudents} / {gen.totalStudents} 人
               </div>
+              {gen.summary?.distribution && (
+                <div style={{ fontSize: 13 }}>
+                  <div>
+                    可调题位 {gen.summary.distribution.ruleSlots} 道 · 目标 {fmtDist(gen.summary.distribution.target)} · 实际（每卷平均）{fmtDist(gen.summary.distribution.actual)}
+                  </div>
+                  <div style={{ color: '#888' }}>
+                    全卷（每卷平均）{fmtDist(gen.summary.distribution.wholePaper)}
+                  </div>
+                </div>
+              )}
+              {gen.summary?.degradation && (
+                <div style={{ fontSize: 13 }}>
+                  降级统计：原样 {gen.summary.degradation.strict} 卷 · 放宽结构 {gen.summary.degradation.relaxSchemaRefs} 卷 ·
+                  放宽难度 {gen.summary.degradation.relaxDifficulty} 卷 · 修复 {gen.summary.degradation.repaired} 卷
+                </div>
+              )}
               {gen.summary && gen.summary.missing > 0 && (
                 <Alert type="warning" showIcon message={`${gen.summary.missing} 名学生未能生成完整卷子（开考时将现场生成兜底）`} />
               )}
@@ -284,10 +343,44 @@ export function ExamDetailDrawer({ exam, open, onClose }: ExamDetailDrawerProps)
                 >
                   补生成 / 重新组卷
                 </Button>
+                <Button size="small" onClick={openAnomalies}>查看异常卷子</Button>
               </Space>
             </Space>
           )}
         </Card>
+
+        {/* 异常卷子：按题位平铺，学生列重复出现便于筛选 */}
+        <Modal
+          title="异常卷子（放宽/修复过）"
+          open={anomaliesOpen}
+          onCancel={() => setAnomaliesOpen(false)}
+          footer={null}
+          width={720}
+        >
+          <Spin spinning={anomaliesLoading}>
+            <Table
+              size="small"
+              rowKey={(r: any) => `${r.studentId}-${r.slotIndex}`}
+              pagination={{ pageSize: 20 }}
+              dataSource={(anomalies ?? []).flatMap(s => s.slots.map(sl => ({
+                ...sl, studentId: s.studentId, name: s.name,
+              })))}
+              columns={[
+                { title: '学生', dataIndex: 'name', width: 140 },
+                { title: '题位', dataIndex: 'slotIndex', width: 80, render: (v: number) => v + 1 },
+                {
+                  title: '级别', dataIndex: 'level', width: 120,
+                  render: (v: string) => <Tag color={v === 'repair' ? 'gold' : 'orange'}>{levelLabels[v] ?? v}</Tag>,
+                },
+                { title: '题目', dataIndex: 'title', ellipsis: true },
+              ]}
+              locale={{ emptyText: '没有异常卷子' }}
+            />
+            {anomaliesTruncated && (
+              <div style={{ marginTop: 8, color: '#888' }}>仅显示前 50 名学生</div>
+            )}
+          </Spin>
+        </Modal>
 
         {/* 考场/考生/表格分配 */}
         <div style={{ marginBottom: 16 }}>
