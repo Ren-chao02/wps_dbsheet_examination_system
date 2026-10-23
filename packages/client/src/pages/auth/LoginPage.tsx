@@ -263,7 +263,7 @@ export function LoginPage() {
       <div className="auth-form">
         <div className="auth-eyebrow">EXAM SYSTEM</div>
         <h2 className="auth-title">登录考试系统</h2>
-        <p className="auth-subtitle">使用学号或用户名登录，教师可使用工号</p>
+        <p className="auth-subtitle">学生使用学号，教师使用工号，管理员使用系统账号</p>
 
         {lockedUntil && lockRemaining > 0 ? (
           <Alert
@@ -287,12 +287,12 @@ export function LoginPage() {
         >
           <Form.Item
             name="identifier"
-            label="学号 / 用户名"
-            rules={[{ required: true, message: '请输入学号或用户名' }]}
+            label="学号 / 工号 / 系统账号"
+            rules={[{ required: true, message: '请输入学号、工号或系统账号' }]}
           >
             <Input
               prefix={<UserOutlined />}
-              placeholder="学号 / 用户名"
+              placeholder="学号 / 工号 / 系统账号"
               autoComplete="username"
               size="large"
             />
@@ -376,8 +376,7 @@ export function LoginPage() {
 
           {import.meta.env.DEV && (
             <div className="auth-dev">
-              测试账号：admin/123456（管理员）| teacher1/123456（教师）| 20252861/123456（学生1）|
-              20252862/123456（学生2）
+              测试账号：T2026001 / T2026002（教师）| 20260001 ~ 20260004（学生）| 密码 123456
             </div>
           )}
         </Form>

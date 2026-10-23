@@ -517,7 +517,7 @@ accountRouter.get('/import-template', async (_req: Request, res: Response) => {
     const worksheet = workbook.addWorksheet('账户导入模板');
 
     worksheet.columns = [
-      { header: '用户名(管理员必填)', key: 'username', width: 20 },
+      { header: '系统登录名(管理员必填)', key: 'username', width: 22 },
       { header: '密码(必填)', key: 'password', width: 14 },
       { header: '姓名', key: 'realName', width: 12 },
       { header: '邮箱', key: 'email', width: 24 },
@@ -602,7 +602,7 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
       },
     });
 
-    // 模板列：1=用户名(管理员必填), 2=密码, 3=姓名, 4=邮箱, 5=角色编码,
+    // 模板列：1=系统登录名(管理员必填), 2=密码, 3=姓名, 4=邮箱, 5=角色编码,
     //         6=院系编码(可选), 7=工号(教师必填，且作为教师登录名)
     for (let i = 2; i <= worksheet.rowCount; i++) {
       const row = worksheet.getRow(i);
@@ -647,7 +647,7 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
         errors.push({
           row: i,
           username: rowLabel,
-          error: '教师登录名由工号决定，用户名列应与工号一致或留空',
+          error: '教师登录名由工号决定，登录名列应与工号一致或留空',
         });
         continue;
       }
@@ -727,7 +727,7 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
       const errorSheet = errorWorkbook.addWorksheet('导入失败记录');
       errorSheet.columns = [
         { header: '行号', key: 'row', width: 8 },
-        { header: '用户名', key: 'username', width: 18 },
+        { header: '登录名', key: 'username', width: 18 },
         { header: '失败原因', key: 'error', width: 40 },
       ];
       const errHeaderRow = errorSheet.getRow(1);

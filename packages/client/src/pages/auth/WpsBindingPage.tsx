@@ -172,12 +172,12 @@ export function WpsBindingPage() {
         >
           <Form.Item
             name="identifier"
-            label="学号 / 工号 / 用户名"
-            rules={[{ required: true, message: '请输入学号、工号或用户名' }]}
+            label="学号 / 工号 / 系统账号"
+            rules={[{ required: true, message: '请输入学号、工号或系统账号' }]}
           >
             <Input
               prefix={<UserOutlined />}
-              placeholder="学号 / 工号 / 用户名"
+              placeholder="学号 / 工号 / 系统账号"
               autoComplete="username"
               size="large"
             />
