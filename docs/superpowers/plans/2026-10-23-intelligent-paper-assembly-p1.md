@@ -497,7 +497,8 @@ export async function preflightExamPaper(
     //   relax-difficulty 有候选 → 是难度条件太窄
     //   都空                   → 候选池本身为空（题型/能力点/分值/池范围）
     const relaxed = await listSlotCandidates({ rule, slotScore, level: 'relax-schemaRefs', poolWhere, tx });
-    const byScore = await listSlotCandidates({ rule, slotScore, level: 'relax-difficulty', poolWhere, tx });
+    // signatureConflict 时 byScore 的结果用不上（原因已确定），省一次查询
+    const byScore = relaxed.length > 0 ? [] : await listSlotCandidates({ rule, slotScore, level: 'relax-difficulty', poolWhere, tx });
     const signatureConflict = relaxed.length > 0;
     issues.push({
       slotIndex,
@@ -520,7 +521,7 @@ export async function preflightExamPaper(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `cd packages/server && npx vitest run src/services/__tests__/paper-preflight.test.ts`
-Expected: PASS 3/3。
+Expected: PASS 5/5（固定题位 / 签名冲突 / 难度不足 / 池为空 / 三档顺序与跳过优化）。
 
 - [ ] **Step 5: 提交**
 
