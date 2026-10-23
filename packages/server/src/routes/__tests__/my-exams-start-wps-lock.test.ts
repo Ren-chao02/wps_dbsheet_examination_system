@@ -31,7 +31,7 @@ vi.mock('../../middleware/auth', async (importOriginal) => {
 
 const {
   examFindUnique, submissionFindUnique, submissionUpdateMany, roomStudentFindFirst,
-  tableAssignmentFindUnique, paperQuestionFindMany, sessionFindFirst, txState, tx,
+  tableAssignmentFindUnique, paperQuestionFindMany, sessionFindFirst, txState, tx, transactionSpy,
 } = vi.hoisted(() => {
   const txState = { inTx: false };
   const tx = {
@@ -48,23 +48,9 @@ const {
     submissionCreate: vi.fn(),
     sessionCreate: vi.fn(),
   };
-  return {
-    examFindUnique: vi.fn(), submissionFindUnique: vi.fn(), submissionUpdateMany: vi.fn(),
-    roomStudentFindFirst: vi.fn(), tableAssignmentFindUnique: vi.fn(), paperQuestionFindMany: vi.fn(),
-    sessionFindFirst: vi.fn(), txState, tx,
-  };
-});
-
-vi.mock('../../config/prisma', () => {
-  const prismaMock: any = {
-    exam: { findUnique: examFindUnique },
-    studentSubmission: { findUnique: submissionFindUnique, updateMany: submissionUpdateMany },
-    examRoomStudent: { findFirst: roomStudentFindFirst },
-    examTableAssignment: { findUnique: tableAssignmentFindUnique },
-    studentExamQuestion: { findMany: paperQuestionFindMany },
-    examSession: { findFirst: sessionFindFirst },
-  };
-  prismaMock.$transaction = vi.fn(async (fn: any) => {
+  // $transaction 的 spy 必须提升到这里：只有从测试里拿到同一个引用，
+  // 才能断言「断点续考根本不进事务」。实现仍是原来的 txState 包一层。
+  const transactionSpy = vi.fn(async (fn: any) => {
     txState.inTx = true;
     try {
       const txClient: any = {
@@ -78,6 +64,23 @@ vi.mock('../../config/prisma', () => {
       return await fn(txClient);
     } finally { txState.inTx = false; }
   });
+  return {
+    examFindUnique: vi.fn(), submissionFindUnique: vi.fn(), submissionUpdateMany: vi.fn(),
+    roomStudentFindFirst: vi.fn(), tableAssignmentFindUnique: vi.fn(), paperQuestionFindMany: vi.fn(),
+    sessionFindFirst: vi.fn(), txState, tx, transactionSpy,
+  };
+});
+
+vi.mock('../../config/prisma', () => {
+  const prismaMock: any = {
+    exam: { findUnique: examFindUnique },
+    studentSubmission: { findUnique: submissionFindUnique, updateMany: submissionUpdateMany },
+    examRoomStudent: { findFirst: roomStudentFindFirst },
+    examTableAssignment: { findUnique: tableAssignmentFindUnique },
+    studentExamQuestion: { findMany: paperQuestionFindMany },
+    examSession: { findFirst: sessionFindFirst },
+    $transaction: transactionSpy,
+  };
   return { prisma: prismaMock };
 });
 
@@ -121,6 +124,10 @@ describe('POST /api/my-exams/:id/start-wps 的考试锁', () => {
     expect(sql).toContain('hashtextextended');
     expect(values).toContain('e-1');
     expect(txState.inTx).toBe(false);           // 事务已结束
+    // 「先取锁，再建 submission」的顺序本身就是不变式：建卷用了快照，
+    // 锁必须已经罩住快照，否则并发重试事务能在这两步之间把快照删改掉。
+    expect(tx.executeRaw.mock.invocationCallOrder[0])
+      .toBeLessThan(tx.submissionCreate.mock.invocationCallOrder[0]);
     expect(tx.submissionCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ examId: 'e-1', studentId: 's-1', status: 'in_progress' }),
     }));
@@ -134,6 +141,7 @@ describe('POST /api/my-exams/:id/start-wps 的考试锁', () => {
 
     const res = await request(app).post('/api/my-exams/e-1/start-wps');
     expect(res.status).toBe(200);
+    expect(transactionSpy).not.toHaveBeenCalled();   // 续考走 updateMany，根本不进事务
     expect(tx.executeRaw).not.toHaveBeenCalled();
     expect(tx.submissionCreate).not.toHaveBeenCalled();
   });
