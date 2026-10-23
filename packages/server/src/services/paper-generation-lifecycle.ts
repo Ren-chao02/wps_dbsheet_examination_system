@@ -29,8 +29,11 @@ export async function invalidateUnstartedSnapshots(
 }
 
 /** 去重后的名单人数（同一学生可能被分到多个考场） */
-export async function countDistinctStudents(examId: string): Promise<number> {
-  const rows = await prisma.examRoomStudent.groupBy({ by: ['studentId'], where: { assignment: { examId } } });
+export async function countDistinctStudents(
+  examId: string,
+  tx: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<number> {
+  const rows = await tx.examRoomStudent.groupBy({ by: ['studentId'], where: { assignment: { examId } } });
   return rows.length;
 }
 

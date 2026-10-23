@@ -18,7 +18,7 @@ vi.mock('../../middleware/auth', async (importOriginal) => {
 
 const {
   preflightMock, enqueueMock,
-  genFindUnique, genDeleteMany, genCreate, genUpdate, genUpsert,
+  genFindUnique, genDeleteMany, genCreate, genUpdate, genUpsert, genUpdateMany,
   studentCount, studentGroupBy, sqFindMany, sqDeleteMany, submissionCount, examFindUnique,
 } = vi.hoisted(() => ({
   preflightMock: vi.fn(),
@@ -28,6 +28,7 @@ const {
   genCreate: vi.fn(),
   genUpdate: vi.fn(),
   genUpsert: vi.fn(),
+  genUpdateMany: vi.fn(),
   studentCount: vi.fn(),
   studentGroupBy: vi.fn(),
   sqFindMany: vi.fn(),
@@ -43,17 +44,23 @@ vi.mock('../../jobs/paper-generation-queue', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return { ...actual, enqueuePaperGeneration: enqueueMock };
 });
-vi.mock('../../config/prisma', () => ({
-  prisma: {
+vi.mock('../../config/prisma', () => {
+  const prismaMock: any = {
     exam: { findUnique: examFindUnique },
-    examPaperGeneration: { findUnique: genFindUnique, deleteMany: genDeleteMany, create: genCreate, update: genUpdate, upsert: genUpsert },
+    examPaperGeneration: { findUnique: genFindUnique, deleteMany: genDeleteMany, create: genCreate, update: genUpdate, upsert: genUpsert, updateMany: genUpdateMany },
     examRoomStudent: { count: studentCount, groupBy: studentGroupBy },
     studentExamQuestion: { findMany: sqFindMany, deleteMany: sqDeleteMany },
     studentSubmission: { count: submissionCount },
-  },
-}));
+  };
+  // 路由在事务内取 advisory lock：$transaction 直接把 mock 自己当 tx 传回，
+  // $queryRaw 模拟 pg_advisory_xact_lock 的返回值（无实际锁语义）。
+  prismaMock.$transaction = vi.fn((fn: any) => fn(prismaMock));
+  prismaMock.$queryRaw = vi.fn().mockResolvedValue([{ pg_advisory_xact_lock: null }]);
+  return { prisma: prismaMock };
+});
 
 import { examRouter } from '../exams';
+import { prisma } from '../../config/prisma';
 
 const app = express();
 app.use(express.json());
@@ -76,6 +83,7 @@ beforeEach(() => {
   genCreate.mockResolvedValue({});
   genUpdate.mockResolvedValue({});
   genUpsert.mockResolvedValue({});
+  genUpdateMany.mockResolvedValue({ count: 1 });
   sqDeleteMany.mockResolvedValue({ count: 0 });
   preflightMock.mockResolvedValue({ ok: true, issues: [] });
 });
@@ -109,7 +117,10 @@ describe('POST /api/exams/:id/paper-generation/retry', () => {
     const res = await request(app).post('/api/exams/e-1/paper-generation/retry');
     expect(res.status).toBe(200);
     expect(res.body.mode).toBe('regenerate');
-    expect(preflightMock).toHaveBeenCalledWith('e-1');
+    // 决议 + 快照失效必须在事务内持考试锁（与开考事务互斥）
+    expect((prisma as any).$transaction).toHaveBeenCalled();
+    expect((prisma as any).$queryRaw).toHaveBeenCalled();
+    expect(preflightMock).toHaveBeenCalledWith('e-1', expect.anything());
     expect(sqDeleteMany).toHaveBeenCalledWith({
       where: {
         examId: 'e-1',
@@ -173,8 +184,10 @@ describe('POST /api/exams/:id/paper-generation/retry', () => {
     enqueueMock.mockResolvedValue({ queued: false });
     const res = await request(app).post('/api/exams/e-1/paper-generation/retry');
     expect(res.status).toBe(503);
-    expect(genUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      where: { examId: 'e-1' },
+    // 事务外标记失败走 updateMany + status:'pending' 守卫：不能把并发重试刚置的
+    // pending 误标 failed，也避免持锁期间等 Redis。
+    expect(genUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { examId: 'e-1', status: 'pending' },
       data: expect.objectContaining({ status: 'failed' }),
     }));
   });
@@ -183,8 +196,8 @@ describe('POST /api/exams/:id/paper-generation/retry', () => {
     enqueueMock.mockResolvedValue({ queued: false });
     const res = await request(app).post('/api/exams/e-1/paper-generation/retry');
     expect(res.status).toBe(503);
-    expect(genUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      where: { examId: 'e-1' },
+    expect(genUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { examId: 'e-1', status: 'pending' },
       data: expect.objectContaining({ status: 'failed' }),
     }));
   });

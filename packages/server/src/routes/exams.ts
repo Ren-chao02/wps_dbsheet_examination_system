@@ -10,7 +10,8 @@ import { emitStudentSubmit, emitStudentUpdate } from '../services/socket';
 import { preflightExamPaper } from '../services/paper-preflight';
 import { syncPaperIntoExam } from '../services/paper-exam-sync';
 import { enqueuePaperGeneration, getPaperGenerationProgress } from '../jobs/paper-generation-queue';
-import { invalidateUnstartedSnapshots, reschedulePaperGeneration } from '../services/paper-generation-lifecycle';
+import { invalidateUnstartedSnapshots, reschedulePaperGeneration, countDistinctStudents } from '../services/paper-generation-lifecycle';
+import { lockExam } from '../services/exam-lock';
 import { STARTED_SUBMISSION_STATUSES } from '../services/submission-statuses';
 import { logger } from '../utils/logger';
 
@@ -748,73 +749,75 @@ examRouter.post('/:id/paper-generation/retry', async (req: Request, res: Respons
       return res.status(409).json({ message: '组卷任务正在执行，请等待完成后再试' });
     }
 
-    const started = await prisma.studentSubmission.count({
-      where: { examId: req.params.id, status: { in: [...STARTED_SUBMISSION_STATUSES] } },
-    });
+    // 重新组卷/补缺的决策与快照失效必须与开考事务持同一把锁：
+    // 否则 count 与 delete 之间学生开考，仍可能删掉刚生成的快照。
+    const outcome = await prisma.$transaction(async (tx) => {
+      await lockExam(tx, req.params.id);
 
-    if (started > 0) {
-      // 补生成：只补缺，不动已有快照。状态行可能因历史原因缺失，先确保它存在，
-      // 否则 Worker 的 updateMany 无处可写，GET 会一直显示 status:'none'。
-      const totalStudents = await prisma.examRoomStudent.count({ where: { assignment: { examId: req.params.id } } });
-      await prisma.examPaperGeneration.upsert({
-        where: { examId: req.params.id },
-        create: { examId: req.params.id, status: 'pending', totalStudents },
-        update: { status: 'pending', error: null, queuedAt: new Date() },
+      const started = await tx.studentSubmission.count({
+        where: { examId: req.params.id, status: { in: [...STARTED_SUBMISSION_STATUSES] } },
       });
-      const enq = await enqueuePaperGeneration(req.params.id);
-      if (!enq.queued) {
-        await prisma.examPaperGeneration.update({
+
+      if (started > 0) {
+        // 补生成：只补缺，不动已有快照。状态行可能因历史原因缺失，先确保它存在。
+        const totalStudents = await countDistinctStudents(req.params.id, tx);
+        await tx.examPaperGeneration.upsert({
           where: { examId: req.params.id },
-          data: { status: 'failed', error: '组卷队列不可用（Redis 未启动）；开考时将现场生成' },
+          create: { examId: req.params.id, status: 'pending', totalStudents },
+          update: { status: 'pending', error: null, queuedAt: new Date() },
         });
-        return res.status(503).json({ message: '组卷队列不可用，请稍后重试' });
+        return { mode: 'fill-missing' as const };
       }
-      return res.json({ mode: 'fill-missing' });
-    }
 
-    // 重新组卷：先预检（避免清空后才发现组不出来），再清空重建
-    const preflight = await preflightExamPaper(req.params.id);
-    if (!preflight.ok) {
-      return res.status(400).json({ message: '组卷预检未通过', preflight: preflight.issues });
-    }
+      // 重新组卷：先预检（避免清空后才发现组不出来），再清空重建
+      const preflight = await preflightExamPaper(req.params.id, tx);
+      if (!preflight.ok) {
+        return { mode: 'preflight-failed' as const, issues: preflight.issues };
+      }
 
-    // 原子守卫：只删「该生没有任何已开始提交」的快照。
-    // 上面的 count 与此处 DELETE 之间学生可能恰好开考——开考事务把 submission 与
-    // 快照一起提交，而这条 DELETE 在单条语句的可见性快照里求值：
-    //   · 已提交开考 → 子查询看得到 submission → 该生快照不会被删；
-    //   · 尚未提交 → 其快照对本语句不可见 → 也删不到。
-    // 因此「已开考绝不动快照」不依赖 count 与 delete 之间的时间窗。
-    await prisma.studentExamQuestion.deleteMany({
-      where: {
-        examId: req.params.id,
-        student: {
-          submissions: {
-            none: { examId: req.params.id, status: { in: [...STARTED_SUBMISSION_STATUSES] } },
+      // 守卫保留为防御纵深：未来若有调用方忘记取锁，单条 DELETE 的可见性仍能兜底
+      await tx.studentExamQuestion.deleteMany({
+        where: {
+          examId: req.params.id,
+          student: {
+            submissions: {
+              none: { examId: req.params.id, status: { in: [...STARTED_SUBMISSION_STATUSES] } },
+            },
           },
         },
-      },
+      });
+
+      const totalStudents = await countDistinctStudents(req.params.id, tx);
+      await tx.examPaperGeneration.upsert({
+        where: { examId: req.params.id },
+        create: { examId: req.params.id, status: 'pending', totalStudents },
+        update: {
+          status: 'pending', totalStudents,
+          queuedAt: new Date(), startedAt: null, finishedAt: null, error: null,
+          summary: Prisma.JsonNull, unfilledSlots: Prisma.JsonNull,
+        },
+      });
+      return { mode: 'regenerate' as const };
     });
 
-    const totalStudents = await prisma.examRoomStudent.count({ where: { assignment: { examId: req.params.id } } });
-    // upsert 而非 delete+create：双击/并发重试不会撞 examId 唯一约束变成 500
-    await prisma.examPaperGeneration.upsert({
-      where: { examId: req.params.id },
-      create: { examId: req.params.id, status: 'pending', totalStudents },
-      update: {
-        status: 'pending', totalStudents,
-        queuedAt: new Date(), startedAt: null, finishedAt: null, error: null,
-        summary: Prisma.JsonNull, unfilledSlots: Prisma.JsonNull,
-      },
-    });
+    if (outcome.mode === 'preflight-failed') {
+      return res.status(400).json({ message: '组卷预检未通过', preflight: outcome.issues });
+    }
+
+    // 入队放在事务外：不能持锁等 Redis（入队超时 3s）
     const enq = await enqueuePaperGeneration(req.params.id);
     if (!enq.queued) {
-      await prisma.examPaperGeneration.update({
-        where: { examId: req.params.id },
+      await prisma.examPaperGeneration.updateMany({
+        where: { examId: req.params.id, status: 'pending' },
         data: { status: 'failed', error: '组卷队列不可用（Redis 未启动）；开考时将现场生成' },
       });
-      return res.status(503).json({ message: '组卷队列不可用，已标记为失败；开考时将现场生成' });
+      return res.status(503).json({
+        message: outcome.mode === 'fill-missing'
+          ? '组卷队列不可用，请稍后重试'
+          : '组卷队列不可用，已标记为失败；开考时将现场生成',
+      });
     }
-    res.json({ mode: 'regenerate' });
+    res.json({ mode: outcome.mode });
   } catch (err) {
     logger.error({ err, examId: req.params.id }, '重新触发组卷失败');
     res.status(500).json({ message: '服务器错误' });
