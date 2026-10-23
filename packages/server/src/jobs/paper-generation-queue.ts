@@ -9,6 +9,7 @@
 
 import { Queue, type ConnectionOptions } from 'bullmq';
 import { config } from '../config';
+import { logger } from '../utils/logger';
 
 // ============================================================
 // Redis 连接配置
@@ -24,7 +25,7 @@ function getConnectionOpts(): ConnectionOptions | null {
       maxRetriesPerRequest: null as any,
     };
   } catch {
-    console.warn('[Queue] Redis URL 解析失败，组卷预生成将退回开考现场生成');
+    logger.warn('[Queue] Redis URL 解析失败，组卷预生成将退回开考现场生成');
     return null;
   }
 }
@@ -47,21 +48,38 @@ export function getPaperGenerationQueue(): Queue | null {
 // 入队方法
 // ============================================================
 
+/** 入队超时：Redis 进程宕机但 URL 仍可解析时，ioredis 的离线队列会让 add 一直等重连 */
+const ENQUEUE_TIMEOUT_MS = 3000;
+
 /**
  * 将某场考试的预生成任务加入队列。
  *
  * 返回 `{ queued: false }` 时调用方必须把状态行标成 failed —— 发布本身仍然是成功的，
  * 开考时会走现场生成兜底（慢，但不丢题）。
+ *
+ * 这里必须自己兜住所有异常与超时：BullMQ/ioredis 在 Redis 半死不活时既可能抛错，
+ * 也可能无限重连挂住，而发布接口不能被队列拖成 500/超时（考试此时已经发布了）。
  */
 export async function enqueuePaperGeneration(examId: string): Promise<{ queued: boolean }> {
   const q = getPaperGenerationQueue();
   if (!q) return { queued: false };
-  await q.add('generate', { examId }, {
-    jobId: `paper-generation-${examId}`, // 同考试重复发布/重试去重
-    attempts: 3,
-    backoff: { type: 'exponential', delay: 5000 },
-    removeOnComplete: 20,
-    removeOnFail: 20,
-  });
-  return { queued: true };
+  try {
+    await Promise.race([
+      q.add('generate', { examId }, {
+        // 注意：同 jobId 在 completed/failed 集合里仍存在时，BullMQ 会静默忽略入队——
+        // 重试/重发前必须先 remove（Task 6 的验收集）
+        jobId: `paper-generation-${examId}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: 20,
+        removeOnFail: 20,
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('enqueue timeout')), ENQUEUE_TIMEOUT_MS)),
+    ]);
+    return { queued: true };
+  } catch (err) {
+    // 队列不可用/超时都按"未入队"处理：调用方标 failed，开考现场生成兜底
+    logger.warn({ examId, err }, '组卷预生成入队失败');
+    return { queued: false };
+  }
 }

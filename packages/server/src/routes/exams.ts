@@ -9,6 +9,7 @@ import { scopeCtxOf, examWhere, assertExamAccess, assertPaperRead, questionWhere
 import { emitStudentSubmit, emitStudentUpdate } from '../services/socket';
 import { preflightExamPaper } from '../services/paper-preflight';
 import { enqueuePaperGeneration } from '../jobs/paper-generation-queue';
+import { logger } from '../utils/logger';
 
 export const examRouter = Router();
 examRouter.use(authenticate);
@@ -651,29 +652,41 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
       data: { status: newStatus },
     });
 
-    // 预生成：建/重置状态行后入队；队列不可用时标记 failed（开考时现场生成兜底）。
+    // 预生成：建/重置状态行后入队。调度失败**不能**让发布变成 500——考试此时已经发布了，
+    // 正确语义是"发布成功 + 组卷欠账"（开考时现场生成兜底）。
     // 重复发布时必须把上一轮的运行痕迹清掉（startedAt/finishedAt/error/summary），
-    // 否则前端会把旧进度/旧失败原因当成本轮状态展示；Json 字段清空要用 Prisma.JsonNull，
-    // 直接传 null 会被 Prisma 当成「不更新」。
-    await prisma.examPaperGeneration.upsert({
-      where: { examId: req.params.id },
-      create: { examId: req.params.id, status: 'pending', totalStudents: studentIds.length },
-      update: {
-        status: 'pending', totalStudents: studentIds.length,
-        queuedAt: new Date(), startedAt: null, finishedAt: null, error: null,
-        summary: Prisma.JsonNull, unfilledSlots: Prisma.JsonNull,
-      },
-    });
-    const enqueued = await enqueuePaperGeneration(req.params.id);
-    if (!enqueued.queued) {
-      await prisma.examPaperGeneration.update({
+    // 否则前端会把旧进度/旧失败原因当成本轮状态展示。可空 Json 字段必须用
+    // Prisma.JsonNull / Prisma.DbNull 显式表达清空（undefined 才是 no-op，裸 null 不可赋值）。
+    let generationStatus: 'pending' | 'failed' = 'pending';
+    try {
+      await prisma.examPaperGeneration.upsert({
         where: { examId: req.params.id },
-        data: { status: 'failed', error: '组卷队列不可用（Redis 未启动）；开考时将现场生成' },
+        create: { examId: req.params.id, status: 'pending', totalStudents: studentIds.length },
+        update: {
+          status: 'pending', totalStudents: studentIds.length,
+          queuedAt: new Date(), startedAt: null, finishedAt: null, error: null,
+          summary: Prisma.JsonNull, unfilledSlots: Prisma.JsonNull,
+        },
       });
+      const enqueued = await enqueuePaperGeneration(req.params.id);
+      if (!enqueued.queued) {
+        generationStatus = 'failed';
+        await prisma.examPaperGeneration.update({
+          where: { examId: req.params.id },
+          data: { status: 'failed', error: '组卷队列不可用（Redis 未启动）；开考时将现场生成' },
+        });
+      }
+    } catch (err) {
+      generationStatus = 'failed';
+      logger.error({ err }, '组卷预生成调度失败');
+      // 尽力标记失败（upsert 成功时才有行；连行都没建时，开考兜底仍然成立）
+      await prisma.examPaperGeneration
+        .updateMany({ where: { examId: req.params.id }, data: { status: 'failed', error: '组卷调度失败；开考时将现场生成' } })
+        .catch(() => {});
     }
 
-    // 发布本身不因队列不可用而失败（开考现场生成兜底），但要把真实状态告诉前端
-    res.json({ ...updated, paperGeneration: { status: enqueued.queued ? 'pending' : 'failed' } });
+    // 发布本身不因队列/调度失败而失败（开考现场生成兜底），但要把真实状态告诉前端
+    res.json({ ...updated, paperGeneration: { status: generationStatus } });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
