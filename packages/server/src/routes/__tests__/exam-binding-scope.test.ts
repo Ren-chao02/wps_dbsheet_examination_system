@@ -99,6 +99,18 @@ const PERIOD = {
   endTime: '2026-11-01T10:00:00.000Z',
 };
 
+/** PUT 用例的草稿考试夹具：属于 t-1、未绑卷、可编辑 */
+const DRAFT_EXAM = {
+  id: 'exam-1',
+  createdBy: 't-1',
+  status: 'draft',
+  paperId: null,
+  batchId: null,
+  startTime: null,
+  endTime: null,
+  durationMinutes: 60,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.exam.findUnique.mockResolvedValue(null);
@@ -203,16 +215,7 @@ describe('POST /api/exams 创建默认归属', () => {
 describe('PUT /api/exams/:id 更换试卷的范围校验', () => {
   beforeEach(() => {
     // 考试存在且属于 t-1（所有权检查通过），草稿状态可编辑
-    mockPrisma.exam.findUnique.mockResolvedValue({
-      id: 'exam-1',
-      createdBy: 't-1',
-      status: 'draft',
-      paperId: null,
-      batchId: null,
-      startTime: null,
-      endTime: null,
-      durationMinutes: 60,
-    });
+    mockPrisma.exam.findUnique.mockResolvedValue(DRAFT_EXAM);
   });
 
   it('把 paperId 改为池外试卷 → 403 且不更新（不删旧题目）', async () => {
@@ -244,6 +247,8 @@ describe('PUT /api/exams/:id 更换试卷的范围校验', () => {
     expect(res.status).toBe(200);
     expect(mockPrisma.paper.findUnique).not.toHaveBeenCalled();
     expect(mockPrisma.exam.update).toHaveBeenCalledTimes(1);
+    // 预读的 paperId 不得回写：否则普通编辑与并发换卷交错时会把试卷倒回旧值
+    expect(mockPrisma.exam.update.mock.calls[0][0].data).not.toHaveProperty('paperId');
   });
 
   it('paperId 显式置空（解绑）→ 不触发校验（null 无需判定可见性）', async () => {
@@ -255,13 +260,14 @@ describe('PUT /api/exams/:id 更换试卷的范围校验', () => {
 
     expect(res.status).toBe(200);
     expect(mockPrisma.paper.findUnique).not.toHaveBeenCalled();
+    // 显式置空才会写入 paperId: null（解绑语义）
+    expect(mockPrisma.exam.update.mock.calls[0][0].data.paperId).toBeNull();
   });
 
   it('普通编辑（不含 paperId）且考试已绑卷 → 不重同步、不删题位', async () => {
     mockPrisma.exam.findUnique.mockResolvedValue({
-      id: 'exam-1', createdBy: 't-1', status: 'draft',
+      ...DRAFT_EXAM,
       paperId: '55555555-5555-4555-8555-555555555555',
-      batchId: null, startTime: null, endTime: null, durationMinutes: 60,
     });
     const res = await request(makeApp())
       .put('/api/exams/exam-1')
@@ -271,6 +277,39 @@ describe('PUT /api/exams/:id 更换试卷的范围校验', () => {
     expect(res.status).toBe(200);
     expect(mockPrisma.examQuestion.deleteMany).not.toHaveBeenCalled();
     expect(mockPrisma.exam.update).toHaveBeenCalledTimes(1);
+    // 已绑卷时更关键：不回写预读的旧 paperId，新卷才不会被并发编辑覆盖掉
+    expect(mockPrisma.exam.update.mock.calls[0][0].data).not.toHaveProperty('paperId');
+  });
+
+  it('换卷到池内试卷 → 写入新 paperId，响应回填 sync 之后重读的行', async () => {
+    // 换卷事务在 sync 之后会重读考试行（sync 会再改 totalScore/difficultyTarget）；
+    // 第一次是 handler 预读，之后返回落库后的值。
+    let examReads = 0;
+    mockPrisma.exam.findUnique.mockImplementation(async () => {
+      examReads += 1;
+      return examReads === 1
+        ? DRAFT_EXAM
+        : { ...DRAFT_EXAM, paperId: PAPER_OUT, totalScore: 0, difficultyTarget: null };
+    });
+    mockPrisma.paper.findUnique.mockResolvedValue({
+      createdBy: 't-1',
+      departmentId: 'd-1',
+      sharedToSchool: true,
+      difficultyTarget: null,
+    });
+
+    const res = await request(makeApp())
+      .put('/api/exams/exam-1')
+      .set('x-test-role', 'teacher')
+      .set('x-test-user', 't-1')
+      .send({ title: '换卷', paperId: PAPER_OUT });
+
+    expect(res.status).toBe(200);
+    // 第一次 exam.update 是换卷写本身（第二次是 sync 回写总分）
+    expect(mockPrisma.exam.update.mock.calls[0][0].data.paperId).toBe(PAPER_OUT);
+    // 响应不能是 sync 前的 update 行（那里没有 totalScore/difficultyTarget）
+    expect(res.body.paperId).toBe(PAPER_OUT);
+    expect(res.body.totalScore).toBe(0);
   });
 });
 

@@ -109,11 +109,26 @@ beforeEach(() => {
 
 describe('PUT /api/exams/:id —— 换卷/解绑后的预生成失效', () => {
   it('换到新试卷 → 未开考快照失效（含开考原子守卫）+ 状态行置 pending + 重新入队', async () => {
+    // 换卷事务在 sync 之后会重读考试行；第一次是 handler 预读，之后返回落库后的值。
+    // 响应必须是重读的行——sync 前的 update 行里没有 totalScore/difficultyTarget。
+    let examReads = 0;
+    examFindUnique.mockImplementation(async () => {
+      examReads += 1;
+      return examReads === 1
+        ? examRow()
+        : { ...examRow('published', NEW_PAPER), totalScore: 0, difficultyTarget: null };
+    });
+
     const res = await request(app)
       .put('/api/exams/e-1')
       .send({ title: '期中', paperId: NEW_PAPER });
 
     expect(res.status).toBe(200);
+    // 换卷写入新 paperId（普通编辑不回写预读旧值由另一条用例锁定）
+    expect(examUpdate.mock.calls[0][0].data.paperId).toBe(NEW_PAPER);
+    // 响应回填 sync 之后的行
+    expect(res.body.paperId).toBe(NEW_PAPER);
+    expect(res.body.totalScore).toBe(0);
     // sync 重建题位 + 失效旧快照同事务持考试锁（与开考事务互斥）
     expect((prisma as any).$transaction).toHaveBeenCalled();
     expect((prisma as any).$executeRaw).toHaveBeenCalled();
