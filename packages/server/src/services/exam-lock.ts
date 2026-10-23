@@ -9,5 +9,7 @@ import type { Prisma } from '@prisma/client';
  * hashtextextended 返回 bigint，避免 hashtext 32 位碰撞。
  */
 export async function lockExam(tx: Prisma.TransactionClient, examId: string): Promise<void> {
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${examId}, 0))`;
+  // 用 $executeRaw 而非 $queryRaw：pg_advisory_xact_lock 返回 void，
+  // Prisma 的 $queryRaw 无法反序列化该列（真实库实测报错）。
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${examId}, 0))`;
 }

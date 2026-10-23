@@ -10,10 +10,11 @@ import { lockExam } from '../exam-lock';
 
 describe('lockExam', () => {
   it('在事务内按 examId 取 PostgreSQL advisory lock', async () => {
-    const queryRaw = vi.fn().mockResolvedValue([{ pg_advisory_xact_lock: null }]);
-    await lockExam({ $queryRaw: queryRaw } as any, 'e-1');
-    expect(queryRaw).toHaveBeenCalledTimes(1);
-    const [strings, ...values] = queryRaw.mock.calls[0];
+    // $executeRaw 不读结果列（pg_advisory_xact_lock 返回 void，$queryRaw 会反序列化失败）
+    const executeRaw = vi.fn().mockResolvedValue(1);
+    await lockExam({ $executeRaw: executeRaw } as any, 'e-1');
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = executeRaw.mock.calls[0];
     const sql = strings.join('?');
     expect(sql).toContain('pg_advisory_xact_lock');
     expect(sql).toContain('hashtextextended');
