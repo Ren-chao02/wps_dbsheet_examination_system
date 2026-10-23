@@ -21,7 +21,7 @@ export function showPreflightError(err: any): boolean {
     width: 560,
     content: (
       <div>
-        <p style={{ marginTop: 8 }}>以下题位没有可用题目，请到试卷编辑页调整题位规则或补充题库后再发布：</p>
+        <p style={{ marginTop: 8 }}>以下题位没有可用题目，请到试卷编辑页调整题位规则或补充题库后再试：</p>
         <ul style={{ paddingLeft: 20, margin: 0 }}>
           {issues.map((it, i) => (
             <li key={`${it.slotIndex}-${i}`} style={{ marginBottom: 6 }}>

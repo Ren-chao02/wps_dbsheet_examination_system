@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Drawer, Descriptions, Tag, Table, Spin, Empty, Space, Typography, message,
   Card, Button, Alert, Modal,
@@ -106,23 +106,65 @@ export function ExamDetailDrawer({ exam, open, onClose }: ExamDetailDrawerProps)
   // 组卷质量卡片：与上面的考场/表格加载相互独立，失败不影响抽屉主体
   const [gen, setGen] = useState<PaperGenerationState | null>(null);
   const [genLoading, setGenLoading] = useState(false);
+  const [genError, setGenError] = useState(false);
+
+  // 抽屉常驻，切换考试时旧请求可能后到；用 ref 记下当前考试，过期响应一律丢弃
+  const currentExamIdRef = useRef<string | null>(null);
+  useEffect(() => { currentExamIdRef.current = exam?.id ?? null; }, [exam?.id]);
 
   const loadGeneration = useCallback(async () => {
-    if (!exam?.id) return;
+    const id = exam?.id;
+    if (!id) return;
     setGenLoading(true);
     try {
-      const res = await api.get(`/exams/${exam.id}/paper-generation`);
-      setGen(res.data);
+      const res = await api.get(`/exams/${id}/paper-generation`);
+      if (currentExamIdRef.current === id) {
+        setGen(res.data);
+        setGenError(false);
+      }
     } catch {
-      setGen(null);
+      if (currentExamIdRef.current === id) {
+        setGen(null);
+        setGenError(true);
+      }
     } finally {
-      setGenLoading(false);
+      if (currentExamIdRef.current === id) setGenLoading(false);
     }
   }, [exam?.id]);
 
   useEffect(() => {
-    if (open && exam?.id) loadGeneration();
+    if (!open || !exam?.id) return;
+    setGen(null); // 先清空，避免上一场的数据短暂冒充本场
+    setGenError(false);
+    loadGeneration();
   }, [open, exam?.id, loadGeneration]);
+
+  // 空态（无状态行）也要能触发：历史已发布考试没有组卷记录，正是 retry 接口要兜的场景
+  const canTrigger = !!exam && ['published', 'scheduled', 'in_progress'].includes(exam.status);
+
+  const handleRetry = () => {
+    const id = exam?.id;
+    if (!id) return;
+    Modal.confirm({
+      title: '触发组卷？',
+      content: '若已有学生开考，只会补齐缺失的卷子；否则将清空并重新生成全部卷子。',
+      okText: '继续',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const res = await api.post(`/exams/${id}/paper-generation/retry`);
+          message.success(res.data?.mode === 'fill-missing' ? '已触发补生成' : '已触发重新组卷');
+        } catch (err: any) {
+          if (!showPreflightError(err)) {
+            message.error(err.response?.data?.message || '触发组卷失败');
+          }
+        } finally {
+          // 503 时服务端已把状态行标 failed 并写入原因，刷新卡片才能看到真实状态
+          loadGeneration();
+        }
+      },
+    });
+  };
 
   if (!exam) return null;
 
@@ -193,10 +235,21 @@ export function ExamDetailDrawer({ exam, open, onClose }: ExamDetailDrawerProps)
           }
         >
           {!gen || gen.status === 'none' ? (
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={exam.status === 'draft' ? '草稿考试不预生成；发布后自动开始' : '暂无组卷记录（发布考试后自动预生成）'}
-            />
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={
+                  genError
+                    ? '组卷状态加载失败，点「刷新」重试'
+                    : exam.status === 'draft'
+                      ? '草稿考试不预生成；发布后自动开始'
+                      : '暂无组卷记录（发布考试后自动预生成；历史考试可手动触发）'
+                }
+              />
+              {canTrigger && (
+                <Button size="small" onClick={handleRetry}>预生成组卷</Button>
+              )}
+            </Space>
           ) : (
             <Space direction="vertical" style={{ width: '100%' }}>
               <div>
@@ -227,25 +280,7 @@ export function ExamDetailDrawer({ exam, open, onClose }: ExamDetailDrawerProps)
                     gen.status === 'running'
                     || !['published', 'scheduled', 'in_progress'].includes(exam.status)
                   }
-                  onClick={() => {
-                    Modal.confirm({
-                      title: '重新触发组卷？',
-                      content: '若已有学生开考，只会补齐缺失的卷子；否则将清空并重新生成全部卷子。',
-                      okText: '继续',
-                      cancelText: '取消',
-                      onOk: async () => {
-                        try {
-                          const res = await api.post(`/exams/${exam.id}/paper-generation/retry`);
-                          message.success(res.data?.mode === 'fill-missing' ? '已触发补生成' : '已触发重新组卷');
-                          loadGeneration();
-                        } catch (err: any) {
-                          if (!showPreflightError(err)) {
-                            message.error(err.response?.data?.message || '触发组卷失败');
-                          }
-                        }
-                      },
-                    });
-                  }}
+                  onClick={handleRetry}
                 >
                   补生成 / 重新组卷
                 </Button>
