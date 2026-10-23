@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
-import bcrypt from 'bcryptjs';
+
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
@@ -20,6 +20,7 @@ import {
 } from '../services/login-security';
 import { wpsSsoService } from '../services/wps-sso-service';
 import { logger } from '../utils/logger';
+import { hashPassword, verifyPassword } from '../services/password-hash';
 
 export const authRouter = Router();
 
@@ -242,7 +243,7 @@ authRouter.post('/login', loginLimiter, async (req: Request, res: Response) => {
     const user = await findUserByIdentifier(identifier);
 
     // 账号不存在也跑一次 bcrypt，避免用响应时间判断账号是否存在
-    const passwordValid = await bcrypt.compare(
+    const passwordValid = await verifyPassword(
       data.password,
       user?.passwordHash || DUMMY_PASSWORD_HASH,
     );
@@ -453,7 +454,7 @@ authRouter.post('/wps/bind', bindLimiter, async (req: Request, res: Response) =>
     }
 
     const user = await findUserByIdentifier(data.identifier);
-    const passwordValid = await bcrypt.compare(
+    const passwordValid = await verifyPassword(
       data.password,
       user?.passwordHash || DUMMY_PASSWORD_HASH,
     );
