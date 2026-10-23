@@ -8,7 +8,7 @@ import { checkExamAccess, denyAccess } from '../middleware/exam-ownership';
 import { scopeCtxOf, examWhere, assertExamAccess, assertPaperRead, questionWhere } from '../services/data-scope';
 import { emitStudentSubmit, emitStudentUpdate } from '../services/socket';
 import { preflightExamPaper } from '../services/paper-preflight';
-import { enqueuePaperGeneration } from '../jobs/paper-generation-queue';
+import { enqueuePaperGeneration, getPaperGenerationProgress } from '../jobs/paper-generation-queue';
 import { logger } from '../utils/logger';
 
 export const examRouter = Router();
@@ -690,6 +690,86 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
     // 发布本身不因队列/调度失败而失败（开考现场生成兜底），但要把真实状态告诉前端
     res.json({ ...updated, paperGeneration: { status: generationStatus } });
   } catch {
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// GET /api/exams/:id/paper-generation —— 组卷状态与质量报告
+examRouter.get('/:id/paper-generation', async (req: Request, res: Response) => {
+  try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access, '无权查看该考试的组卷状态');
+
+    const gen = await prisma.examPaperGeneration.findUnique({ where: { examId: req.params.id } });
+    const progress = await getPaperGenerationProgress(req.params.id);
+    res.json({
+      status: gen?.status ?? 'none',
+      ...progress,
+      summary: gen?.summary ?? null,
+      unfilledSlots: gen?.unfilledSlots ?? null,
+      error: gen?.error ?? null,
+      queuedAt: gen?.queuedAt ?? null,
+      startedAt: gen?.startedAt ?? null,
+      finishedAt: gen?.finishedAt ?? null,
+    });
+  } catch (err) {
+    logger.error({ err, examId: req.params.id }, '读取组卷状态失败');
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+// POST /api/exams/:id/paper-generation/retry —— 补生成 / 重新组卷
+examRouter.post('/:id/paper-generation/retry', async (req: Request, res: Response) => {
+  try {
+    const access = await checkExamAccess(req, req.params.id);
+    if (access !== 'ok') return denyAccess(res, access, '无权操作该考试的组卷');
+
+    const exam = await prisma.exam.findUnique({
+      where: { id: req.params.id },
+      select: { status: true },
+    });
+    if (!exam) return res.status(404).json({ message: '考试不存在' });
+    if (exam.status === 'ended' || exam.status === 'cancelled') {
+      return res.status(409).json({ message: '考试已结束/取消，无法重新组卷' });
+    }
+
+    // 「已开考」= 存在任何已开始的提交。这些学生手里已经拿着题目，
+    // 清空快照等于换卷——只能补缺，不能重来。
+    const started = await prisma.studentSubmission.count({
+      where: {
+        examId: req.params.id,
+        status: { in: ['in_progress', 'submitted', 'grading', 'graded'] },
+      },
+    });
+
+    if (started > 0) {
+      const enq = await enqueuePaperGeneration(req.params.id);
+      if (!enq.queued) return res.status(503).json({ message: '组卷队列不可用，请稍后重试' });
+      return res.json({ mode: 'fill-missing' });
+    }
+
+    // 重新组卷：先预检（避免清空后才发现组不出来），再清空重建
+    const preflight = await preflightExamPaper(req.params.id);
+    if (!preflight.ok) {
+      return res.status(400).json({ message: '组卷预检未通过', preflight: preflight.issues });
+    }
+    await prisma.studentExamQuestion.deleteMany({ where: { examId: req.params.id } });
+    await prisma.examPaperGeneration.deleteMany({ where: { examId: req.params.id } });
+    const studentCount = await prisma.examRoomStudent.count({ where: { assignment: { examId: req.params.id } } });
+    await prisma.examPaperGeneration.create({
+      data: { examId: req.params.id, status: 'pending', totalStudents: studentCount },
+    });
+    const enq = await enqueuePaperGeneration(req.params.id);
+    if (!enq.queued) {
+      await prisma.examPaperGeneration.update({
+        where: { examId: req.params.id },
+        data: { status: 'failed', error: '组卷队列不可用（Redis 未启动）；开考时将现场生成' },
+      });
+      return res.status(503).json({ message: '组卷队列不可用，已标记为失败；开考时将现场生成' });
+    }
+    res.json({ mode: 'regenerate' });
+  } catch (err) {
+    logger.error({ err, examId: req.params.id }, '重新触发组卷失败');
     res.status(500).json({ message: '服务器错误' });
   }
 });
