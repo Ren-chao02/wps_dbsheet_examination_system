@@ -39,7 +39,11 @@ type Level = typeof LEVELS[number];
 
 /** 最大余数法：把比例换算成道数，保证 Σtarget = n（与 spec 第七节口径一致） */
 export function computeTargetCounts(target: DifficultyTarget, n: number): Record<Level, number> {
-  const raw = LEVELS.map(l => (target[l] ?? 0) * n);
+  // 归一化：DB 里可能存在"和不为 1"的历史/手写目标（API 校验只保证新写入）。
+  // 按总和缩放后再做最大余数法，任何非零分布都能保证 Σtarget = n。
+  const sum = LEVELS.reduce((s, l) => s + Math.max(0, target[l] ?? 0), 0);
+  if (sum <= 0 || n <= 0) return { easy: 0, medium: 0, hard: 0 };
+  const raw = LEVELS.map(l => (Math.max(0, target[l] ?? 0) / sum) * n);
   const base = raw.map(Math.floor) as number[];
   let remaining = n - base.reduce((s, v) => s + v, 0);
   const order = raw
@@ -72,7 +76,10 @@ export function repairDifficultyDistribution(
   // 顺带按 slotIndex 升序固定迭代顺序，结果不依赖调用方传参顺序。
   const state = slots.map(s => ({ ...s })).sort((a, b) => a.slotIndex - b.slotIndex);
   const before = distribution(state);
-  if (!target) return { changes: [], before, after: { ...before }, targetCounts: null };
+  // 空对象 {} 与 null 等价：没有任何正比例就无法构成目标，按"未配置"直通返回，
+  // 避免以全 0 目标把整卷往 0 分档上拽。
+  const hasTarget = !!target && LEVELS.some(l => (target[l] ?? 0) > 0);
+  if (!hasTarget) return { changes: [], before, after: { ...before }, targetCounts: null };
 
   const targetCnt = computeTargetCounts(target, state.length);
   const used = new Set(state.map(s => s.currentQuestionId));

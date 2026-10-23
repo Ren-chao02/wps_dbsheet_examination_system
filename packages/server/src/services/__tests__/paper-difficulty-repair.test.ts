@@ -14,11 +14,22 @@ describe('computeTargetCounts', () => {
     expect(computeTargetCounts({ easy: 0, medium: 0, hard: 1 }, 2))
       .toEqual({ easy: 0, medium: 0, hard: 2 });
   });
+
+  it('比例和 < 1 也会归一化，Σtarget 仍等于 n', () => {
+    expect(computeTargetCounts({ easy: 0.2, medium: 0.2 }, 10))
+      .toEqual({ easy: 5, medium: 5, hard: 0 });
+  });
 });
 
 describe('repairDifficultyDistribution', () => {
   it('无目标 → 零改动', () => {
     const out = repairDifficultyDistribution([slot(0, 'a', 'easy', [cand('b', 'hard')])], null);
+    expect(out.changes).toEqual([]);
+    expect(out.targetCounts).toBeNull();
+  });
+
+  it('空目标对象 {} 视为未配置 → 零改动', () => {
+    const out = repairDifficultyDistribution([slot(0, 'a', 'easy', [cand('b', 'hard')])], {});
     expect(out.changes).toEqual([]);
     expect(out.targetCounts).toBeNull();
   });
