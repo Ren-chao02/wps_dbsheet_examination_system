@@ -8,6 +8,7 @@ import { checkExamAccess, denyAccess } from '../middleware/exam-ownership';
 import { scopeCtxOf, examWhere, assertExamAccess, assertPaperRead, questionWhere } from '../services/data-scope';
 import { emitStudentSubmit, emitStudentUpdate } from '../services/socket';
 import { preflightExamPaper } from '../services/paper-preflight';
+import { syncPaperIntoExam } from '../services/paper-exam-sync';
 import { enqueuePaperGeneration, getPaperGenerationProgress } from '../jobs/paper-generation-queue';
 import { logger } from '../utils/logger';
 
@@ -259,38 +260,9 @@ examRouter.post('/', async (req: Request, res: Response) => {
       },
     });
 
-    // 如果绑定了试卷，自动同步试卷题目到考试
+    // 如果绑定了试卷，自动同步试卷题目到考试（题位 / 总分 / 难度目标同一处拷贝）
     if (paperId) {
-      const paperQuestions = await prisma.paperQuestion.findMany({
-        where: { paperId },
-        include: { question: true },
-        orderBy: { sortOrder: 'asc' },
-      });
-
-      if (paperQuestions.length > 0) {
-        // 连题位信息一起拷过去：rule 题位（按知识点抽题）没有固定题目，
-        // 只拷 questionId 会把抽题规则丢掉，考试就退化成"缺失大半题目"
-        await prisma.examQuestion.createMany({
-          data: paperQuestions.map((pq, index) => ({
-            examId: exam.id,
-            questionId: pq.questionId,
-            sortOrder: pq.sortOrder,
-            scoreOverride: pq.score ?? null,
-            slotType: pq.slotType ?? 'fixed',
-            rule: (pq.rule ?? undefined) as any,
-            slotIndex: index,
-          })),
-        });
-
-        // 抽题题位的分值取题位分（没有固定题目可回退）；固定题位仍可用题目分兜底
-        const totalScore = paperQuestions.reduce(
-          (sum, pq) => sum + (pq.score ?? pq.question?.score ?? 0), 0,
-        );
-        await prisma.exam.update({
-          where: { id: exam.id },
-          data: { totalScore },
-        });
-      }
+      await syncPaperIntoExam({ examId: exam.id, paperId });
     }
 
     res.status(201).json(exam);
@@ -400,46 +372,12 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
       },
     });
 
-    // 如果更换了试卷绑定，重新同步 ExamQuestion 和 totalScore
-    const newPaperId = paperId ?? null;
-    if (newPaperId !== exam.paperId) {
-      // 删除旧的题目关联
-      await prisma.examQuestion.deleteMany({ where: { examId: req.params.id } });
-
-      if (newPaperId) {
-        // 同步新试卷的题目
-        const paperQuestions = await prisma.paperQuestion.findMany({
-          where: { paperId: newPaperId },
-          include: { question: true },
-          orderBy: { sortOrder: 'asc' },
-        });
-
-        if (paperQuestions.length > 0) {
-          await prisma.examQuestion.createMany({
-            data: paperQuestions.map((pq, index) => ({
-              examId: req.params.id,
-              questionId: pq.questionId,
-              sortOrder: pq.sortOrder,
-              scoreOverride: pq.score ?? null,
-              slotType: pq.slotType ?? 'fixed',
-              rule: (pq.rule ?? undefined) as any,
-              slotIndex: index,
-            })),
-          });
-        }
-
-        const totalScore = paperQuestions.reduce((sum, pq) => sum + (pq.score ?? pq.question?.score ?? 0), 0);
-        await prisma.exam.update({
-          where: { id: req.params.id },
-          data: { totalScore },
-        });
-      } else {
-        // 清空试卷后重置总分
-        await prisma.exam.update({
-          where: { id: req.params.id },
-          data: { totalScore: 100 },
-        });
-      }
+    // 如果更换了试卷绑定，重新同步 ExamQuestion / totalScore / 难度目标。
+    // 与上面的 update data 同口径：只有请求显式提供 paperId 才算换卷/解绑。
+    // 旧代码用 `paperId ?? null` 判断，导致「只改标题」被当成解绑，删光题位并把总分重置为 100。
+    const effectivePaperId = paperId !== undefined ? (paperId ?? null) : exam.paperId;
+    if (effectivePaperId !== exam.paperId) {
+      await syncPaperIntoExam({ examId: req.params.id, paperId: effectivePaperId });
     }
 
     res.json(updated);
