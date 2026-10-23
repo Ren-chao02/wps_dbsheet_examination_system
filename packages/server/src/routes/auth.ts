@@ -7,6 +7,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { AuditAction } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { config } from '../config';
+import { isLoopback } from '../utils/ip-utils';
 import { authenticate, JwtPayload, getUserPermissions } from '../middleware/auth';
 import { manualAuditLog } from '../middleware/audit-middleware';
 import { generateMathCaptcha, verifyCaptcha } from '../utils/captcha';
@@ -187,10 +188,12 @@ const cookieBase = {
 // GET /api/auth/captcha
 authRouter.get('/captcha', captchaLimiter, (req: Request, res: Response) => {
   try {
-    // 生产环境默认不返回答案；本地 E2E 用 E2E_CAPTCHA_DEBUG=true 且仅回环地址放行
+    // 生产环境默认不返回答案；本地 E2E 用 E2E_CAPTCHA_DEBUG=true 且仅回环地址放行。
+    // 必须用 socket 层地址：req.ip 受 trust proxy / X-Forwarded-For 影响，
+    // 客户端自带一个 127.0.0.1 转发头就能在公网拿到 debugAnswer（验证码形同虚设）。
     const includeDebug =
       config.nodeEnv !== 'production' ||
-      (process.env.E2E_CAPTCHA_DEBUG === 'true' && isLoopback(req.ip));
+      (process.env.E2E_CAPTCHA_DEBUG === 'true' && isLoopback(req.socket.remoteAddress));
     const { svg, captchaToken, debugAnswer } = generateMathCaptcha(includeDebug);
     res.json({
       svg,
@@ -550,11 +553,6 @@ function safeEqual(a: string, b: string): boolean {
   const left = Buffer.from(a);
   const right = Buffer.from(b);
   return left.length === right.length && crypto.timingSafeEqual(left, right);
-}
-
-function isLoopback(ip: string | undefined): boolean {
-  if (!ip) return false;
-  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 }
 
 /**
