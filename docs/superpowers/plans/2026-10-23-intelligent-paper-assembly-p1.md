@@ -2294,7 +2294,7 @@ git commit -m "feat(teacher): 组卷报告补难度分布/降级统计 + 异常�
 | 8 | 逐卷降级展示：spec 写"阅卷详情"，实现改为组卷报告的「异常卷子」弹窗 | Task 14 实现（同一信息的集中视图，更利于排查） |
 | 9 | `npm test -w packages/server` 因 `dist/**/*.test.js` 常年红 | 本次顺手修（vitest 配置排除 dist） |
 | 10 | 超时分支缺 fake-timer 单测 | 本次顺手补 |
-| 11 | 「重新组卷」与开考并发的 **ms 级残留窗口**：学生已有已提交预生成快照、其开考事务在 DELETE 执行瞬间未提交时，仍可能删该生快照 | Task 6 复审确认；根治需 `my-exams` 与 retry 共用按 examId 的 advisory lock（**上线前 follow-up**） |
+| 11 | 「重新组卷/编辑试卷」与开考并发的 ms 级窗口 | **P1c 已闭合**：start-wps、retry、`PUT /:id` 换卷、`PUT /:id/questions` 四处共用 examId 事务级 advisory lock（`$executeRaw`；真实库验证阻塞 55P03）。Worker 的生成/修复写不入锁，靠 created>0 + submissions.none 守卫（见 #24/#13） |
 | 12 | 迁移 `20261023082456_paper_difficulty_meta` 字典序早于已应用的 `20261023152420_paper_generation`（历史迁移用本地时间，本任务误用 UTC） | **控制器显式豁免**：独立表无依赖、开发库均已应用；后续迁移必须与 `ls prisma/migrations` 最大值比较 |
 | 13 | 修复只作用于**本次新生成**的卷（`created > 0`）；已有快照（含已开考）不修 | Task 13 审查修复；补生成时历史卷不会被修复（如需修复，另开「修复存量未开考卷」任务） |
 | 14 | 修复侧 `slot.slotIndex || i` 的 `i` 只数 rule 题位，与生成侧（数全部题位）在「历史脏 slotIndex=0 + fixed 混排」时可能错位 | 新写入路径始终写唯一 slotIndex；脏数据才触发，已注释说明（P1c 可改为按全部题位遍历取同一 i） |
@@ -2303,12 +2303,12 @@ git commit -m "feat(teacher): 组卷报告补难度分布/降级统计 + 异常�
 | 17 | `fill-missing` 的 upsert 不清 startedAt/finishedAt/summary（展示残留） | 纯展示；Worker 完成时覆盖 |
 | 18 | 修复器对 `NaN`/非数值目标无防御（`sum <= 0` 不拦 NaN），且 `key in dist` 有原型链风险 | 目标写入路径由 Task 9 校验；Task 9 落地后风险闭合，否则 P1c 补 `Number.isFinite` + Set 判定 |
 | 19 | Task 9（试卷 API/编辑器难度目标）**未完成**：并行会话未提交改动占用 `routes/papers.ts` / `PaperEditor.tsx` | 待并行会话提交后补做；在此之前用户无法在 UI 配置难度目标（Task 10/13 的链路已就绪） |
-| 20 | `PUT /:id` 换卷的 `update → syncPaperIntoExam → invalidate → reschedule` 非事务：若失效/重排抛错，接口 500 但卷已换；重试同一请求因 `effectivePaperId` 已相等不会再次触发 | 终审修复引入的边界；P1c 包事务（或先 sync 后 update，失败整体回滚） |
+| 20 | `PUT /:id` 换卷的 paperId 写入与题位重建/快照失效非事务 | **P1c 已闭合**：`lockExam + tx.exam.update + syncPaperIntoExam(tx) + invalidateUnstartedSnapshots(tx)` 同一事务；reschedule 在事务外（失败 500 时状态已一致，可重试/开考兜底） |
 | 21 | 批次激活级联发布**不跑预检阻断**，只逐场补预生成调度 | 终审裁定「先补调度、不阻断整批」；是否阻断请产品决定（建议 P1c 用 `paper-generation-scheduler` 统一三入口） |
-| 22 | `POST /publish` 未收敛到共享 `reschedulePaperGeneration`（行为一致、逻辑重复三处：publish/retry/lifecycle） | P1c 抽 `paper-generation-scheduler`（附二 #6 的第三个理由） |
-| 23 | 名单去重只在 job 的 `listStudents` 与进度查询；publish/retry 的 `totalStudents` 仍按 `examRoomStudent` 行数（同一学生分到多考场时略高） | 同一学生跨考场属边缘数据；P1c 统一用 `countDistinctStudents` |
+| 22 | 组卷调度逻辑重复（publish/retry/lifecycle/batch） | **P1c 已收敛**：`paper-generation-scheduler` 统一 publish/lifecycle/batch；retry 因「状态行写入必须在锁事务内」保留独立写入（`fill` 分支仍手写同形 update）。#6 的调度器抽取已完成核心部分 |
+| 23 | 名单去重：job 的 `listStudents`、进度查询、retry 已用去重计数；**publish 仍按 `examRoomStudent` 行数**（同一学生分到多考场时略高） | 边缘数据；P1c 后续把 publish 也改用 `countDistinctStudents` |
 | 24 | 预生成 job **运行中**改卷时，`reschedule` 的 `remove` 对 active job 失败被吞、`add` 同 jobId 被静默去重仍返回 `queued:true`：已失效的学生靠开考现场生成（内容正确），但存在极窄窗口某生保留旧快照 | P1c 用带尝试序号的 jobId 或先查 `queue.getJob` 状态 |
-| 25 | 批次激活逐场 `reschedule` 串行；Redis 不可用时每场吃满 3s 入队超时，N 场 ≈ N×3s，可能顶网关超时（状态已正确落库） | P1c 改 `Promise.allSettled` 或先探一次队列可用性 |
+| 25 | 批次激活逐场 `reschedule` 串行 | **P1c 已闭合**：改 `Promise.allSettled` 并行（单场失败只 warn，不影响批次响应）；极端多考试时并发上界=就绪考试数 |
 | 26 | `total=created` 后，并发下 `createMany` 全跳过时该生被计为 `missing`（卷子其实由开考路径插入） | 纯展示、极罕见；P1c 可在汇总里区分「并发已存在」 |
 
 ## 附：任务依赖图
