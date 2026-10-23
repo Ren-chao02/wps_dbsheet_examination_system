@@ -40,7 +40,8 @@ beforeEach(() => {
   mockPrisma.studentExamQuestion.count.mockResolvedValue(0);
   // 默认无人抽过题（各候选题使用次数均为 0 → 走种子哈希选择）
   mockPrisma.studentExamQuestion.groupBy.mockResolvedValue([]);
-  mockPrisma.studentExamQuestion.createMany.mockResolvedValue({ count: 1 });
+  // created 取 createMany 的实际插入数：默认按 data.length 返回，与真实 Prisma 一致
+  mockPrisma.studentExamQuestion.createMany.mockImplementation(async ({ data }: any) => ({ count: data.length }));
   // 默认「考试未绑试卷」→ 不加候选池条件，既有用例按收口前行为跑
   mockPrisma.exam.findUnique.mockResolvedValue(null);
   mockPrisma.paper.findUnique.mockResolvedValue(null);
