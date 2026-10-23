@@ -726,7 +726,8 @@ export async function enqueuePaperGeneration(examId: string): Promise<{ queued: 
     return { queued: true };
   } catch (err) {
     // 队列不可用/超时都按"未入队"处理：调用方标 failed，开考现场生成兜底
-    logger.warn('组卷预生成入队失败', { examId, err });
+    // pino v10：对象在前、消息在后；反过来会把 err 静默丢弃（实测）
+    logger.warn({ examId, err }, '组卷预生成入队失败');
     return { queued: false };
   }
 }
@@ -776,7 +777,7 @@ export async function enqueuePaperGeneration(examId: string): Promise<{ queued: 
       }
     } catch (err) {
       generationStatus = 'failed';
-      logger.error('组卷预生成调度失败', err);
+      logger.error({ err }, '组卷预生成调度失败');
       // 尽力标记失败（upsert 成功时才有行；连行都没建时，开考兜底仍然成立）
       await prisma.examPaperGeneration
         .updateMany({ where: { examId: req.params.id }, data: { status: 'failed', error: '组卷调度失败；开考时将现场生成' } })
@@ -786,12 +787,12 @@ export async function enqueuePaperGeneration(examId: string): Promise<{ queued: 
     res.json({ ...updated, paperGeneration: { status: generationStatus } });
 ```
 
-并在文件顶部补 import：`import { preflightExamPaper } from '../services/paper-preflight';`、`import { enqueuePaperGeneration } from '../jobs/paper-generation-queue';`、`import { Prisma } from '@prisma/client';`（若已有 Prisma import 则复用）。
+并在文件顶部补 import：`import { preflightExamPaper } from '../services/paper-preflight';`、`import { enqueuePaperGeneration } from '../jobs/paper-generation-queue';`、`import { logger } from '../utils/logger';`、`import { Prisma } from '@prisma/client';`（若已有 Prisma import 则复用）。
 
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `cd packages/server && npx vitest run src/routes/__tests__/exam-publish-preflight.test.ts`
-Expected: PASS 3/3。
+Expected: PASS 4/4（预检阻断 / 发布成功+入队 / 队列不可用标 failed / 入队异常仍 200）；另跑队列 3 例（`src/jobs/__tests__/paper-generation-queue.test.ts`）。
 
 Run: `cd packages/server && npx tsc --noEmit -p tsconfig.json`
 Expected: 0 error（若 `studentIds` 在该作用域不可用，按 publish handler 现有变量名调整）。
@@ -808,6 +809,8 @@ git commit -m "feat(exams): 发布接入组卷预检（阻断）+ 预生成入�
 ---
 
 ### Task 5: 预生成 worker —— 分页、并发、取消、汇总
+
+> ⚠️ **契约（Task 4 审查补充）**：入队超时后，`q.add` 仍可能迟到落库；此时状态行已被标成 `failed`。Worker 必须**无条件按 jobId 处理**并覆盖行状态（不得因"行是 failed"就跳过）——生成本身幂等（`generateStudentPaper` 已有快照即早退），重复执行安全。
 
 **Files:**
 - Modify: `packages/server/src/jobs/paper-generation-queue.ts`
@@ -2276,6 +2279,21 @@ git commit -m "feat(teacher): 组卷报告补难度分布/降级统计 + 异常�
 ```
 
 ---
+
+## 附二：已知边界与后续打磨（各任务审查累积，逐条放这里避免丢）
+
+| # | 项 | 状态 |
+| --- | --- | --- |
+| 1 | 预检不模拟跨题位占用（存在性上界） | 已写入 spec 风险表；发布即精确需按生成同序模拟分配（P1c 可选） |
+| 2 | `jobId` 去重导致 failed 后重发无新 job | **Task 6 验收集**（入队前 `queue.remove` 或唯一后缀 + 测试） |
+| 3 | 发布失败的 `preflight[]` 前端渲染 | **Task 7 验收** |
+| 4 | 超时后迟到入队与状态行 failed 的冲突 | **Task 5 契约**：worker 无条件处理并覆盖状态 |
+| 5 | 预检/生成两套「池为空」文案 | 后续统一 |
+| 6 | publish handler 抽出 `paper-generation-scheduler` | 后续打磨（当前约 90 行，可读） |
+| 7 | `grading-queue.ts` 的同类入队挂起（无超时） | 既有问题，建议另开小任务，复用 Task 4 的超时模板 |
+| 8 | 逐卷降级展示：spec 写"阅卷详情"，实现改为组卷报告的「异常卷子」弹窗 | Task 14 实现（同一信息的集中视图，更利于排查） |
+| 9 | `npm test -w packages/server` 因 `dist/**/*.test.js` 常年红 | 本次顺手修（vitest 配置排除 dist） |
+| 10 | 超时分支缺 fake-timer 单测 | 本次顺手补 |
 
 ## 附：任务依赖图
 
