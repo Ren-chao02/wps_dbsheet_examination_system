@@ -146,12 +146,21 @@ export async function generateStudentPaper(
       continue;
     }
 
+    // pickMeta 落库「这道题是怎么选出来的」：命中哪一档、候选池多大、题位要求与
+    // 实际题的结构签名。修复器与教师端「逐卷降级」报告都只从这里读——不落库就只能
+    // 事后按当前的题库重算，而题库会变，重算结果对不上当时的选择。
     rows.push({
       examId, studentId, slotIndex,
       questionId: picked.id,
       score: slotScore,
       sortOrder: slot.sortOrder,
       source: 'rule',
+      pickMeta: {
+        level: picked.level,
+        candidates: picked.candidates,
+        wantedSignature: picked.wantedSignature,
+        actualSignature: picked.actualSignature,
+      },
     });
     usedQuestionIds.add(picked.id);
   }
@@ -190,6 +199,19 @@ export interface SlotCandidate {
   difficulty: string | null;
   schemaRefs: unknown;
   answerRules: unknown;
+}
+
+/** pickQuestionForSlot 的返回：选中的题 + 这次选择的来龙去脉（落库到 pickMeta） */
+export interface SlotPick {
+  id: string;
+  /** 实际命中的放宽档位 */
+  level: CandidateLevel;
+  /** 命中档位下（过滤后）的候选池大小 */
+  candidates: number;
+  /** 题位要求的结构签名；空串表示题位未声明 schemaRefs */
+  wantedSignature: string;
+  /** 实际选中题的 schemaRefs 签名 */
+  actualSignature: string;
 }
 
 /**
@@ -258,8 +280,11 @@ async function pickQuestionForSlot(params: {
   poolWhere?: Record<string, any>;
   seed: string;
   tx: Prisma.TransactionClient;
-}) {
+}): Promise<SlotPick | null> {
   const { examId, slotIndex, rule, slotScore, usedQuestionIds, poolWhere, seed, tx } = params;
+
+  // 题位要求的结构签名（空签名 = 题位没声明 schemaRefs，strict 也不比较结构）
+  const wanted = rule.schemaRefs ? schemaRefsSignature(rule.schemaRefs) : '';
 
   const levels: CandidateLevel[] = ['strict', 'relax-schemaRefs', 'relax-difficulty'];
   for (const level of levels) {
@@ -278,7 +303,16 @@ async function pickQuestionForSlot(params: {
       const usedCount = new Map(usage.map(u => [u.questionId, u._count._all]));
       const minUsed = Math.min(...pool.map(c => usedCount.get(c.id) ?? 0));
       const leastUsed = pool.filter(c => (usedCount.get(c.id) ?? 0) === minUsed);
-      return leastUsed[seededPickIndex(seed, leastUsed.length)];
+      const chosen = leastUsed[seededPickIndex(seed, leastUsed.length)];
+      // 命中档位与池大小随选择一起返回：调用方要写入 pickMeta，不能事后重算
+      // （重算会读当前题库，得到的档位/池大小已不是当时那个）
+      return {
+        id: chosen.id,
+        level,
+        candidates: pool.length,
+        wantedSignature: wanted,
+        actualSignature: schemaRefsSignature(chosen.schemaRefs),
+      };
     }
   }
   return null;
