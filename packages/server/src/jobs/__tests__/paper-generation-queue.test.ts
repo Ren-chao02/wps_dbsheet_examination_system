@@ -67,6 +67,7 @@ describe('enqueuePaperGeneration 降级契约', () => {
 
   it('正常入队 → queued:true，且带同考试去重的 jobId', async () => {
     const { enqueuePaperGeneration } = await loadQueue('redis://127.0.0.1:6379');
+    mockQueueRemove.mockResolvedValue(1);   // 1 = 旧 job 已移除，可复用原 jobId
     mockQueueAdd.mockResolvedValue({ id: 'job-1' });
     await expect(enqueuePaperGeneration('e-1')).resolves.toEqual({ queued: true });
     expect(mockQueueAdd).toHaveBeenCalledWith(
@@ -86,13 +87,23 @@ describe('enqueuePaperGeneration 降级契约', () => {
       .toBeLessThan(mockQueueAdd.mock.invocationCallOrder[0]);
   });
 
-  it('旧 job 正在运行（remove 抛错）→ 用带时间戳的后继 jobId（本轮重建不丢）', async () => {
+  it('旧 job 正在运行（remove 返回 0）→ 用带 UUID 的后继 jobId', async () => {
     const { enqueuePaperGeneration } = await loadQueue('redis://127.0.0.1:6379');
-    mockQueueRemove.mockRejectedValue(new Error('Job is locked'));
+    // BullMQ 5.x 真实契约：removeJob 发现 job 被 locked 时返回 0，不抛错
+    mockQueueRemove.mockResolvedValue(0);
     mockQueueAdd.mockResolvedValue({ id: 'job-3' });
     await expect(enqueuePaperGeneration('e-1')).resolves.toEqual({ queued: true });
     const jobId = mockQueueAdd.mock.calls[0][2].jobId as string;
-    expect(jobId).toMatch(/^paper-generation-e-1-\d+$/);
+    expect(jobId).toMatch(/^paper-generation-e-1-[0-9a-f-]{36}$/);
+  });
+
+  it('remove 抛错（Redis/客户端异常）→ 同样用后继 jobId，避免撞上残留 job', async () => {
+    const { enqueuePaperGeneration } = await loadQueue('redis://127.0.0.1:6379');
+    mockQueueRemove.mockRejectedValue(new Error('redis down'));
+    mockQueueAdd.mockResolvedValue({ id: 'job-4' });
+    await expect(enqueuePaperGeneration('e-1')).resolves.toEqual({ queued: true });
+    const jobId = mockQueueAdd.mock.calls[0][2].jobId as string;
+    expect(jobId.startsWith('paper-generation-e-1-')).toBe(true);
   });
 
   it('remove 未 settle 前不会 add（防止 fire-and-forget 去重竞态）', async () => {
