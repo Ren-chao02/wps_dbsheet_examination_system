@@ -313,6 +313,65 @@ describe('PUT /api/exams/:id 更换试卷的范围校验', () => {
   });
 });
 
+describe('PUT /api/exams/:id 其余字段的 lost-update 防护', () => {
+  beforeEach(() => {
+    // 考试存在且属于 t-1（所有权检查通过），草稿状态可编辑
+    mockPrisma.exam.findUnique.mockResolvedValue(DRAFT_EXAM);
+  });
+
+  it('普通编辑（不含起止时间/批次）→ update data 不含 startTime/endTime/batchId', async () => {
+    const res = await request(makeApp())
+      .put('/api/exams/exam-1')
+      .set('x-test-role', 'teacher')
+      .set('x-test-user', 't-1')
+      .send({ title: '只改标题' });
+
+    expect(res.status).toBe(200);
+    const updateData = mockPrisma.exam.update.mock.calls[0][0].data;
+    // 预读值回写会与并发修改交错成 lost-update（与 paperId 同口径）：
+    // 表单里回显的是加载时的旧值，提交时原样带回就会覆盖别人刚改的营业时间/批次
+    expect(updateData).not.toHaveProperty('startTime');
+    expect(updateData).not.toHaveProperty('endTime');
+    expect(updateData).not.toHaveProperty('batchId');
+  });
+
+  it('显式提供 startTime/endTime → 写成 Date 而不是原始字符串', async () => {
+    const res = await request(makeApp())
+      .put('/api/exams/exam-1')
+      .set('x-test-role', 'teacher')
+      .set('x-test-user', 't-1')
+      .send({ title: '改时间', ...PERIOD });
+
+    expect(res.status).toBe(200);
+    const updateData = mockPrisma.exam.update.mock.calls[0][0].data;
+    // zod 解析后 rest 里是 ISO 字符串，直接 spread 给 Prisma 会写不进去
+    expect(updateData.startTime).toBeInstanceOf(Date);
+    expect(updateData.endTime).toBeInstanceOf(Date);
+    expect(updateData.startTime.toISOString()).toBe(PERIOD.startTime);
+    expect(updateData.endTime.toISOString()).toBe(PERIOD.endTime);
+  });
+
+  it('显式提供 batchId → 写入该批次（未提供时不回写预读值）', async () => {
+    const BATCH = '66666666-6666-4666-8666-666666666666';
+    // 随到随考批次不校验起止时间与统一时长，focus 在 batchId 落库
+    mockPrisma.examBatch.findUnique.mockResolvedValue({
+      startTime: null,
+      endTime: null,
+      examMode: 'flexible',
+      examDuration: 60,
+    });
+
+    const res = await request(makeApp())
+      .put('/api/exams/exam-1')
+      .set('x-test-role', 'teacher')
+      .set('x-test-user', 't-1')
+      .send({ title: '改批次', batchId: BATCH });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.exam.update.mock.calls[0][0].data.batchId).toBe(BATCH);
+  });
+});
+
 describe('PUT /api/exams/:id/questions 挂题的范围校验', () => {
   beforeEach(() => {
     mockPrisma.exam.findUnique.mockResolvedValue({

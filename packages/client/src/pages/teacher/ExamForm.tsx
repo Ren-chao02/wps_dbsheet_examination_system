@@ -6,6 +6,7 @@ import dayjs from 'dayjs';
 import api from '../../services/api';
 import type { Paper, PaperQuestion } from '../../types';
 import { showPreflightError } from '../../components/exam/PreflightIssueModal';
+import { buildExamPayload } from '../../utils/exam-form-payload';
 
 const { TextArea } = Input;
 
@@ -87,20 +88,9 @@ export function ExamForm() {
   const onFinish = async (values: any) => {
     setSaving(true);
     try {
-      const payload = {
-        ...values,
-        paperId: values.paperId || null,
-        durationMinutes: values.durationMinutes ?? null,
-        passScore: values.passScore ?? null,
-        startTime: values.startTime ? values.startTime.toISOString() : null,
-        endTime: values.endTime ? values.endTime.toISOString() : null,
-        settings: {
-          ...(typeof existingExam?.settings === 'object' && existingExam?.settings !== null ? existingExam.settings : {}),
-          shuffleQuestions: values.shuffleQuestions === true,
-          earliestSubmitMinutes: values.earliestSubmitMinutes || 0,
-        },
-      };
-      delete payload.shuffleQuestions;
+      // 编辑且 paperId 未变化时不回传该字段：表单回显的是加载时的快照，
+      // 原样回传会覆盖并发换上的新卷（详见 utils/exam-form-payload.ts）
+      const payload = buildExamPayload(values, existingExam, isEdit);
       if (isEdit) {
         await api.put(`/exams/${id}`, payload);
         message.success('更新成功');

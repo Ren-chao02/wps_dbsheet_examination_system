@@ -367,15 +367,12 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
     // 换卷判定与下面的 update data 同口径：只有请求显式提供 paperId 才算换卷/解绑。
     // 旧代码用 `paperId ?? null` 判断，导致「只改标题」被当成解绑，删光题位并把总分重置为 100。
     const effectivePaperId = paperId !== undefined ? (paperId ?? null) : exam.paperId;
-    const updateData: any = {
-      ...rest,
-      // 仅在请求显式提供字段时才更新，否则保留原有值（避免编辑时误清空）
-      startTime: data.startTime !== undefined ? (data.startTime ? new Date(data.startTime) : null) : exam.startTime,
-      endTime: data.endTime !== undefined ? (data.endTime ? new Date(data.endTime) : null) : exam.endTime,
-      batchId: batchId !== undefined ? (batchId ?? null) : exam.batchId,
-    };
-    // paperId 只在显式提供时写入：把预读值一并写回会让普通编辑与并发换卷交错成
-    // lost-update（普通编辑带着旧 paperId 覆盖刚换上的新卷）。换卷判定仍看 effectivePaperId。
+    const updateData: any = { ...rest };
+    // 只有请求显式提供字段才写入：表单/接口回显旧值会覆盖并发修改（与 paperId 同口径）。
+    // 把预读值回写看似"保留原值"，实则是用加载时的旧快照覆盖别人刚改的起止时间/批次。
+    if (data.startTime !== undefined) updateData.startTime = data.startTime ? new Date(data.startTime) : null;
+    if (data.endTime !== undefined) updateData.endTime = data.endTime ? new Date(data.endTime) : null;
+    if (batchId !== undefined) updateData.batchId = batchId ?? null;
     if (paperId !== undefined) updateData.paperId = paperId ?? null;
 
     let updated;
