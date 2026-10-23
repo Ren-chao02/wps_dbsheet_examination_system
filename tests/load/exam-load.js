@@ -124,8 +124,19 @@ function fetchCaptcha() {
   if (res.status !== 200) return null;
   const body = res.json();
   if (!body || !body.captchaToken) return null;
-  const payload = JSON.parse(encoding.b64decode(body.captchaToken.split('.')[1], 'rawurl', 's'));
-  return { token: body.captchaToken, answer: String(payload.answer) };
+
+  // 新验证码格式：token 是服务端存储的 UUID，答案只通过 debugAnswer 下发
+  // （生产 + E2E_CAPTCHA_DEBUG=true + 回环 socket 才会返回）。
+  // 旧格式把答案放在 JWT payload 里，保留 fallback 兼容旧环境。
+  let answer = body.debugAnswer;
+  if (answer == null && body.captchaToken.indexOf('.') > 0) {
+    try {
+      const payload = JSON.parse(encoding.b64decode(body.captchaToken.split('.')[1], 'rawurl', 's'));
+      answer = payload.answer;
+    } catch (e) { answer = null; }
+  }
+  if (answer == null) return null;
+  return { token: body.captchaToken, answer: String(answer) };
 }
 
 function login(username) {
