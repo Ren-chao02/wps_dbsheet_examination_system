@@ -495,6 +495,165 @@ git commit -m "refactor(exams): 组卷调度收敛为 paper-generation-scheduler
 
 ---
 
+### Task 4: 运行中 job 的后继调度、publish 去重计数、scheduler 简化
+
+**Files:**
+- Modify: `packages/server/src/jobs/paper-generation-queue.ts`
+- Modify: `packages/server/src/routes/exams.ts`（publish 的 studentIds 去重）
+- Modify: `packages/server/src/services/paper-generation-scheduler.ts`（删除未使用的 `fill` 分支）
+- Test: `packages/server/src/jobs/__tests__/paper-generation-queue.test.ts`
+- Test: `packages/server/src/routes/__tests__/exam-publish-preflight.test.ts`
+- Test: `packages/server/src/services/__tests__/paper-generation-scheduler.test.ts`
+
+- [ ] **Step 1: 队列测试（先失败）**
+
+在 `paper-generation-queue.test.ts` 把「旧 job 正在运行（remove 抛错）」用例加强为：
+
+```ts
+  it('旧 job 正在运行（remove 抛错）→ 用带时间戳的后继 jobId（本轮重建不丢）', async () => {
+    const { enqueuePaperGeneration } = await loadQueue('redis://127.0.0.1:6379');
+    mockQueueRemove.mockRejectedValue(new Error('Job is locked'));
+    mockQueueAdd.mockResolvedValue({ id: 'job-3' });
+    await expect(enqueuePaperGeneration('e-1')).resolves.toEqual({ queued: true });
+    const jobId = mockQueueAdd.mock.calls[0][2].jobId as string;
+    expect(jobId).toMatch(/^paper-generation-e-1-\d+$/);
+  });
+```
+
+- [ ] **Step 2: 实现后继 jobId**
+
+`enqueuePaperGeneration` 内：
+
+```ts
+    const baseJobId = `paper-generation-${examId}`;
+    let jobId = baseJobId;
+    await Promise.race([
+      (async () => {
+        // 旧 job 在 completed/failed 集合里 → remove 后复用同一 jobId；
+        // 任务正在运行 → remove 抛 locked，此时若仍用同 jobId，add 会被 BullMQ
+        // 静默去重，改卷后的重新生成永远不会发生。改用带时间戳的后继 jobId，
+        // 生成本身幂等（已有快照早退），两轮任务先后/并发都安全。
+        try { await q.remove(baseJobId); } catch { jobId = `${baseJobId}-${Date.now()}`; }
+        await q.add('generate', { examId }, { jobId, attempts: 3, backoff: { type: 'exponential', delay: 5000 }, removeOnComplete: 20, removeOnFail: 20 });
+      })(),
+      ...
+```
+
+- [ ] **Step 3: publish 名单去重**
+
+`routes/exams.ts` publish：
+
+```ts
+    const studentIds = [...new Set((await prisma.examRoomStudent.findMany({
+      where: { assignment: { examId: req.params.id } },
+      select: { studentId: true },
+    })).map(s => s.studentId))];
+```
+
+测试：在 `exam-publish-preflight.test.ts` 加一条「同一学生分到两个考场 → totalStudents 去重」：`examRoomStudentFindMany` 返回 `[{studentId:'s-1'},{studentId:'s-1'},{studentId:'s-2'}]`，断言 `generationUpsert` 的 `update.totalStudents === 2`。
+
+- [ ] **Step 4: scheduler 删除 `fill` 分支**
+
+`scheduler` 只保留「重置」语义（`fill` 在生产代码无调用方）：
+
+```ts
+export interface SchedulePaperGenerationParams {
+  examId: string;
+  totalStudents: number;
+}
+
+export async function schedulePaperGeneration(
+  params: SchedulePaperGenerationParams,
+): Promise<'pending' | 'failed'> {
+  const { examId, totalStudents } = params;
+  await prisma.examPaperGeneration.upsert({ ...原来的 reset 分支... });
+  ...
+}
+```
+
+删掉 scheduler 测试里的 `fill` 用例；publish / lifecycle 调用去掉 `mode: 'reset'`。
+
+- [ ] **Step 5: 验证 + 提交**
+
+```bash
+cd packages/server && npx vitest run src/jobs/__tests__/paper-generation-queue.test.ts src/routes/__tests__/exam-publish-preflight.test.ts src/services/__tests__/paper-generation-scheduler.test.ts src/routes/__tests__/batch-activation-paper-generation.test.ts
+cd packages/server && npx tsc --noEmit -p tsconfig.json
+cd packages/server && npx eslint src/jobs/paper-generation-queue.ts src/routes/exams.ts src/services/paper-generation-scheduler.ts src/jobs/__tests__/paper-generation-queue.test.ts src/services/__tests__/paper-generation-scheduler.test.ts src/routes/__tests__/exam-publish-preflight.test.ts
+```
+
+```bash
+git commit -m "fix(jobs): 运行中 job 用后继 jobId + publish 名单去重 + scheduler 去 fill 死分支" -- \
+  packages/server/src/jobs/paper-generation-queue.ts \
+  packages/server/src/routes/exams.ts \
+  packages/server/src/services/paper-generation-scheduler.ts \
+  packages/server/src/jobs/__tests__/paper-generation-queue.test.ts \
+  packages/server/src/routes/__tests__/exam-publish-preflight.test.ts \
+  packages/server/src/services/__tests__/paper-generation-scheduler.test.ts
+```
+
+---
+
+### Task 5: `PUT /:id` 的 paperId lost-update 与响应回填
+
+**Files:**
+- Modify: `packages/server/src/routes/exams.ts`
+- Test: `packages/server/src/routes/__tests__/exam-binding-scope.test.ts`
+
+- [ ] **Step 1: 只在显式提供 paperId 时写入**
+
+`updateData` 先不含 `paperId`，仅当 `paperId !== undefined` 时加上：
+
+```ts
+    const updateData: any = {
+      ...rest,
+      startTime: data.startTime !== undefined ? (data.startTime ? new Date(data.startTime) : null) : exam.startTime,
+      endTime: data.endTime !== undefined ? (data.endTime ? new Date(data.endTime) : null) : exam.endTime,
+      batchId: batchId !== undefined ? (batchId ?? null) : exam.batchId,
+    };
+    if (paperId !== undefined) updateData.paperId = paperId ?? null;
+```
+
+`effectivePaperId` 与换卷判定保持现状。这样普通编辑（不带 paperId）不会把预读时的旧 paperId 写回，消除并发换卷的 lost-update。
+
+- [ ] **Step 2: 换卷事务返回 sync 之后的行**
+
+换卷事务里 `tx.exam.update` 之后、`syncPaperIntoExam`/`invalidate` 之后，返回重新读取的行：
+
+```ts
+        const row = await tx.exam.update({ where: { id: req.params.id }, data: updateData });
+        await syncPaperIntoExam({ examId: req.params.id, paperId: effectivePaperId, tx });
+        await invalidateUnstartedSnapshots(req.params.id, tx);
+        return (await tx.exam.findUnique({ where: { id: req.params.id } })) ?? row;
+```
+
+（响应里的 totalScore/difficultyTarget 不再是 sync 前值。）
+
+- [ ] **Step 3: 测试**
+
+`exam-binding-scope.test.ts` 的「普通编辑（不含 paperId）」用例补：
+
+```ts
+    expect(mockPrisma.exam.update.mock.calls[0][0].data).not.toHaveProperty('paperId');
+```
+
+「换卷」相关用例补 `expect(data.paperId).toBe(PAPER_OUT)`（按现有夹具调整）。
+
+- [ ] **Step 4: 验证 + 提交**
+
+```bash
+cd packages/server && npx vitest run src/routes/__tests__/exam-binding-scope.test.ts src/routes/__tests__/exam-paper-generation-invalidation.test.ts src/routes/__tests__/exam-publish-preflight.test.ts
+cd packages/server && npx tsc --noEmit -p tsconfig.json
+cd packages/server && npx eslint src/routes/exams.ts src/routes/__tests__/exam-binding-scope.test.ts
+```
+
+```bash
+git commit -m "fix(exams): 普通编辑不回写旧 paperId + 换卷响应回填 sync 后的行" -- \
+  packages/server/src/routes/exams.ts \
+  packages/server/src/routes/__tests__/exam-binding-scope.test.ts
+```
+
+---
+
 ### Task 3（控制器）：文档与终验
 
 - 更新计划附二：`#11`（advisory lock 关闭）、`#22`（publish/生命周期/批次已收敛；retry 因锁内事务保留独立写入）、`#25`（批次并行）。
