@@ -34,10 +34,11 @@ describe('listSlotCandidates', () => {
       q('e'),
     ]);
     const out = await listSlotCandidates({
-      rule: rule({ schemaRefs: { tables: ['员工信息表'], fields: [] } }),
+      rule: rule({ difficulty: 'easy', schemaRefs: { tables: ['员工信息表'], fields: [] } }),
       slotScore: 10, level: 'strict', usedQuestionIds: new Set(['e']), tx,
     });
     expect(out.map(c => c.id)).toEqual(['a']);
+    expect(findMany.mock.calls[0][0].where.difficulty).toBe('easy');
   });
 
   it('relax-schemaRefs：同样带难度条件，但不再比较结构签名', async () => {
@@ -45,10 +46,11 @@ describe('listSlotCandidates', () => {
       q('a'), q('c', { schemaRefs: { tables: ['别的表'], fields: [] } }),
     ]);
     const out = await listSlotCandidates({
-      rule: rule({ schemaRefs: { tables: ['员工信息表'], fields: [] } }),
+      rule: rule({ difficulty: 'easy', schemaRefs: { tables: ['员工信息表'], fields: [] } }),
       slotScore: 10, level: 'relax-schemaRefs', tx,
     });
     expect(out.map(c => c.id)).toEqual(['a', 'c']);
+    expect(findMany.mock.calls[0][0].where.difficulty).toBe('easy');
   });
 
   it('relax-difficulty：去掉难度条件，其余过滤保留', async () => {
@@ -57,6 +59,7 @@ describe('listSlotCandidates', () => {
       rule: rule({ difficulty: 'easy' }), slotScore: 10, level: 'relax-difficulty', tx,
     });
     expect(out.map(c => c.id)).toEqual(['a']);
+    expect(findMany.mock.calls[0][0].where.difficulty).toBeUndefined();
   });
 
   it('三档都排除引擎判不了的题', async () => {

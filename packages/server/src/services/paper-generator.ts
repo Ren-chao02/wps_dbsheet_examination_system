@@ -200,6 +200,8 @@ export interface SlotCandidate {
  *   strict            —— 带难度条件 + 结构签名必须一致
  *   relax-schemaRefs  —— 带难度条件，结构签名不再比较
  *   relax-difficulty  —— 去掉难度条件，其余（分值/已用/可判分/池范围）仍生效
+ *
+ * tx 缺省用 prisma：若调用方已在事务内，**必须显式传入 tx**，否则会绕过事务读库。
  */
 export async function listSlotCandidates(params: {
   rule: SlotRule;
@@ -287,6 +289,9 @@ async function pickQuestionForSlot(params: {
  *
  * 候选题只有 1 道时必须显式提示 —— 否则"每生不同"会静默退化成"全员同题"，
  * 而教师毫不知情（这是本功能最容易无声失效的地方）。
+ *
+ * ⚠️ 抽题/预检要的"可用候选数"请用 `listSlotCandidates`：本函数的 candidateCount
+ * 按**当前请求者**的可读池统计，且自带一套过滤；两者口径不同，别混用。
  */
 export async function previewSlotCandidates(
   rule: SlotRule,
