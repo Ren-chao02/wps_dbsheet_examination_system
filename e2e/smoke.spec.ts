@@ -12,12 +12,14 @@ test.describe('冒烟 · 无需账号', () => {
 
     await expect(page).toHaveURL(/\/login/, { timeout: 20_000 });
 
-    // 三个输入框缺一不可：用户名、密码、验证码。
+    // 三个输入框缺一不可：学号/用户名、密码、验证码。
     // 少任何一个都意味着登录链路断了 —— 这是最该在 CI 里守住的东西。
-    await expect(page.getByPlaceholder('用户名')).toBeVisible();
+    await expect(page.getByPlaceholder('学号 / 用户名')).toBeVisible();
     await expect(page.getByPlaceholder('密码')).toBeVisible();
     await expect(page.getByPlaceholder('验证码')).toBeVisible();
-    await expect(page.getByRole('button', { name: /登\s*录/ })).toBeVisible();
+    await expect(page.locator('button[type="submit"]')).toBeVisible();
+    // 学校品牌区是这次改版的标志
+    await expect(page.getByText('陕西师范大学').first()).toBeVisible();
   });
 
   test('验证码图片能取回来（后端可达）', async ({ page }) => {

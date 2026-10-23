@@ -14,6 +14,10 @@ uploads/
 .trae/
 mockups/
 test_screenshots/
+# 数据库备份（含学生/考试数据，绝不入库）
+backups/
+# 视觉头脑风暴（brainstorming skill）的本地 mockup 与状态，不入库
+.superpowers/
 
 # 说明：docs/ 不再整体忽略 —— 里面的 API 参考、知识点清单、设计稿与实施计划
 # 是项目的一部分，交付/迁移/交接时应当随代码一起走（此前被整体忽略，
@@ -35,6 +39,7 @@ packages/server/scripts/*
 !packages/server/scripts/probe-practice-reset.ts
 !packages/server/scripts/probe-v7-delete.ts
 !packages/server/scripts/probe-view-data.ts
+!packages/server/scripts/probe-wps-sso.ts
 !packages/server/scripts/wps-browser.ts
 
 demo-wps-embed.html
@@ -63,6 +68,7 @@ packages/client/vite.config.d.ts
 *.jpeg
 *.gif
 !assets/**
+!packages/client/src/assets/**
 !packages/client/public/**
 
 # Playwright MCP 调试产物

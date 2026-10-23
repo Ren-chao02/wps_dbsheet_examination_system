@@ -4,18 +4,44 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { scopeCtxOf, studentWhere, assertStudentAccess, denyAccess } from '../services/data-scope';
+import { findIdentifierConflict, identifierConflictMessage } from '../services/user-identifiers';
 
 export const userRouter = Router();
 userRouter.use(authenticate);
 userRouter.use(authorize('admin', 'teacher'));
 
-const createUserSchema = z.object({
-  username: z.string().min(2).max(64),
-  password: z.string().min(6),
-  realName: z.string().optional(),
-  email: z.string().email().optional(),
-  role: z.enum(['admin', 'teacher', 'student']),
-});
+const createUserSchema = z
+  .object({
+    username: z.string().min(2).max(64).optional(),
+    employeeId: z.string().min(1).max(64).optional(),
+    studentId: z.string().min(1).max(64).optional(),
+    password: z.string().min(6),
+    realName: z.string().optional(),
+    email: z.string().email().optional(),
+    role: z.enum(['admin', 'teacher', 'student']),
+  })
+  .superRefine((value, ctx) => {
+    if (value.role === 'teacher') {
+      if (!value.employeeId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['employeeId'], message: '教师账号必须填写工号' });
+      } else if (value.username && value.username !== value.employeeId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['username'], message: '教师登录名由工号决定' });
+      }
+    } else if (value.role === 'student') {
+      if (!value.studentId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['studentId'], message: '学生账号必须填写学号' });
+      } else if (value.username && value.username !== value.studentId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['username'], message: '学生登录名由学号决定' });
+      }
+    } else {
+      if (!value.username) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['username'], message: '管理员系统账号必须填写登录名' });
+      }
+      if (value.employeeId || value.studentId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['username'], message: '管理员系统账号不使用学号/工号' });
+      }
+    }
+  });
 
 const updateUserSchema = z.object({
   realName: z.string().optional(),
@@ -74,6 +100,14 @@ userRouter.get('/', async (req: Request, res: Response) => {
               role: true,
               email: true,
               avatarUrl: true,
+              studentId: true,
+              employeeId: true,
+              accountStatus: true,
+              wpsUserId: true,
+              wpsBoundAt: true,
+              failedLoginAttempts: true,
+              lockedUntil: true,
+              lastLoginAt: true,
               createdAt: true,
             },
       }),
@@ -137,26 +171,36 @@ userRouter.get('/:id', async (req: Request, res: Response) => {
 userRouter.post('/', authorize('admin'), async (req: Request, res: Response) => {
   try {
     const data = createUserSchema.parse(req.body);
+    const loginName =
+      data.role === 'teacher'
+        ? data.employeeId!
+        : data.role === 'student'
+          ? data.studentId!
+          : data.username!;
 
-    const existing = await prisma.user.findUnique({ where: { username: data.username } });
-    if (existing) {
-      return res.status(409).json({ message: '用户名已存在' });
+    const conflict = await findIdentifierConflict(loginName);
+    if (conflict) {
+      return res.status(409).json({ message: identifierConflictMessage(conflict) });
     }
 
     const passwordHash = await bcrypt.hash(data.password, 10);
     const user = await prisma.user.create({
       data: {
-        username: data.username,
+        username: loginName,
         passwordHash,
         realName: data.realName,
         email: data.email,
         role: data.role,
+        employeeId: data.role === 'teacher' ? data.employeeId! : null,
+        studentId: data.role === 'student' ? data.studentId! : null,
       },
     });
 
     res.status(201).json({
       id: user.id,
       username: user.username,
+      employeeId: user.employeeId,
+      studentId: user.studentId,
       realName: user.realName,
       role: user.role,
       email: user.email,
@@ -198,6 +242,46 @@ userRouter.put('/:id', authorize('admin'), async (req: Request, res: Response) =
     if (err instanceof z.ZodError) {
       return res.status(400).json({ message: '参数错误', errors: err.errors });
     }
+    if (err.code === 'P2025') {
+      return res.status(404).json({ message: '用户不存在' });
+    }
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+/**
+ * DELETE /api/users/:id/wps-binding —— 管理员解绑 WPS 账号
+ * 学生/教师换绑 WPS 账号时由管理员操作；解绑后下次 SSO 会走首次绑定流程。
+ */
+userRouter.delete('/:id/wps-binding', authorize('admin'), async (req: Request, res: Response) => {
+  try {
+    await prisma.user.update({
+      where: { id: req.params.id },
+      data: { wpsUserId: null, wpsBoundAt: null },
+      select: { id: true },
+    });
+    res.json({ message: 'WPS 绑定已解除' });
+  } catch (err: any) {
+    if (err.code === 'P2025') {
+      return res.status(404).json({ message: '用户不存在' });
+    }
+    res.status(500).json({ message: '服务器错误' });
+  }
+});
+
+/**
+ * DELETE /api/users/:id/login-lock —— 管理员手动解除登录锁定
+ * 考试前学生被误锁时可立即放行，不必等 15 分钟。
+ */
+userRouter.delete('/:id/login-lock', authorize('admin'), async (req: Request, res: Response) => {
+  try {
+    await prisma.user.update({
+      where: { id: req.params.id },
+      data: { failedLoginAttempts: 0, lockedUntil: null },
+      select: { id: true },
+    });
+    res.json({ message: '登录锁定已解除' });
+  } catch (err: any) {
     if (err.code === 'P2025') {
       return res.status(404).json({ message: '用户不存在' });
     }

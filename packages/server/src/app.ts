@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import path from 'path';
 import { authRouter } from './routes/auth';
 import { authenticate } from './middleware/auth';
@@ -90,6 +91,8 @@ export function createApp() {
   // 超限请求在路由层拿到控制权之前就已经 413 了（路由内再挂一个 limit 也没用）。
   app.use('/api/exam-table-assignments', express.json({ limit: '10mb' }));
   app.use(express.json());
+  // WPS SSO 的 state / 绑定票据用 HttpOnly Cookie 传递（见 routes/auth.ts）
+  app.use(cookieParser());
   // ✅ Phase 3.2: 全局审计中间件（自动记录CRUD操作）
   app.use(auditMiddleware);
 

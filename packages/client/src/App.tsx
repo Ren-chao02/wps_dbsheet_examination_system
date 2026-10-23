@@ -3,6 +3,8 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from './stores/auth';
 import { LoginPage } from './pages/auth/LoginPage';
 import { RegisterPage } from './pages/auth/RegisterPage';
+import { WpsBindingPage } from './pages/auth/WpsBindingPage';
+import { WpsCallbackPage } from './pages/auth/WpsCallbackPage';
 import { StudentLayout } from './components/layout/StudentLayout';
 import { TeacherLayout } from './components/layout/TeacherLayout';
 import { AdminLayout } from './components/layout/AdminLayout';
@@ -109,6 +111,9 @@ export default function App() {
       {/* Auth */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      {/* WPS SSO：授权回跳与首次绑定 */}
+      <Route path="/auth/wps/callback" element={<WpsCallbackPage />} />
+      <Route path="/auth/wps/bind" element={<WpsBindingPage />} />
 
       {/* Student */}
       <Route path="/student" element={

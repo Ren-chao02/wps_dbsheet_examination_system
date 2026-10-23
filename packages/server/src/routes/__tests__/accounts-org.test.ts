@@ -25,7 +25,7 @@ vi.mock('../../middleware/auth', async (importOriginal) => {
 
 const { mockPrisma, mockSheet, excelMock, mockWorkbooks } = vi.hoisted(() => ({
   mockPrisma: {
-    user: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    user: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     systemRole: { findUnique: vi.fn(), findMany: vi.fn() },
     department: { findUnique: vi.fn(), findMany: vi.fn() },
     importTask: { create: vi.fn(), update: vi.fn() },
@@ -114,7 +114,13 @@ function asAdmin(req: request.Test) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockPrisma.user.findUnique.mockResolvedValue(null); // 用户名查重默认不存在
+  mockPrisma.user.findUnique.mockResolvedValue({
+    id: 'u-1',
+    username: 'T-old',
+    role: 'teacher',
+    employeeId: 'T-old',
+  });
+  mockPrisma.user.findFirst.mockResolvedValue(null); // 全局标识默认不冲突
   mockPrisma.systemRole.findUnique.mockResolvedValue({ id: 'sr-teacher' });
   mockPrisma.department.findUnique.mockResolvedValue(null);
   mockPrisma.user.create.mockResolvedValue({ id: 'u-new' });
@@ -127,7 +133,7 @@ describe('POST /api/accounts 组织字段', () => {
 
     const res = await asAdmin(
       request(makeApp()).post('/api/accounts'),
-    ).send({ username: 't-new', password: 'secret123', departmentId: DEPT_ID });
+    ).send({ employeeId: 'T-new', password: 'secret123', departmentId: DEPT_ID });
 
     expect(res.status).toBe(201);
     expect(mockPrisma.department.findUnique.mock.calls[0][0].where.id).toBe(DEPT_ID);
@@ -139,7 +145,7 @@ describe('POST /api/accounts 组织字段', () => {
   it('departmentId 指向不存在的院系 → 400 且不写库', async () => {
     const res = await asAdmin(
       request(makeApp()).post('/api/accounts'),
-    ).send({ username: 't-new', password: 'secret123', departmentId: DEPT_ID });
+    ).send({ employeeId: 'T-new', password: 'secret123', departmentId: DEPT_ID });
 
     expect(res.status).toBe(400);
     expect(res.body.message).toBe('院系不存在');
@@ -149,12 +155,89 @@ describe('POST /api/accounts 组织字段', () => {
   it('不传 departmentId → 落库为 null（不依赖数据库默认值）', async () => {
     const res = await asAdmin(
       request(makeApp()).post('/api/accounts'),
-    ).send({ username: 't-new', password: 'secret123' });
+    ).send({ employeeId: 'T-new', password: 'secret123' });
 
     expect(res.status).toBe(201);
     expect(mockPrisma.department.findUnique).not.toHaveBeenCalled();
     const arg = mockPrisma.user.create.mock.calls[0][0];
     expect(arg.data.departmentId).toBeNull();
+  });
+});
+
+describe('账号登录标识策略（教师=工号 / 管理员=系统登录名）', () => {
+  it('教师不填工号 → 400，不写库', async () => {
+    const res = await asAdmin(
+      request(makeApp()).post('/api/accounts'),
+    ).send({ password: 'secret123', role: 'teacher' });
+
+    expect(res.status).toBe(400);
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+  });
+
+  it('教师填工号 → 登录名自动等于工号', async () => {
+    const res = await asAdmin(
+      request(makeApp()).post('/api/accounts'),
+    ).send({ employeeId: 'T-new', password: 'secret123', role: 'teacher' });
+
+    expect(res.status).toBe(201);
+    const created = mockPrisma.user.create.mock.calls[0][0].data;
+    expect(created.username).toBe('T-new');
+    expect(created.employeeId).toBe('T-new');
+  });
+
+  it('管理员使用系统登录名，不写工号', async () => {
+    const res = await asAdmin(
+      request(makeApp()).post('/api/accounts'),
+    ).send({ username: 'admin-new', password: 'secret123', role: 'admin' });
+
+    expect(res.status).toBe(201);
+    const created = mockPrisma.user.create.mock.calls[0][0].data;
+    expect(created.username).toBe('admin-new');
+    expect(created.employeeId).toBeNull();
+  });
+
+  it('工号与已有账号的学号/登录名冲突 → 409', async () => {
+    mockPrisma.user.findFirst.mockResolvedValue({
+      id: 'u-x',
+      username: 'other',
+      studentId: 'T-new',
+      employeeId: null,
+    });
+
+    const res = await asAdmin(
+      request(makeApp()).post('/api/accounts'),
+    ).send({ employeeId: 'T-new', password: 'secret123', role: 'teacher' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toContain('学号');
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+  });
+
+  it('教师改工号 → 同步 username', async () => {
+    const res = await asAdmin(
+      request(makeApp()).put('/api/accounts/u-1'),
+    ).send({ employeeId: 'T-new' });
+
+    expect(res.status).toBe(200);
+    const updated = mockPrisma.user.update.mock.calls[0][0].data;
+    expect(updated.username).toBe('T-new');
+    expect(updated.employeeId).toBe('T-new');
+  });
+
+  it('管理员转教师但未填工号 → 400', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({
+      id: 'u-2',
+      username: 'admin-sys',
+      role: 'admin',
+      employeeId: null,
+    });
+
+    const res = await asAdmin(
+      request(makeApp()).put('/api/accounts/u-2'),
+    ).send({ role: 'teacher' });
+
+    expect(res.status).toBe(400);
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
   });
 });
 
@@ -218,12 +301,13 @@ describe('GET /api/accounts/import-template 模板列', () => {
     const headers = templateSheet.columns.map((c: any) => c.header);
     // 导入解析按 getCell(6) 读院系编码：表头顺序必须与列号一一对应，改列序会在这里炸出来
     expect(headers).toEqual([
-      '用户名(必填)',
+      '用户名(管理员必填)',
       '密码(必填)',
       '姓名',
       '邮箱',
       '角色编码(如TEACHER)',
       '院系编码',
+      '工号(教师必填)',
     ]);
   });
 });
@@ -244,7 +328,7 @@ describe('POST /api/accounts/import 院系编码', () => {
   });
 
   it('带院系编码的行 → 一次预加载匹配后写入 departmentId', async () => {
-    mockSheet.rows = [['t-new', 'secret123', '张三', '', 'TEACHER', 'CS']];
+    mockSheet.rows = [['T-new', 'secret123', '张三', '', 'TEACHER', 'CS', 'T-new']];
 
     const res = await asAdmin(request(makeApp()).post('/api/accounts/import'));
 
@@ -255,14 +339,17 @@ describe('POST /api/accounts/import 院系编码', () => {
     // 映射一次预加载（按文件里出现的编码 in 查询），不是逐行查库
     expect(mockPrisma.department.findMany).toHaveBeenCalledTimes(1);
     expect(mockPrisma.department.findMany.mock.calls[0][0].where.code.in).toEqual(['CS']);
-    expect(mockPrisma.user.create.mock.calls[0][0].data.departmentId).toBe(DEPT_ID);
+    const created = mockPrisma.user.create.mock.calls[0][0].data;
+    expect(created.departmentId).toBe(DEPT_ID);
+    expect(created.username).toBe('T-new');
+    expect(created.employeeId).toBe('T-new');
   });
 
   it('编码不存在的行 → 该行报「院系编码不存在」，其余行照常成功', async () => {
     // 第 2 行编码 CS 命中，第 3 行编码 NOPE 不存在
     mockSheet.rows = [
-      ['t-ok', 'secret123', '', '', 'TEACHER', 'CS'],
-      ['t-bad', 'secret123', '', '', 'TEACHER', 'NOPE'],
+      ['T-ok', 'secret123', '', '', 'TEACHER', 'CS', 'T-ok'],
+      ['T-bad', 'secret123', '', '', 'TEACHER', 'NOPE', 'T-bad'],
     ];
 
     const res = await asAdmin(request(makeApp()).post('/api/accounts/import'));
@@ -278,15 +365,15 @@ describe('POST /api/accounts/import 院系编码', () => {
       expect.arrayContaining(['CS', 'NOPE']),
     );
     // 错误明细：行号 = 表头 1 + 数据行序
-    expect(mockSheet.errorRows).toEqual([{ row: 3, username: 't-bad', error: '院系编码不存在' }]);
+    expect(mockSheet.errorRows).toEqual([{ row: 3, username: 'T-bad', error: '院系编码不存在' }]);
     // 有效行照常创建，未知编码行不写库
     expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.user.create.mock.calls[0][0].data.username).toBe('t-ok');
+    expect(mockPrisma.user.create.mock.calls[0][0].data.username).toBe('T-ok');
     expect(mockPrisma.user.create.mock.calls[0][0].data.departmentId).toBe(DEPT_ID);
   });
 
-  it('旧模板（无院系编码列）→ 不查院系，departmentId 落 null', async () => {
-    mockSheet.rows = [['t-new', 'secret123', '张三', '', 'TEACHER']];
+  it('旧模板（无院系编码列）→ 管理员行不查院系，departmentId 落 null', async () => {
+    mockSheet.rows = [['admin-new', 'secret123', '张三', '', 'ADMIN']];
 
     const res = await asAdmin(request(makeApp()).post('/api/accounts/import'));
 
@@ -294,6 +381,9 @@ describe('POST /api/accounts/import 院系编码', () => {
     expect(res.body.successRows).toBe(1);
     // 没有任何院系编码 → 连预加载都不该发生
     expect(mockPrisma.department.findMany).not.toHaveBeenCalled();
-    expect(mockPrisma.user.create.mock.calls[0][0].data.departmentId).toBeNull();
+    const created = mockPrisma.user.create.mock.calls[0][0].data;
+    expect(created.departmentId).toBeNull();
+    expect(created.username).toBe('admin-new');
+    expect(created.employeeId).toBeNull();
   });
 });

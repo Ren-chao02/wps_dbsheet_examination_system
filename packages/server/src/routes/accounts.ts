@@ -11,6 +11,7 @@ import path from 'path';
 import fs from 'fs';
 import { prisma } from '../config/prisma';
 import { authenticate, authorizePermission } from '../middleware/auth';
+import { findIdentifierConflict, identifierConflictMessage } from '../services/user-identifiers';
 
 export const accountRouter = Router();
 
@@ -85,6 +86,11 @@ accountRouter.get('/', async (req: Request, res: Response) => {
             select: { roleCode: true, roleName: true },
           },
           lastLoginAt: true,
+          // 登录安全 / WPS SSO 管理
+          wpsUserId: true,
+          wpsBoundAt: true,
+          failedLoginAttempts: true,
+          lockedUntil: true,
           createdAt: true,
         },
       }),
@@ -139,25 +145,62 @@ accountRouter.put('/:id/enable', async (req: Request, res: Response) => {
 // ============================================================
 // POST /api/accounts — 新增单个账户
 // ============================================================
-const createAccountSchema = z.object({
-  username: z.string().min(2).max(64),
-  password: z.string().min(6),
-  realName: z.string().optional().nullable(),
-  email: z.string().email().optional().nullable(),
-  role: z.enum(['admin', 'teacher']).default('teacher'),
-  gender: z.enum(['MALE', 'FEMALE', 'UNSET']).optional().nullable(),
-  remark: z.string().max(512).optional().nullable(),
-  systemRoleId: z.string().uuid().optional().nullable(),
-  departmentId: z.string().uuid().optional().nullable(), // P2：教师归属院系（管理员/校长任命两级管理的基础）
-});
+const createAccountSchema = z
+  .object({
+    // 教师登录名由工号派生，不再单独填写；管理员系统账号仍使用独立登录名
+    username: z.string().min(2).max(64).optional(),
+    employeeId: z.string().min(1).max(64).optional(),
+    password: z.string().min(6),
+    realName: z.string().optional().nullable(),
+    email: z.string().email().optional().nullable(),
+    role: z.enum(['admin', 'teacher']).default('teacher'),
+    gender: z.enum(['MALE', 'FEMALE', 'UNSET']).optional().nullable(),
+    remark: z.string().max(512).optional().nullable(),
+    systemRoleId: z.string().uuid().optional().nullable(),
+    departmentId: z.string().uuid().optional().nullable(), // P2：教师归属院系（管理员/校长任命两级管理的基础）
+  })
+  .superRefine((value, ctx) => {
+    if (value.role === 'teacher') {
+      if (!value.employeeId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['employeeId'],
+          message: '教师账号必须填写工号',
+        });
+      } else if (value.username && value.username !== value.employeeId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['username'],
+          message: '教师登录名由工号决定，不能与工号不同',
+        });
+      }
+    } else {
+      if (!value.username) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['username'],
+          message: '管理员系统账号必须填写登录名',
+        });
+      }
+      if (value.employeeId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['employeeId'],
+          message: '管理员系统账号不使用工号',
+        });
+      }
+    }
+  });
 
 accountRouter.post('/', async (req: Request, res: Response) => {
   try {
     const data = createAccountSchema.parse(req.body);
+    const loginName = data.role === 'teacher' ? data.employeeId! : data.username!;
 
-    const existing = await prisma.user.findUnique({ where: { username: data.username } });
-    if (existing) {
-      return res.status(409).json({ message: '用户名已存在' });
+    // 全局标识守卫：教师登录名=工号时，不能与任何人的学号/工号/登录名冲突
+    const conflict = await findIdentifierConflict(loginName);
+    if (conflict) {
+      return res.status(409).json({ message: identifierConflictMessage(conflict) });
     }
 
     // 验证 systemRoleId 存在且为 active
@@ -188,11 +231,12 @@ accountRouter.post('/', async (req: Request, res: Response) => {
     const passwordHash = await bcrypt.hash(data.password, 10);
     const user = await prisma.user.create({
       data: {
-        username: data.username,
+        username: loginName,
         passwordHash,
         realName: data.realName,
         email: data.email,
         role: data.role,
+        employeeId: data.role === 'teacher' ? data.employeeId! : null,
         gender: data.gender || null,
         remark: data.remark || null,
         systemRoleId,
@@ -201,6 +245,7 @@ accountRouter.post('/', async (req: Request, res: Response) => {
       select: {
         id: true,
         username: true,
+        employeeId: true,
         realName: true,
         role: true,
         email: true,
@@ -230,6 +275,7 @@ const updateAccountSchema = z.object({
   realName: z.string().optional(),
   email: z.string().email().optional().nullable(),
   role: z.enum(['admin', 'teacher']).optional(),
+  employeeId: z.string().min(1).max(64).optional(),
   gender: z.enum(['MALE', 'FEMALE', 'UNSET']).optional().nullable(),
   remark: z.string().max(512).optional().nullable(),
   systemRoleId: z.string().uuid().optional().nullable(),
@@ -245,6 +291,42 @@ accountRouter.put('/:id', async (req: Request, res: Response) => {
     // 任何拿到 SYSTEM_MANAGEMENT 权限的账号都能把自己变成 admin（进而重置他人密码）。
     if (req.params.id === req.user!.userId && (data.role !== undefined || data.systemRoleId !== undefined)) {
       return res.status(400).json({ message: '不能修改自己的角色，请由其他管理员操作' });
+    }
+
+    const existing = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, username: true, role: true, employeeId: true },
+    });
+    if (!existing) {
+      return res.status(404).json({ message: '用户不存在' });
+    }
+
+    // 工号即登录名：教师改工号时同步 username；管理员系统账号不允许有工号
+    let syncedUsername: string | undefined;
+    let syncedEmployeeId: string | null | undefined;
+
+    if (data.employeeId !== undefined) {
+      if (existing.role !== 'teacher' || data.role === 'admin') {
+        return res.status(400).json({ message: '只有教师账号可以设置工号' });
+      }
+      if (data.employeeId !== existing.employeeId) {
+        const conflict = await findIdentifierConflict(data.employeeId, existing.id);
+        if (conflict) {
+          return res.status(409).json({ message: identifierConflictMessage(conflict) });
+        }
+        syncedUsername = data.employeeId;
+      }
+      syncedEmployeeId = data.employeeId;
+    }
+
+    // 教师 → 管理员：保留原登录名作为系统登录名，清掉工号
+    if (data.role === 'admin' && existing.role === 'teacher') {
+      syncedEmployeeId = null;
+    }
+
+    // 管理员 → 教师：必须同时提供工号
+    if (data.role === 'teacher' && existing.role !== 'teacher' && !data.employeeId) {
+      return res.status(400).json({ message: '管理员转为教师时必须填写工号' });
     }
 
     if (data.systemRoleId) {
@@ -266,6 +348,8 @@ accountRouter.put('/:id', async (req: Request, res: Response) => {
     const user = await prisma.user.update({
       where: { id: req.params.id },
       data: {
+        ...(syncedUsername !== undefined && { username: syncedUsername }),
+        ...(syncedEmployeeId !== undefined && { employeeId: syncedEmployeeId }),
         ...(data.realName !== undefined && { realName: data.realName }),
         ...(data.email !== undefined && { email: data.email }),
         ...(data.role !== undefined && { role: data.role }),
@@ -279,6 +363,7 @@ accountRouter.put('/:id', async (req: Request, res: Response) => {
       select: {
         id: true,
         username: true,
+        employeeId: true,
         realName: true,
         role: true,
         email: true,
@@ -432,13 +517,15 @@ accountRouter.get('/import-template', async (_req: Request, res: Response) => {
     const worksheet = workbook.addWorksheet('账户导入模板');
 
     worksheet.columns = [
-      { header: '用户名(必填)', key: 'username', width: 18 },
+      { header: '用户名(管理员必填)', key: 'username', width: 20 },
       { header: '密码(必填)', key: 'password', width: 14 },
       { header: '姓名', key: 'realName', width: 12 },
       { header: '邮箱', key: 'email', width: 24 },
       { header: '角色编码(如TEACHER)', key: 'roleCode', width: 20 },
       // P2：院系编码取 Department.code（可选列，留空则不归属院系）
       { header: '院系编码', key: 'departmentCode', width: 16 },
+      // 新模型：教师登录名 = 工号；管理员仍用第 1 列用户名（系统登录名）
+      { header: '工号(教师必填)', key: 'employeeId', width: 18 },
     ];
 
     const headerRow = worksheet.getRow(1);
@@ -515,7 +602,8 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
       },
     });
 
-    // 模板列：1=用户名, 2=密码, 3=姓名, 4=邮箱, 5=角色编码, 6=院系编码(可选)
+    // 模板列：1=用户名(管理员必填), 2=密码, 3=姓名, 4=邮箱, 5=角色编码,
+    //         6=院系编码(可选), 7=工号(教师必填，且作为教师登录名)
     for (let i = 2; i <= worksheet.rowCount; i++) {
       const row = worksheet.getRow(i);
       const username = String(row.getCell(1).value || '').trim();
@@ -524,63 +612,98 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
       const email = String(row.getCell(4).value || '').trim();
       const roleCode = String(row.getCell(5).value || '').trim().toUpperCase() || 'TEACHER';
       const departmentCode = String(row.getCell(6).value || '').trim();
+      const employeeId = String(row.getCell(7).value || '').trim();
 
-      if (!username || !password) {
-        if (username || password || realName || email || departmentCode) {
-          totalRows++;
-          failedRows++;
-          errors.push({ row: i, username: username || `(第${i}行)`, error: '用户名和密码不能为空' });
-        }
+      const hasAny = Boolean(
+        username || password || realName || email || departmentCode || employeeId,
+      );
+      if (!hasAny) continue;
+
+      const userRole = roleCode === 'ADMIN' ? 'admin' : 'teacher';
+      const isTeacher = userRole === 'teacher';
+      const loginName = isTeacher ? employeeId : username;
+      const rowLabel = loginName || username || `(第${i}行)`;
+
+      totalRows++;
+
+      if (!password) {
+        failedRows++;
+        errors.push({ row: i, username: rowLabel, error: '密码不能为空' });
+        continue;
+      }
+
+      if (isTeacher ? !employeeId : !username) {
+        failedRows++;
+        errors.push({
+          row: i,
+          username: rowLabel,
+          error: isTeacher ? '教师账号必须填写工号' : '管理员账号必须填写登录名',
+        });
+        continue;
+      }
+
+      if (isTeacher && username && username !== employeeId) {
+        failedRows++;
+        errors.push({
+          row: i,
+          username: rowLabel,
+          error: '教师登录名由工号决定，用户名列应与工号一致或留空',
+        });
+        continue;
+      }
+
+      if (!isTeacher && employeeId) {
+        failedRows++;
+        errors.push({
+          row: i,
+          username: rowLabel,
+          error: '管理员系统账号不使用工号',
+        });
         continue;
       }
 
       if (password.length < 6) {
-        totalRows++;
         failedRows++;
-        errors.push({ row: i, username, error: '密码长度不能少于6位' });
+        errors.push({ row: i, username: rowLabel, error: '密码长度不能少于6位' });
         continue;
       }
 
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        totalRows++;
         failedRows++;
-        errors.push({ row: i, username, error: '邮箱格式不正确' });
+        errors.push({ row: i, username: rowLabel, error: '邮箱格式不正确' });
         continue;
       }
 
       // 院系编码可选；填了就必须能匹配到院系。与班级编码导入同一口径：
       // 只标记该行错误，其余行照常导入（整份拒绝会让老师面对一个错别字重传全部）
       if (departmentCode && !departmentMap.has(departmentCode)) {
-        totalRows++;
         failedRows++;
-        errors.push({ row: i, username, error: '院系编码不存在' });
+        errors.push({ row: i, username: rowLabel, error: '院系编码不存在' });
         continue;
       }
 
-      totalRows++;
-
       try {
-        // 检查用户名是否已存在
-        const existing = await prisma.user.findUnique({ where: { username } });
-        if (existing) {
-          failedRows++;
-          errors.push({ row: i, username, error: '用户名已存在' });
-          continue;
-        }
-
         // 查找角色
         const systemRoleId = roleMap.get(roleCode);
         if (!systemRoleId && roleCode !== 'TEACHER') {
           failedRows++;
-          errors.push({ row: i, username, error: `未知角色编码: ${roleCode}` });
+          errors.push({ row: i, username: rowLabel, error: `未知角色编码: ${roleCode}` });
           continue;
         }
-        const userRole = roleCode === 'ADMIN' ? 'admin' : 'teacher';
+
+        // 全局标识守卫：教师的工号/管理员的登录名不能与任何人的学号/工号/登录名冲突
+        const conflict = await findIdentifierConflict(loginName);
+        if (conflict) {
+          failedRows++;
+          errors.push({ row: i, username: rowLabel, error: identifierConflictMessage(conflict) });
+          continue;
+        }
 
         const passwordHash = await bcrypt.hash(password, 10);
         await prisma.user.create({
           data: {
-            username,
+            username: loginName,
+            employeeId: isTeacher ? employeeId : null,
             passwordHash,
             realName: realName || null,
             email: email || null,
@@ -593,7 +716,7 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
         successRows++;
       } catch (err: any) {
         failedRows++;
-        errors.push({ row: i, username, error: err.message || '未知错误' });
+        errors.push({ row: i, username: rowLabel, error: err.message || '未知错误' });
       }
     }
 
@@ -668,6 +791,7 @@ accountRouter.get('/export', async (req: Request, res: Response) => {
       orderBy: { createdAt: 'desc' },
       select: {
         username: true,
+        employeeId: true,
         realName: true,
         email: true,
         gender: true,
@@ -683,7 +807,8 @@ accountRouter.get('/export', async (req: Request, res: Response) => {
     const worksheet = workbook.addWorksheet('账户列表');
 
     worksheet.columns = [
-      { header: '用户名', key: 'username', width: 18 },
+      { header: '登录名', key: 'username', width: 18 },
+      { header: '工号', key: 'employeeId', width: 16 },
       { header: '姓名', key: 'realName', width: 12 },
       { header: '性别', key: 'gender', width: 10 },
       { header: '邮箱', key: 'email', width: 24 },
@@ -703,6 +828,7 @@ accountRouter.get('/export', async (req: Request, res: Response) => {
     for (const a of accounts) {
       worksheet.addRow({
         username: a.username,
+        employeeId: a.employeeId || '',
         realName: a.realName || '',
         gender: genderMap[a.gender as string] || '',
         email: a.email || '',

@@ -138,6 +138,12 @@ model User {
   remark        String?       @db.VarChar(512)
   systemRoleId  String?       @map("system_role_id") @db.Uuid
   lastLoginAt   DateTime?     @map("last_login_at")
+  /// 登录失败计数与锁定截止时间：账号 10 次失败锁 15 分钟（阈值见 config.login）
+  failedLoginAttempts Int      @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime? @map("locked_until")
+  /// WPS 账号 SSO 绑定：WPS 用户 ID 唯一，绑定后可用 WPS 一键登录
+  wpsUserId     String?       @unique @map("wps_user_id") @db.VarChar(128)
+  wpsBoundAt    DateTime?     @map("wps_bound_at")
   departmentId  String?       @map("department_id")
   majorId       String?       @map("major_id")
   classRoomId   String?       @map("class_room_id")

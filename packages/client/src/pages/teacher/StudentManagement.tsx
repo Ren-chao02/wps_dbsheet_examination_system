@@ -4,6 +4,7 @@ import {
 } from 'antd';
 import {
   PlusOutlined, EditOutlined, ExportOutlined, ImportOutlined, LinkOutlined, ReloadOutlined, DeleteOutlined,
+  DisconnectOutlined, UnlockOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -154,7 +155,6 @@ export default function StudentManagement() {
     }
 
     form.setFieldsValue({
-      username: student.username,
       studentId: student.studentId,
       realName: student.realName,
       gender: student.gender,
@@ -171,7 +171,6 @@ export default function StudentManagement() {
     try {
       const values = await form.validateFields();
       const payload = {
-        username: values.username,
         password: values.password,
         realName: values.realName,
         studentId: values.studentId,
@@ -182,7 +181,7 @@ export default function StudentManagement() {
       };
 
       if (editingStudent) {
-        const { username, password, ...updatePayload } = payload;
+        const { password: _password, ...updatePayload } = payload;
         await api.put(`/students/${editingStudent.id}`, updatePayload);
         message.success('更新成功');
       } else {
@@ -269,10 +268,34 @@ export default function StudentManagement() {
     }
   };
 
+  // ---------- WPS 绑定 / 登录锁定（仅管理员） ----------
+  const handleUnbindWps = async (id: string) => {
+    try {
+      await api.delete(`/users/${id}/wps-binding`);
+      message.success('WPS 绑定已解除');
+      fetchStudents(data.page);
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '解绑失败');
+    }
+  };
+
+  const handleUnlock = async (id: string) => {
+    try {
+      await api.delete(`/users/${id}/login-lock`);
+      message.success('登录锁定已解除');
+      fetchStudents(data.page);
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '解锁失败');
+    }
+  };
+
+  const isLocked = (student: StudentInfo) =>
+    Boolean(student.lockedUntil && new Date(student.lockedUntil).getTime() > Date.now());
+
   // ---------- Table columns ----------
   const columns = [
     {
-      title: '学号', dataIndex: 'studentId', key: 'studentId', render: (v: string) => v || '—',
+      title: '学号（登录名）', dataIndex: 'studentId', key: 'studentId', render: (v: string) => v || '—',
     },
     {
       title: '姓名', dataIndex: 'realName', key: 'realName', render: (v: string) => v || '—',
@@ -299,6 +322,17 @@ export default function StudentManagement() {
       },
     },
     {
+      title: 'WPS', dataIndex: 'wpsUserId', key: 'wpsUserId', width: 90,
+      render: (v: string | null | undefined) => (
+        <Tag color={v ? 'blue' : 'default'}>{v ? '已绑定' : '未绑定'}</Tag>
+      ),
+    },
+    {
+      title: '登录状态', key: 'loginStatus', width: 90,
+      render: (_: any, r: StudentInfo) =>
+        isLocked(r) ? <Tag color="red">锁定中</Tag> : <Tag color="green">正常</Tag>,
+    },
+    {
       title: '练习表格', key: 'practice', width: 110,
       render: (_: any, r: StudentInfo) => {
         const has = !!r.practiceTableAssignment;
@@ -317,7 +351,7 @@ export default function StudentManagement() {
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '—',
     },
     {
-      title: '操作', key: 'actions', width: 260,
+      title: '操作', key: 'actions', width: 380,
       render: (_: any, r: StudentInfo) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(r)}>编辑</Button>
@@ -334,9 +368,36 @@ export default function StudentManagement() {
             </Button>
           </Popconfirm>
           {user?.role === 'admin' && (
-            <Popconfirm title="确定删除该学生？此操作不可撤销" onConfirm={() => handleDelete(r.id)} okText="确定" cancelText="取消">
-              <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
-            </Popconfirm>
+            <>
+              {isLocked(r) && (
+                <Button
+                  size="small"
+                  icon={<UnlockOutlined />}
+                  title="解除登录锁定"
+                  onClick={() => handleUnlock(r.id)}
+                >
+                  解锁
+                </Button>
+              )}
+              <Popconfirm
+                title="解除该学生的 WPS 绑定？"
+                description="解绑后下次需重新完成 WPS 首次绑定。"
+                onConfirm={() => handleUnbindWps(r.id)}
+                disabled={!r.wpsUserId}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button
+                  size="small"
+                  icon={<DisconnectOutlined />}
+                  title="解除 WPS 绑定"
+                  disabled={!r.wpsUserId}
+                />
+              </Popconfirm>
+              <Popconfirm title="确定删除该学生？此操作不可撤销" onConfirm={() => handleDelete(r.id)} okText="确定" cancelText="取消">
+                <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+              </Popconfirm>
+            </>
           )}
         </Space>
       ),
@@ -429,17 +490,14 @@ export default function StudentManagement() {
         destroyOnHidden
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="username" label="用户名" rules={editingStudent ? [] : [{ required: true, min: 2, message: '请输入用户名' }]}>
-            <Input disabled={!!editingStudent} placeholder="用户名用于登录" />
-          </Form.Item>
           {!editingStudent && (
             <Form.Item name="password" label="密码" rules={[{ required: true, min: 6, message: '密码至少6位' }]}>
               <Input.Password placeholder="设置登录密码" />
             </Form.Item>
           )}
-          <Form.Item name="studentId" label="学号" rules={[
+          <Form.Item name="studentId" label="学号（登录名）" rules={[
             { required: true, message: '请输入学号' },
-          ]}>
+          ]} extra="登录名自动使用学号，无需单独设置用户名">
             <Input placeholder="学生学号" />
           </Form.Item>
           <Form.Item name="realName" label="姓名" rules={[{ required: true, message: '请输入姓名' }]}>

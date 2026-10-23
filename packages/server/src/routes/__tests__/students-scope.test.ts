@@ -99,6 +99,7 @@ beforeEach(() => {
   mockPrisma.user.findMany.mockResolvedValue([]);
   mockPrisma.user.count.mockResolvedValue(0);
   mockPrisma.user.findUnique.mockResolvedValue(null);
+  mockPrisma.user.findFirst.mockResolvedValue(null);
 });
 
 describe('GET /api/students 列表', () => {
@@ -145,6 +146,8 @@ describe('POST /api/students 创建', () => {
       .send({ username: 'stu1', realName: '张三', studentId: '2026001', classRoomId: C1 });
     expect(res.status).toBe(201);
     expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
+    // 学生登录名由学号派生，忽略请求体里单独传的 username
+    expect(mockPrisma.user.create.mock.calls[0][0].data.username).toBe('2026001');
   });
 });
 

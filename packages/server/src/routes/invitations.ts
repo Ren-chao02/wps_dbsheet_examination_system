@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { scopeCtxOf, myClassIds } from '../services/data-scope';
+import { findIdentifierConflict, identifierConflictMessage } from '../services/user-identifiers';
 
 export const invitationRouter = Router();
 export const applicationRouter = Router();
@@ -425,23 +426,11 @@ applicationRouter.put('/batch-approve', async (req: Request, res: Response) => {
             }
           }
 
-          // 检查学号是否已注册
-          const existingUser = await tx.user.findUnique({
-            where: { studentId: application.studentId },
-          });
-          if (existingUser) {
+          // 学号=登录名：检查是否与任何账号的学号/工号/登录名冲突
+          const conflict = await findIdentifierConflict(application.studentId, undefined, tx);
+          if (conflict) {
             failed++;
-            errors.push({ id, reason: '该学号已注册' });
-            continue;
-          }
-
-          // 检查用户名是否已存在
-          const existingUsername = await tx.user.findUnique({
-            where: { username: application.studentId },
-          });
-          if (existingUsername) {
-            failed++;
-            errors.push({ id, reason: `用户名 ${application.studentId} 已存在` });
+            errors.push({ id, reason: identifierConflictMessage(conflict) });
             continue;
           }
 
@@ -532,20 +521,10 @@ applicationRouter.put('/:id/approve', async (req: Request, res: Response) => {
       return res.status(400).json({ message: '该申请已被处理' });
     }
 
-    // 检查学号是否已被注册
-    const existingUser = await prisma.user.findUnique({
-      where: { studentId: application.studentId },
-    });
-    if (existingUser) {
-      return res.status(409).json({ message: '该学号已注册，无法再次通过' });
-    }
-
-    // 检查用户名是否已存在
-    const existingUsername = await prisma.user.findUnique({
-      where: { username: application.studentId },
-    });
-    if (existingUsername) {
-      return res.status(409).json({ message: `用户名 ${application.studentId} 已存在` });
+    // 学号=登录名：检查是否与任何账号的学号/工号/登录名冲突
+    const conflict = await findIdentifierConflict(application.studentId);
+    if (conflict) {
+      return res.status(409).json({ message: identifierConflictMessage(conflict) });
     }
 
     const { classRoom } = application.invitation;
