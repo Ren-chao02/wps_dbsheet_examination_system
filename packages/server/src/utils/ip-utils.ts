@@ -54,3 +54,15 @@ export function validateCidrList(list: string[]): { valid: boolean; invalid: str
   const invalid = list.filter((item) => !isValidCidr(item));
   return { valid: invalid.length === 0, invalid };
 }
+
+
+/**
+ * 是否为回环地址（IPv4 / IPv6 / IPv4-mapped IPv6）。
+ *
+ * ⚠️ 安全判定必须传 `req.socket.remoteAddress`，不能传 `req.ip`——
+ * 后者在 trust proxy 下可由客户端提供的 X-Forwarded-For 伪造。
+ */
+export function isLoopback(ip: string | undefined): boolean {
+  if (!ip) return false;
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
