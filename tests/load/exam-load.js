@@ -243,7 +243,8 @@ function submit(token) {
 export function examFlow() {
   const username = studentUsername();
   const token = login(username);
-  if (!token) return;
+  // 登录失败必须退避：否则失败会以毫秒级重试，瞬间打满验证码限流（实测 10 万次/分钟）
+  if (!token) { sleep(THINK_SECONDS); return; }
 
   if (!startExam(token)) return;
 
@@ -267,7 +268,7 @@ export function examFlow() {
 export function steadyFlow() {
   const username = studentUsername();
   const token = login(username);
-  if (!token) return;
+  if (!token) { sleep(THINK_SECONDS); return; }
 
   const questions = fetchPaper(token);
   // 心跳 30 秒一次、自动保存按学生实际作答频率（这里取每 10 秒一次）
