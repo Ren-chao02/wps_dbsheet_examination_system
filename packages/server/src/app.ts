@@ -56,6 +56,11 @@ export function createApp() {
   // 因此信任 1 跳是安全的；不设置的话 req.ip 一律是代理 IP，IP 白名单会全部失效。
   // 通过 TRUST_PROXY 环境变量可覆盖（多级代理填跳数、直连填 false）。
   const trustProxyEnv = process.env.TRUST_PROXY;
+  if (trustProxyEnv === 'true') {
+    // trust proxy=true 会信任任意 X-Forwarded-For，客户端可伪造 IP 绕过登录限流/IP 白名单。
+    // 只允许填代理跳数（如 1）或 false。
+    throw new Error('TRUST_PROXY=true 会信任任意 X-Forwarded-For（IP 可伪造）；请填代理跳数（如 1）或 false');
+  }
   app.set(
     'trust proxy',
     trustProxyEnv !== undefined
