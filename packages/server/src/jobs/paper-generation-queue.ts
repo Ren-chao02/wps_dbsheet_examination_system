@@ -10,7 +10,15 @@
 import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
 import { config } from '../config';
 import { prisma } from '../config/prisma';
-import { generateStudentPaper } from '../services/paper-generator';
+import {
+  generateStudentPaper,
+  listSlotCandidates, loadQuestionPoolWhereForExamPaper, schemaRefsSignature,
+  type SlotRule,
+} from '../services/paper-generator';
+import {
+  repairDifficultyDistribution, computeTargetCounts,
+  type DifficultyTarget, type RepairSlotInput,
+} from '../services/paper-difficulty-repair';
 import { logger } from '../utils/logger';
 
 // ============================================================
@@ -108,6 +116,10 @@ export interface PaperGenerationDeps {
   generate: (examId: string, studentId: string) => Promise<{ created: number; total: number; unfilledSlots: Array<{ slotIndex: number; reason: string }> }>;
   getExamStatus: (examId: string) => Promise<string | null>;
   markStatus: (examId: string, patch: { status: string; error?: string; summary?: any; unfilledSlots?: any }) => Promise<void>;
+  /** 可选：不注入 = 不做修复（Task 5 的隔离测试不能摸真实 DB） */
+  repair?: (examId: string, studentId: string) => Promise<boolean>;
+  /** 可选：不注入 = 不写分布/降级汇总 */
+  loadSummaryInput?: (examId: string) => Promise<GenerationSummaryInput | null>;
 }
 
 const defaultDeps: PaperGenerationDeps = {
@@ -132,6 +144,25 @@ const defaultDeps: PaperGenerationDeps = {
       ...(patch.status === 'done' || patch.status === 'failed' ? { finishedAt: new Date() } : {}),
     } });
   },
+  repair: (examId, studentId) => repairStudentPaper(examId, studentId),
+  loadSummaryInput: async (examId) => {
+    const [rows, ruleSlotCount, examRow] = await Promise.all([
+      prisma.studentExamQuestion.findMany({
+        where: { examId },
+        select: { studentId: true, source: true, pickMeta: true, question: { select: { difficulty: true } } },
+      }),
+      prisma.examQuestion.count({ where: { examId, slotType: 'rule' } }),
+      prisma.exam.findUnique({ where: { id: examId }, select: { difficultyTarget: true } }),
+    ]);
+    return {
+      snapshots: rows.map(r => ({
+        studentId: r.studentId, source: r.source, pickMeta: r.pickMeta,
+        difficulty: r.question?.difficulty ?? null,
+      })),
+      ruleSlotCount,
+      target: (examRow?.difficultyTarget ?? null) as DifficultyTarget | null,
+    };
+  },
 };
 
 /** 并发受限的 map：WPS 无关，瓶颈是本机 DB + CPU；4 是保守值 */
@@ -144,6 +175,136 @@ async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
     }
   });
   await Promise.all(runners);
+}
+
+/**
+ * 为一名学生跑修复；返回是否发生替换（供汇总统计）。
+ * `db`/`listCandidates` 可注入：单测不碰真实 DB/题库；生产不传即用默认实现。
+ * 候选池必须带 poolWhere（数据范围 P2）——否则修复会把别院系的题换进学生的卷子。
+ */
+export async function repairStudentPaper(
+  examId: string,
+  studentId: string,
+  deps: { db?: any; listCandidates?: typeof listSlotCandidates } = {},
+): Promise<boolean> {
+  const db = deps.db ?? prisma;
+  const listCandidates = deps.listCandidates ?? listSlotCandidates;
+
+  const exam = await db.exam.findUnique({ where: { id: examId }, select: { difficultyTarget: true } });
+  if (!exam?.difficultyTarget) return false;   // 没配目标 = 零行为变化
+
+  const [slots, rows, poolWhere] = await Promise.all([
+    db.examQuestion.findMany({ where: { examId, slotType: 'rule' }, orderBy: { slotIndex: 'asc' } }),
+    db.studentExamQuestion.findMany({ where: { examId, studentId }, select: { slotIndex: true, questionId: true, score: true } }),
+    loadQuestionPoolWhereForExamPaper(examId, db),
+  ]);
+  if (slots.length === 0 || rows.length === 0) return false;
+
+  const rowBySlot = new Map(rows.map((r: any) => [r.slotIndex, r]));
+  const usedIds = new Set<string>(rows.map((r: any) => r.questionId));
+  const inputs: RepairSlotInput[] = [];
+
+  for (const slot of slots) {
+    const row = rowBySlot.get(slot.slotIndex) as any;
+    if (!row) continue;
+    const rule = (slot.rule || {}) as SlotRule;
+    const candidates = await listCandidates({
+      rule, slotScore: row.score, level: 'strict',
+      usedQuestionIds: new Set([...usedIds].filter(id => id !== row.questionId)),
+      poolWhere, tx: db,
+    });
+    const current = await db.question.findUnique({ where: { id: row.questionId }, select: { difficulty: true } });
+    inputs.push({
+      slotIndex: slot.slotIndex, slotScore: row.score,
+      currentQuestionId: row.questionId, currentDifficulty: current?.difficulty ?? null,
+      wantedSignature: rule.schemaRefs ? schemaRefsSignature(rule.schemaRefs) : '',
+      candidates,
+    });
+  }
+
+  const result = repairDifficultyDistribution(inputs, exam.difficultyTarget as DifficultyTarget);
+  for (const change of result.changes) {
+    await db.studentExamQuestion.update({
+      where: { examId_studentId_slotIndex: { examId, studentId, slotIndex: change.slotIndex } },
+      data: {
+        questionId: change.to,
+        pickMeta: {
+          level: 'repair', repairedFrom: change.from,
+          candidates: change.candidates,
+          wantedSignature: change.wantedSignature,
+          actualSignature: change.actualSignature,
+        },
+      },
+    });
+  }
+  return result.changes.length > 0;
+}
+
+export interface GenerationSummaryInput {
+  snapshots: Array<{ studentId: string; source: string; pickMeta: any; difficulty: string | null }>;
+  ruleSlotCount: number;
+  target: DifficultyTarget | null;
+}
+
+const SUMMARY_LEVELS = ['easy', 'medium', 'hard'] as const;
+const LEVEL_RANK: Record<string, number> = {
+  strict: 0, 'relax-schemaRefs': 1, 'relax-difficulty': 2, repair: 3,
+};
+
+/**
+ * 组卷质量汇总（纯函数，便于单测）。
+ *
+ * 口径（与 spec 第六/八节一致）：
+ * - 分布按**每卷平均道数**（1 位小数）：目标按每卷道数算，直接拿全场总数比会失真；
+ * - 降级按**卷**分桶，同一卷多个降级题位只计一次、取最差档位；
+ *   无 pickMeta 的历史快照不计入（和可能小于 papers）。
+ */
+export function buildGenerationSummary(input: GenerationSummaryInput) {
+  const { snapshots, ruleSlotCount, target } = input;
+  const papers = new Set(snapshots.map(s => s.studentId)).size;
+  const whole: Record<string, number> = { easy: 0, medium: 0, hard: 0 };
+  const rule: Record<string, number> = { easy: 0, medium: 0, hard: 0 };
+  const worst = new Map<string, string>();
+
+  for (const s of snapshots) {
+    const d = s.difficulty;
+    if (d && d in whole) whole[d] += 1;
+    if (s.source === 'rule' && d && d in rule) rule[d] += 1;
+    const level = s.pickMeta?.level;
+    if (typeof level !== 'string' || !(level in LEVEL_RANK)) continue;
+    const prev = worst.get(s.studentId);
+    if (!prev || LEVEL_RANK[level] > LEVEL_RANK[prev]) worst.set(s.studentId, level);
+  }
+
+  const degradation = { strict: 0, relaxSchemaRefs: 0, relaxDifficulty: 0, repaired: 0 };
+  for (const level of worst.values()) {
+    if (level === 'strict') degradation.strict += 1;
+    else if (level === 'relax-schemaRefs') degradation.relaxSchemaRefs += 1;
+    else if (level === 'relax-difficulty') degradation.relaxDifficulty += 1;
+    else degradation.repaired += 1;
+  }
+
+  const perPaper = (counts: Record<string, number>) => {
+    if (papers === 0) return { easy: 0, medium: 0, hard: 0 };
+    return Object.fromEntries(
+      SUMMARY_LEVELS.map(l => [l, Math.round((counts[l] / papers) * 10) / 10]),
+    ) as Record<string, number>;
+  };
+
+  return {
+    papers,
+    distribution: {
+      papers,
+      ruleSlots: ruleSlotCount,
+      // 空对象 / 全 0 目标视为未配置（DB 里可能有历史脏值）
+      target: target && SUMMARY_LEVELS.some(l => (target[l] ?? 0) > 0)
+        ? computeTargetCounts(target, ruleSlotCount)
+        : null,
+      actual: perPaper(rule),
+      wholePaper: perPaper(whole),
+    },
+    degradation,
+  };
 }
 
 /**
@@ -162,6 +323,7 @@ export async function processPaperGeneration(
   try {
     const students = await deps.listStudents(examId);
     let generated = 0;
+    let repaired = 0;
     const unfilled = new Map<string, { slotIndex: number; reason: string; students: number }>();
 
     const PAGE = 200;
@@ -183,12 +345,31 @@ export async function processPaperGeneration(
           cur.students += 1;
           unfilled.set(key, cur);
         }
+        // 生成后再修复：题位之间争抢候选，只有整卷落库后才能算出偏差并等价替换。
+        // JS 单线程，并发回调里自增不会丢计数。
+        if (deps.repair) {
+          const changed = await deps.repair(examId, studentId);
+          if (changed) repaired += 1;
+        }
       });
+    }
+
+    // 汇总统计失败不能让整场生成变成 failed：生成已经完成，报告只是附加信息
+    let summary: Record<string, any> = {
+      generated, missing: students.length - generated, repaired,
+    };
+    if (deps.loadSummaryInput) {
+      try {
+        const input = await deps.loadSummaryInput(examId);
+        if (input) summary = { ...summary, ...buildGenerationSummary(input) };
+      } catch (err) {
+        logger.warn({ examId, err }, '组卷汇总统计失败，仅写基础进度');
+      }
     }
 
     await deps.markStatus(examId, {
       status: 'done',
-      summary: { generated, missing: students.length - generated },
+      summary,
       unfilledSlots: [...unfilled.values()],
     });
     return { generated, missing: students.length - generated };
