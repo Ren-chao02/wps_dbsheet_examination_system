@@ -241,6 +241,22 @@ describe('PUT /api/exams/:id 更换试卷的范围校验', () => {
     expect(res.status).toBe(200);
     expect(mockPrisma.paper.findUnique).not.toHaveBeenCalled();
   });
+
+  it('普通编辑（不含 paperId）且考试已绑卷 → 不重同步、不删题位', async () => {
+    mockPrisma.exam.findUnique.mockResolvedValue({
+      id: 'exam-1', createdBy: 't-1', status: 'draft',
+      paperId: '55555555-5555-4555-8555-555555555555',
+      batchId: null, startTime: null, endTime: null, durationMinutes: 60,
+    });
+    const res = await request(makeApp())
+      .put('/api/exams/exam-1')
+      .set('x-test-role', 'teacher')
+      .set('x-test-user', 't-1')
+      .send({ title: '只改标题' });
+    expect(res.status).toBe(200);
+    expect(mockPrisma.examQuestion.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.exam.update).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('PUT /api/exams/:id/questions 挂题的范围校验', () => {
