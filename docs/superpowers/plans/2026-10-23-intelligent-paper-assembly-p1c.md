@@ -248,8 +248,9 @@ git commit -m "fix(exams): 开考与重新组卷共用 examId advisory lock（�
 
 **Files:**
 - Create: `packages/server/src/services/paper-generation-scheduler.ts`
-- Modify: `packages/server/src/routes/exams.ts`（publish 路由改调 scheduler）
+- Modify: `packages/server/src/routes/exams.ts`（publish 路由改调 scheduler；`PUT /:id` 的 paperId 写入移入换卷锁事务）
 - Modify: `packages/server/src/services/paper-generation-lifecycle.ts`（reschedule 复用 scheduler）
+- Modify: `packages/server/src/services/exam-lock.ts`（注释补全四个调用点）
 - Modify: `packages/server/src/routes/batches.ts`（逐场并行调度）
 - Test: `packages/server/src/services/__tests__/paper-generation-scheduler.test.ts`
 - Test: `packages/server/src/routes/__tests__/exam-publish-preflight.test.ts`（按新调用形状调整断言）
@@ -424,6 +425,43 @@ export async function reschedulePaperGeneration(examId: string): Promise<'skippe
         }
 ```
 
+- [ ] **Step 6b: 把 `PUT /:id` 的 paperId 写入移入换卷锁事务（顺带闭合附二 #20）**
+
+`routes/exams.ts` 的 `PUT /:id`：把当前的 `const updated = await prisma.exam.update({...})`（在换卷判断之前）与后面的换卷事务合并为：
+
+```ts
+    const effectivePaperId = paperId !== undefined ? (paperId ?? null) : exam.paperId;
+    const updateData = {
+      ...rest,
+      // 仅在请求显式提供字段时才更新，否则保留原有值（避免编辑时误清空）
+      startTime: data.startTime !== undefined ? (data.startTime ? new Date(data.startTime) : null) : exam.startTime,
+      endTime: data.endTime !== undefined ? (data.endTime ? new Date(data.endTime) : null) : exam.endTime,
+      paperId: effectivePaperId,
+      batchId: batchId !== undefined ? (batchId ?? null) : exam.batchId,
+    };
+
+    let updated;
+    if (effectivePaperId !== exam.paperId) {
+      // paperId 与题位重建/快照失效必须同一个事务：否则事务失败会留下
+      // 「exam.paperId 已指向新卷、ExamQuestion 仍是旧卷」且同请求重试不再触发的中间态。
+      updated = await prisma.$transaction(async (tx) => {
+        await lockExam(tx, req.params.id);
+        const row = await tx.exam.update({ where: { id: req.params.id }, data: updateData });
+        await syncPaperIntoExam({ examId: req.params.id, paperId: effectivePaperId, tx });
+        await invalidateUnstartedSnapshots(req.params.id, tx);
+        return row;
+      });
+      // 入队放在事务外：不能持锁等 Redis
+      await reschedulePaperGeneration(req.params.id);
+    } else {
+      updated = await prisma.exam.update({ where: { id: req.params.id }, data: updateData });
+    }
+```
+
+- [ ] **Step 6c: 补全 `exam-lock.ts` 的调用点注释**
+
+把注释里的「开考事务与重新组卷」扩展为四个调用点：start-wps、paper-generation/retry、`PUT /:id` 换卷、`PUT /:id/questions` 改题；强调「任何改写 ExamQuestion/StudentExamQuestion 的路径都必须先取这把锁」。
+
 - [ ] **Step 7: 调整既有 publish 测试**
 
 `exam-publish-preflight.test.ts`：队列不可用/调度失败的断言从 `generationUpdate` 改为 `generationUpdateMany`（新实现用带 `status:'pending'` 守卫的 updateMany）；其余断言保持不变。逐条在报告中说明。
@@ -449,6 +487,7 @@ git commit -m "refactor(exams): 组卷调度收敛为 paper-generation-scheduler
   packages/server/src/services/paper-generation-scheduler.ts \
   packages/server/src/services/__tests__/paper-generation-scheduler.test.ts \
   packages/server/src/services/paper-generation-lifecycle.ts \
+  packages/server/src/services/exam-lock.ts \
   packages/server/src/routes/exams.ts \
   packages/server/src/routes/batches.ts \
   packages/server/src/routes/__tests__/exam-publish-preflight.test.ts
