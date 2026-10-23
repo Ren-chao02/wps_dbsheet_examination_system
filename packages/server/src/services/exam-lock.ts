@@ -12,7 +12,9 @@ import type { Prisma } from '@prisma/client';
  * 四者都必须在事务内先取锁，再读写 ExamQuestion / StudentExamQuestion，才能消除
  * 「预生成快照被删/换题」与「学生正在开考」之间的毫秒级窗口。
  * 模式：开考用共享锁（lockExamShared），其余三个入口用排他锁（lockExam）。
- * 规则：任何改写 ExamQuestion / StudentExamQuestion 的路径都必须先取这把锁。
+ * 规则：同步请求路径在改写 ExamQuestion / StudentExamQuestion 前必须先取这把锁；
+ * 预生成/修复 Worker 是明确例外（不持锁，靠 created>0 + submissions.none 守卫）。
+ * 持锁事务显式 timeout 15s：统一开考时等锁可能超过 Prisma 默认的 5s。
  * hashtextextended 返回 bigint，避免 hashtext 32 位碰撞。
  */
 export async function lockExam(tx: Prisma.TransactionClient, examId: string): Promise<void> {

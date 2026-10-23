@@ -387,7 +387,7 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
         await syncPaperIntoExam({ examId: req.params.id, paperId: effectivePaperId, tx });
         await invalidateUnstartedSnapshots(req.params.id, tx);
         return row;
-      });
+      }, { timeout: 15_000 });
       // 入队放在事务外：不能持锁等 Redis
       await reschedulePaperGeneration(req.params.id);
     } else {
@@ -524,7 +524,7 @@ examRouter.put('/:id/questions', async (req: Request, res: Response) => {
       });
 
       await invalidateUnstartedSnapshots(req.params.id, tx);
-    });
+    }, { timeout: 15_000 });
     // 入队放在事务外：不能持锁等 Redis（draft 时 reschedule skipped）
     await reschedulePaperGeneration(req.params.id);
 
@@ -796,7 +796,7 @@ examRouter.post('/:id/paper-generation/retry', async (req: Request, res: Respons
         },
       });
       return { mode: 'regenerate' as const };
-    });
+    }, { timeout: 15_000 });
 
     if (outcome.mode === 'preflight-failed') {
       return res.status(400).json({ message: '组卷预检未通过', preflight: outcome.issues });
