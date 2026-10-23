@@ -3,6 +3,7 @@ import { createApp } from './app';
 import { config } from './config';
 import { startGradingWorkers, stopGradingWorkers } from './jobs/grading-queue';
 import { startImportWorkers, stopImportWorkers } from './jobs/import-queue';
+import { startPaperGenerationWorkers, stopPaperGenerationWorkers } from './jobs/paper-generation-queue';
 import { initSocketIO, getIO } from './services/socket';
 import { notificationService } from './services/notification-service';
 import { wpsConfigService } from './services/wps-config-service';
@@ -27,6 +28,8 @@ httpServer.listen(config.port, () => {
   startGradingWorkers();
   // 启动 BullMQ 导入 Worker
   startImportWorkers();
+  // 启动 BullMQ 组卷预生成 Worker（发布考试后异步为每生生成卷子快照）
+  startPaperGenerationWorkers();
   // 启动 WPS Token 自动刷新定时任务
   if (config.nodeEnv !== 'test') {
     wpsConfigService.startAutoRefresh();
@@ -72,6 +75,7 @@ const shutdown = async () => {
     batchScheduler.stop();
     await stopGradingWorkers();
     await stopImportWorkers();
+    await stopPaperGenerationWorkers();
 
     // 主动关闭长连接：socket.io 客户端与 keep-alive 连接不关，close() 永不回调
     const io = getIO();
