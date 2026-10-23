@@ -97,9 +97,18 @@ export const options = {
 
 // ───────── 工具 ─────────
 
-/** 把 k6 的全局迭代序号映射到一个唯一学号，保证每个"学生"只出现一次 */
+/**
+ * 把 VU 映射到一个学号。
+ *
+ * opening：每人只跑一轮，用全局迭代序号保证唯一；
+ * steady：同一个 VU 要持续压同一名学生，必须用 VU id ——
+ * 用 iterationInTest 会让每轮迭代都换一个越界学号，登录立即失败。
+ */
 function studentUsername() {
-  return String(STUDENT_FROM + exec.scenario.iterationInTest);
+  const idx = SCENARIO === 'steady'
+    ? exec.vu.idInTest - 1
+    : exec.scenario.iterationInTest;
+  return String(STUDENT_FROM + idx);
 }
 
 /**
