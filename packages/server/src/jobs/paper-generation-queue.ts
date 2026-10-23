@@ -168,8 +168,8 @@ export async function processPaperGeneration(
     for (let i = 0; i < students.length; i += PAGE) {
       // 每页开始前检查考试状态：取消/结束/删除后不再继续生成
       const status = await deps.getExamStatus(examId);
-      if (!status || status === 'cancelled' || status === 'ended') {
-        await deps.markStatus(examId, { status: 'failed', error: `考试已${status === 'ended' ? '结束' : '取消或删除'}，生成中止` });
+      if (!status || status === 'cancelled' || status === 'ended' || status === 'archived') {
+        await deps.markStatus(examId, { status: 'failed', error: `考试已${status === 'cancelled' ? '取消或删除' : '结束'}，生成中止` });
         return { generated, missing: students.length - generated };
       }
 
