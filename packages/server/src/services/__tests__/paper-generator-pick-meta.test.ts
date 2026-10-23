@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { generateStudentPaper } from '../paper-generator';
 
 function stubTx(over: any = {}) {
-  const createMany = vi.fn();
+  // 默认按实际写入行数返回：generateStudentPaper 的 created 取 createMany 的 count
+  const createMany = vi.fn(async ({ data }: any) => ({ count: data.length }));
   const tx = {
     examQuestion: { findMany: vi.fn().mockResolvedValue([
       { slotIndex: 0, sortOrder: 0, slotType: 'rule', questionId: null, scoreOverride: 10, rule: { type: 'comprehensive', difficulty: 'easy' } },
@@ -39,5 +40,12 @@ describe('generateStudentPaper 的 pickMeta', () => {
     await generateStudentPaper('e-1', 's-1', tx as any);
     const ruleRow = createMany.mock.calls[0][0].data.find((r: any) => r.source === 'rule');
     expect(ruleRow.pickMeta).toMatchObject({ level: 'relax-difficulty', candidates: 1 });
+  });
+
+  it('createMany 因并发已存在而插入 0 行 → created=0（修复守卫依赖真实插入数）', async () => {
+    const { tx } = stubTx();
+    tx.studentExamQuestion.createMany.mockResolvedValue({ count: 0 });
+    const out = await generateStudentPaper('e-1', 's-1', tx as any);
+    expect(out.created).toBe(0);
   });
 });

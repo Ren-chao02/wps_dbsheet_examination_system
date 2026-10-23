@@ -20,6 +20,7 @@ import {
   type DifficultyTarget, type RepairSlotInput,
 } from '../services/paper-difficulty-repair';
 import { logger } from '../utils/logger';
+import { STARTED_SUBMISSION_STATUSES } from '../services/submission-statuses';
 
 // ============================================================
 // Redis 连接配置
@@ -123,11 +124,15 @@ export interface PaperGenerationDeps {
 }
 
 const defaultDeps: PaperGenerationDeps = {
-  listStudents: (examId) => prisma.examRoomStudent.findMany({
-    where: { assignment: { examId } },
-    select: { studentId: true },
-    orderBy: { studentId: 'asc' },   // 确定性：同一批学生顺序稳定
-  }),
+  listStudents: async (examId) => {
+    const rows = await prisma.examRoomStudent.findMany({
+      where: { assignment: { examId } },
+      select: { studentId: true },
+      orderBy: { studentId: 'asc' },   // 确定性：同一批学生顺序稳定
+    });
+    // 同一学生可能被分到多个考场（唯一键是 assignmentId+studentId）：去重后再生成/计数
+    return [...new Map(rows.map(r => [r.studentId, r])).values()];
+  },
   generate: (examId, studentId) => generateStudentPaper(examId, studentId),
   getExamStatus: async (examId) => (await prisma.exam.findUnique({ where: { id: examId }, select: { status: true } }))?.status ?? null,
   // updateMany 而非 update：迟到入队时状态行可能已被删除（考试取消级联），
@@ -176,9 +181,6 @@ async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
   });
   await Promise.all(runners);
 }
-
-/** 「已开考」状态：存在这些提交的学生，其卷子快照绝不能再动（与重新组卷的删除守卫同口径） */
-const STARTED_STATUSES = ['in_progress', 'submitted', 'grading', 'graded'] as const;
 
 /**
  * 为一名学生跑修复；返回是否发生替换（供汇总统计）。
@@ -237,7 +239,7 @@ export async function repairStudentPaper(
       where: {
         examId, studentId, slotIndex: change.slotIndex,
         // 原子守卫：更新瞬间该生已有开考提交 → 不换题
-        student: { submissions: { none: { examId, status: { in: [...STARTED_STATUSES] } } } },
+        student: { submissions: { none: { examId, status: { in: [...STARTED_SUBMISSION_STATUSES] } } } },
       },
       data: {
         questionId: change.to,
@@ -405,13 +407,15 @@ export async function processPaperGeneration(
   }
 }
 
-/** 进度查询：总数按考位名单，已生成按快照里出现过的学生去重计数 */
+/** 进度查询：总数按考位名单去重，已生成按快照里出现过的学生去重计数 */
 export async function getPaperGenerationProgress(examId: string): Promise<{ totalStudents: number; generatedStudents: number }> {
-  const [totalStudents, rows] = await Promise.all([
-    prisma.examRoomStudent.count({ where: { assignment: { examId } } }),
+  // 人数口径去重：同一学生可能被分到多个考场（唯一键 assignmentId+studentId），
+  // 直接 count 会把总数算大，进度永远到不了 100%
+  const [totalRows, generatedRows] = await Promise.all([
+    prisma.examRoomStudent.groupBy({ by: ['studentId'], where: { assignment: { examId } } }),
     prisma.studentExamQuestion.findMany({ where: { examId }, select: { studentId: true }, distinct: ['studentId'] }),
   ]);
-  return { totalStudents, generatedStudents: rows.length };
+  return { totalStudents: totalRows.length, generatedStudents: generatedRows.length };
 }
 
 // ============================================================

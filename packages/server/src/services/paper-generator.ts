@@ -45,7 +45,7 @@ export interface SlotRule {
 export interface GeneratePaperResult {
   /** 本次实际新写入的题位数（已存在则为 0，表示命中幂等） */
   created: number;
-  /** 该生卷子总题位数 */
+  /** 该生卷子题位数：本次新生成 = 实际插入数；已有快照 = 已有题位数 */
   total: number;
   /** 无法填满的题位（候选池为空），需要教师关注 */
   unfilledSlots: Array<{ slotIndex: number; reason: string }>;
@@ -165,12 +165,15 @@ export async function generateStudentPaper(
     usedQuestionIds.add(picked.id);
   }
 
+  let created = 0;
   if (rows.length > 0) {
-    // skipDuplicates + 唯一约束 = 并发/重试安全的幂等写入
-    await tx.studentExamQuestion.createMany({ data: rows, skipDuplicates: true });
+    // skipDuplicates + 唯一约束 = 并发/重试安全的幂等写入；
+    // 返回实际插入行数 —— 调用方用 created>0 判断"本次是否真的生成了新卷"
+    const res = await tx.studentExamQuestion.createMany({ data: rows, skipDuplicates: true });
+    created = res.count;
   }
 
-  return { created: rows.length, total: rows.length, unfilledSlots };
+  return { created, total: created, unfilledSlots };
 }
 
 /**

@@ -19,7 +19,7 @@ vi.mock('../../middleware/auth', async (importOriginal) => {
 const {
   preflightMock, enqueueMock,
   genFindUnique, genDeleteMany, genCreate, genUpdate, genUpsert,
-  studentCount, sqFindMany, sqDeleteMany, submissionCount, examFindUnique,
+  studentCount, studentGroupBy, sqFindMany, sqDeleteMany, submissionCount, examFindUnique,
 } = vi.hoisted(() => ({
   preflightMock: vi.fn(),
   enqueueMock: vi.fn(),
@@ -29,6 +29,7 @@ const {
   genUpdate: vi.fn(),
   genUpsert: vi.fn(),
   studentCount: vi.fn(),
+  studentGroupBy: vi.fn(),
   sqFindMany: vi.fn(),
   sqDeleteMany: vi.fn(),
   submissionCount: vi.fn(),
@@ -46,7 +47,7 @@ vi.mock('../../config/prisma', () => ({
   prisma: {
     exam: { findUnique: examFindUnique },
     examPaperGeneration: { findUnique: genFindUnique, deleteMany: genDeleteMany, create: genCreate, update: genUpdate, upsert: genUpsert },
-    examRoomStudent: { count: studentCount },
+    examRoomStudent: { count: studentCount, groupBy: studentGroupBy },
     studentExamQuestion: { findMany: sqFindMany, deleteMany: sqDeleteMany },
     studentSubmission: { count: submissionCount },
   },
@@ -66,6 +67,8 @@ beforeEach(() => {
     queuedAt: new Date('2026-10-23T01:00:00Z'), startedAt: null, finishedAt: null,
   });
   studentCount.mockResolvedValue(10);
+  // 进度总数走 groupBy 去重（同一学生可能被分到多个考场）
+  studentGroupBy.mockResolvedValue(Array.from({ length: 10 }, (_, i) => ({ studentId: `s-${i}` })));
   sqFindMany.mockResolvedValue([{ studentId: 's-1' }, { studentId: 's-2' }]);
   submissionCount.mockResolvedValue(0);
   enqueueMock.mockResolvedValue({ queued: true });

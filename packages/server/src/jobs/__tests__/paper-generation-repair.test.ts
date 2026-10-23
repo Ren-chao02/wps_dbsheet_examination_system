@@ -46,6 +46,8 @@ describe('repairStudentPaper', () => {
         }),
       }),
     });
+    // 修复只换题、不改分值：data 里出现 score 会让卷面总分与题位分脱节
+    expect(db.studentExamQuestion.updateMany.mock.calls[0][0].data).not.toHaveProperty('score');
   });
 
   it('没有难度目标 → 不做任何替换', async () => {
