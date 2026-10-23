@@ -3,7 +3,7 @@
  */
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import bcrypt from 'bcryptjs';
+
 import { z } from 'zod';
 import multer from 'multer';
 import path from 'path';
@@ -17,6 +17,7 @@ import { wpsConfigService } from '../services/wps-config-service';
 import { checkStudentAccess, denyAccess } from '../middleware/exam-ownership';
 import { scopeCtxOf, studentWhere, myClassIds } from '../services/data-scope';
 import { findIdentifierConflict, identifierConflictMessage } from '../services/user-identifiers';
+import { hashPassword, verifyPassword } from '../services/password-hash';
 
 export const studentRouter = Router();
 
@@ -522,7 +523,7 @@ studentRouter.post('/', async (req: Request, res: Response) => {
     }
 
     const password = data.password || generateDefaultPassword(data.studentId);
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await hashPassword(password);
 
     const student = await prisma.user.create({
       data: {
@@ -672,7 +673,7 @@ studentRouter.put('/:id/reset-password', async (req: Request, res: Response) => 
     }
 
     const password = generateResetPassword();
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await hashPassword(password);
 
     await prisma.user.update({
       where: { id: student.id },
@@ -985,7 +986,7 @@ export async function processImport(
       const rowsWithHash = await Promise.all(
         rows.map(async (row) => {
           const password = generateDefaultPassword(row.studentId);
-          const passwordHash = await bcrypt.hash(password, 10);
+          const passwordHash = await hashPassword(password);
           return { ...row, passwordHash };
         }),
       );

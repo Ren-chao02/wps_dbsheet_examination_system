@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express';
-import bcrypt from 'bcryptjs';
+
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { scopeCtxOf, myClassIds } from '../services/data-scope';
 import { findIdentifierConflict, identifierConflictMessage } from '../services/user-identifiers';
+import { hashPassword, verifyPassword } from '../services/password-hash';
 
 export const invitationRouter = Router();
 export const applicationRouter = Router();
@@ -436,7 +437,7 @@ applicationRouter.put('/batch-approve', async (req: Request, res: Response) => {
 
           const { classRoom } = application.invitation;
           const studentIdSuffix = application.studentId.slice(-6);
-          const passwordHash = await bcrypt.hash(studentIdSuffix, 10);
+          const passwordHash = await hashPassword(studentIdSuffix);
 
           // 创建用户
           await tx.user.create({
@@ -529,7 +530,7 @@ applicationRouter.put('/:id/approve', async (req: Request, res: Response) => {
 
     const { classRoom } = application.invitation;
     const studentIdSuffix = application.studentId.slice(-6);
-    const passwordHash = await bcrypt.hash(studentIdSuffix, 10);
+    const passwordHash = await hashPassword(studentIdSuffix);
 
     // 使用事务：创建用户 + 更新申请状态
     const [user, updatedApp] = await prisma.$transaction(async (tx) => {

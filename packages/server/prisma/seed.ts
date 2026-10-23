@@ -11,7 +11,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import fs from 'fs';
 import path from 'path';
 import { randomBytes } from 'crypto';
-import bcrypt from 'bcryptjs';
+import { hashPassword } from '../src/services/password-hash';
 
 const prisma = new PrismaClient();
 
@@ -176,7 +176,7 @@ async function main() {
     'teacher3',
     'teacher4',
   ]);
-  const hash = await bcrypt.hash(adminPassword, 10);
+  const hash = await hashPassword(adminPassword);
   for (const u of data.user ?? []) {
     if (staffUsernames.has(u.username)) {
       u.passwordHash = hash;

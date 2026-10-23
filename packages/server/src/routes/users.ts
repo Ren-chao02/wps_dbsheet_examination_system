@@ -1,10 +1,11 @@
 import { Router, Request, Response } from 'express';
-import bcrypt from 'bcryptjs';
+
 import { z } from 'zod';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { scopeCtxOf, studentWhere, assertStudentAccess, denyAccess } from '../services/data-scope';
 import { findIdentifierConflict, identifierConflictMessage } from '../services/user-identifiers';
+import { hashPassword, verifyPassword } from '../services/password-hash';
 
 export const userRouter = Router();
 userRouter.use(authenticate);
@@ -183,7 +184,7 @@ userRouter.post('/', authorize('admin'), async (req: Request, res: Response) => 
       return res.status(409).json({ message: identifierConflictMessage(conflict) });
     }
 
-    const passwordHash = await bcrypt.hash(data.password, 10);
+    const passwordHash = await hashPassword(data.password);
     const user = await prisma.user.create({
       data: {
         username: loginName,

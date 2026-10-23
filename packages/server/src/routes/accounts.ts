@@ -3,7 +3,7 @@
  */
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import bcrypt from 'bcryptjs';
+
 import { z } from 'zod';
 import ExcelJS from 'exceljs';
 import multer from 'multer';
@@ -12,6 +12,7 @@ import fs from 'fs';
 import { prisma } from '../config/prisma';
 import { authenticate, authorizePermission } from '../middleware/auth';
 import { findIdentifierConflict, identifierConflictMessage } from '../services/user-identifiers';
+import { hashPassword, verifyPassword } from '../services/password-hash';
 
 export const accountRouter = Router();
 
@@ -228,7 +229,7 @@ accountRouter.post('/', async (req: Request, res: Response) => {
       systemRoleId = presetRole?.id || null;
     }
 
-    const passwordHash = await bcrypt.hash(data.password, 10);
+    const passwordHash = await hashPassword(data.password);
     const user = await prisma.user.create({
       data: {
         username: loginName,
@@ -496,7 +497,7 @@ accountRouter.put('/reset-password/:id', async (req: Request, res: Response) => 
     // ⚠️ 不再重置为固定弱口令 123456：管理员重置后若不转告，任何人猜到就能登录；
     // 改为随机口令并只在此处返回一次，由管理员转告使用者。
     const password = generateResetPassword();
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await hashPassword(password);
     await prisma.user.update({
       where: { id: user.id },
       data: { passwordHash },
@@ -699,7 +700,7 @@ accountRouter.post('/import', upload.single('file'), async (req: Request, res: R
           continue;
         }
 
-        const passwordHash = await bcrypt.hash(password, 10);
+        const passwordHash = await hashPassword(password);
         await prisma.user.create({
           data: {
             username: loginName,

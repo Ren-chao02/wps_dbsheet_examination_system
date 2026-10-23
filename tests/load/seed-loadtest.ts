@@ -3,7 +3,7 @@
  * 前缀约定：用户名 9900xxxx / 题目与考试标题 [LOADTEST] / 考场编码 LT-
  */
 import { prisma } from '../../packages/server/src/config/prisma';
-import bcrypt from 'bcryptjs';
+import { hash as nativeHash } from '@node-rs/bcrypt';
 import fs from 'fs';
 
 if (process.env.LT_CONFIRM !== 'yes') {
@@ -48,7 +48,7 @@ async function cleanup() {
   const before = await cleanup();
   console.log('cleaned', JSON.stringify(before));
 
-  const hash = await bcrypt.hash(PASSWORD, 10);
+  const hash = await nativeHash(PASSWORD, { cost: 10 });
   const usernames = Array.from({ length: N }, (_, i) => String(STUDENT_FROM + i));
   await prisma.user.createMany({
     data: usernames.map((username, i) => ({
