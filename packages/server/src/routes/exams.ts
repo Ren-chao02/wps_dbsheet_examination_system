@@ -367,14 +367,16 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
     // 换卷判定与下面的 update data 同口径：只有请求显式提供 paperId 才算换卷/解绑。
     // 旧代码用 `paperId ?? null` 判断，导致「只改标题」被当成解绑，删光题位并把总分重置为 100。
     const effectivePaperId = paperId !== undefined ? (paperId ?? null) : exam.paperId;
-    const updateData = {
+    const updateData: any = {
       ...rest,
       // 仅在请求显式提供字段时才更新，否则保留原有值（避免编辑时误清空）
       startTime: data.startTime !== undefined ? (data.startTime ? new Date(data.startTime) : null) : exam.startTime,
       endTime: data.endTime !== undefined ? (data.endTime ? new Date(data.endTime) : null) : exam.endTime,
-      paperId: effectivePaperId,
       batchId: batchId !== undefined ? (batchId ?? null) : exam.batchId,
     };
+    // paperId 只在显式提供时写入：把预读值一并写回会让普通编辑与并发换卷交错成
+    // lost-update（普通编辑带着旧 paperId 覆盖刚换上的新卷）。换卷判定仍看 effectivePaperId。
+    if (paperId !== undefined) updateData.paperId = paperId ?? null;
 
     let updated;
     if (effectivePaperId !== exam.paperId) {
@@ -386,7 +388,8 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
         const row = await tx.exam.update({ where: { id: req.params.id }, data: updateData });
         await syncPaperIntoExam({ examId: req.params.id, paperId: effectivePaperId, tx });
         await invalidateUnstartedSnapshots(req.params.id, tx);
-        return row;
+        // sync 会再改 totalScore/difficultyTarget：返回重读的行，响应才是落库后的最终值
+        return (await tx.exam.findUnique({ where: { id: req.params.id } })) ?? row;
       }, { timeout: 15_000 });
       // 入队放在事务外：不能持锁等 Redis
       await reschedulePaperGeneration(req.params.id);
