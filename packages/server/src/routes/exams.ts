@@ -574,10 +574,12 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
     }
 
     // ✅ 校验：必须已分配考生，且所有考生都已分配 WPS 表格，否则不允许发布
-    const studentIds = (await prisma.examRoomStudent.findMany({
+    // 同一学生可能被分到多个考场（唯一键是 assignmentId+studentId）：
+    // 不去重会让 totalStudents 与未分配表格人数都偏高（#23）
+    const studentIds = [...new Set((await prisma.examRoomStudent.findMany({
       where: { assignment: { examId: req.params.id } },
       select: { studentId: true },
-    })).map(s => s.studentId);
+    })).map(s => s.studentId))];
     if (studentIds.length === 0) {
       return res.status(400).json({ message: '考试尚未分配考生，无法发布，请先在考试设置中分配考生' });
     }
@@ -622,7 +624,6 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
       generationStatus = await schedulePaperGeneration({
         examId: req.params.id,
         totalStudents: studentIds.length,
-        mode: 'reset',
       });
     } catch (err) {
       generationStatus = 'failed';

@@ -77,14 +77,16 @@ export async function enqueuePaperGeneration(examId: string): Promise<{ queued: 
   // 计时器在 finally 里清理：入队成功后它还挂着的话，请求/测试进程会被无谓地拖住 3 秒
   let timer: NodeJS.Timeout | undefined;
   try {
-    const jobId = `paper-generation-${examId}`;
+    const baseJobId = `paper-generation-${examId}`;
+    let jobId = baseJobId;
     await Promise.race([
       (async () => {
-        // 旧的同名 job 还在 completed/failed 集合里时，add 会被 BullMQ 静默去重：
-        // 重试接口会返回"已触发"但实际没有任何任务在跑。先移除；任务正在运行时
-        // remove 会抛错（locked），此时队列里确实有任务，忽略即可。
+        // 旧 job 在 completed/failed 集合里 → remove 后复用同一 jobId；
+        // 任务正在运行 → remove 抛 locked，此时若仍用同 jobId，add 会被 BullMQ
+        // 静默去重，改卷后的重新生成永远不会发生。改用带时间戳的后继 jobId，
+        // 生成本身幂等（已有快照早退），两轮任务先后/并发都安全。
         // remove 与 add 放在同一个 race 里：Redis 假死时 remove 也会挂住，不能只给 add 兜超时。
-        try { await q.remove(jobId); } catch { /* 运行中/已被移除 */ }
+        try { await q.remove(baseJobId); } catch { jobId = `${baseJobId}-${Date.now()}`; }
         await q.add('generate', { examId }, {
           jobId,
           attempts: 3,

@@ -47,6 +47,5 @@ export async function reschedulePaperGeneration(examId: string): Promise<'skippe
   return schedulePaperGeneration({
     examId,
     totalStudents: await countDistinctStudents(examId),
-    mode: 'reset',
   });
 }

@@ -1,5 +1,5 @@
 /**
- * 组卷预生成调度器的唯一入口：reset/fill 两种模式的状态行形状、
+ * 组卷预生成调度器的唯一入口：重置语义的状态行形状、
  * 入队调用、以及队列不可用时带 pending 守卫的 failed 回写。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -23,8 +23,8 @@ beforeEach(() => {
 });
 
 describe('schedulePaperGeneration', () => {
-  it('reset：清空上一轮 summary/时间戳后入队', async () => {
-    await expect(schedulePaperGeneration({ examId: 'e-1', totalStudents: 30, mode: 'reset' }))
+  it('清空上一轮 summary/时间戳后入队', async () => {
+    await expect(schedulePaperGeneration({ examId: 'e-1', totalStudents: 30 }))
       .resolves.toBe('pending');
     expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { examId: 'e-1' },
@@ -41,16 +41,9 @@ describe('schedulePaperGeneration', () => {
     expect(enqueue).toHaveBeenCalledWith('e-1');
   });
 
-  it('fill：保留上一轮结果，仅置 pending/清 error', async () => {
-    await schedulePaperGeneration({ examId: 'e-1', totalStudents: 30, mode: 'fill' });
-    const update = upsert.mock.calls[0][0].update;
-    expect(update).toMatchObject({ status: 'pending', error: null });
-    expect(update).not.toHaveProperty('summary');
-  });
-
   it('队列不可用 → 状态行标 failed（带 pending 守卫）', async () => {
     enqueue.mockResolvedValue({ queued: false });
-    await expect(schedulePaperGeneration({ examId: 'e-1', totalStudents: 30, mode: 'reset' }))
+    await expect(schedulePaperGeneration({ examId: 'e-1', totalStudents: 30 }))
       .resolves.toBe('failed');
     expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { examId: 'e-1', status: 'pending' },

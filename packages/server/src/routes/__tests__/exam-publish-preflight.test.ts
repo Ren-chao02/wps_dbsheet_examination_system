@@ -98,6 +98,18 @@ describe('POST /api/exams/:id/publish —— 组卷预检', () => {
     expect(enqueueMock).toHaveBeenCalledWith('e-1');
   });
 
+  it('同一学生分到两个考场 → totalStudents 去重', async () => {
+    preflightMock.mockResolvedValue({ ok: true, issues: [] });
+    examUpdate.mockResolvedValue({ ...examRow, status: 'published' });
+    // 唯一键是 assignmentId+studentId：同一学生进两个考场会返回两行，不去重会把总数算大
+    examRoomStudentFindMany.mockResolvedValue([
+      { studentId: 's-1' }, { studentId: 's-1' }, { studentId: 's-2' },
+    ]);
+    const res = await request(app).post('/api/exams/e-1/publish');
+    expect(res.status).toBe(200);
+    expect(generationUpsert.mock.calls[0][0].update.totalStudents).toBe(2);
+  });
+
   it('队列不可用 → 仍发布，但状态标 failed', async () => {
     preflightMock.mockResolvedValue({ ok: true, issues: [] });
     examUpdate.mockResolvedValue({ ...examRow, status: 'published' });
