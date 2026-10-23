@@ -49,6 +49,19 @@ describe('enqueuePaperGeneration 降级契约', () => {
     await expect(enqueuePaperGeneration('e-1')).resolves.toEqual({ queued: false });
   });
 
+  it('queue.add 永不 settle（Redis 假死）→ 3s 超时后 queued:false', async () => {
+    vi.useFakeTimers();
+    try {
+      const { enqueuePaperGeneration } = await loadQueue('redis://127.0.0.1:6379');
+      mockQueueAdd.mockReturnValue(new Promise(() => {})); // 模拟 ioredis 无限重连、add 挂住
+      const pending = enqueuePaperGeneration('e-1');
+      await vi.advanceTimersByTimeAsync(3000);
+      await expect(pending).resolves.toEqual({ queued: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('正常入队 → queued:true，且带同考试去重的 jobId', async () => {
     const { enqueuePaperGeneration } = await loadQueue('redis://127.0.0.1:6379');
     mockQueueAdd.mockResolvedValue({ id: 'job-1' });

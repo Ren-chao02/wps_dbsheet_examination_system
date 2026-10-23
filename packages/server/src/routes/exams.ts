@@ -638,8 +638,10 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
     // 真实缺口以生成结果 unfilledSlots 为准（会汇总进 ExamPaperGeneration.summary）。
     const preflight = await preflightExamPaper(req.params.id);
     if (!preflight.ok) {
+      // 首条 reason 拼进 message：前端目前只展示 message（明细要到 Task 7 才渲染），
+      // 不带原因的话教师看到"N 个题位没有可用题目"也不知道该去修什么。
       return res.status(400).json({
-        message: `组卷预检未通过：${preflight.issues.length} 个题位没有可用题目`,
+        message: `组卷预检未通过：${preflight.issues[0].reason}（共 ${preflight.issues.length} 项）`,
         preflight: preflight.issues,
       });
     }

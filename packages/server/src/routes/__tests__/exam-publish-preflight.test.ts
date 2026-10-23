@@ -49,6 +49,8 @@ vi.mock('../../services/data-scope', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return { ...actual, assertPaperRead: vi.fn(), questionWhere: vi.fn(() => ({})), questionPoolWhereForPaper: vi.fn(() => ({})) };
 });
+// 路由 catch 分支会打 logger.error；替换掉避免目标测试往 stdout 刷整段结构化 ERROR
+vi.mock('../../utils/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn() } }));
 
 import { examRouter } from '../exams';
 
@@ -78,6 +80,9 @@ describe('POST /api/exams/:id/publish —— 组卷预检', () => {
     const res = await request(app).post('/api/exams/e-1/publish');
     expect(res.status).toBe(400);
     expect(res.body.preflight).toEqual([{ slotIndex: 1, reason: '候选池为空', candidates: 0, signatureConflict: false }]);
+    // 前端 Task 7 之前只显示 message：首条原因必须已经拼进去，教师才知道该修什么
+    expect(res.body.message).toContain('候选池为空');
+    expect(res.body.message).toContain('共 1 项');
     expect(examUpdate).not.toHaveBeenCalled();
     expect(enqueueMock).not.toHaveBeenCalled();
   });
