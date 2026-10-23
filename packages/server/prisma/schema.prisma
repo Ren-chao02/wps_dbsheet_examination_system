@@ -312,6 +312,9 @@ model Paper {
   /// 显式上架到校级共享池（全校教师可读、可复制；改/删仍归创建者）
   sharedToSchool Boolean @default(false) @map("shared_to_school")
 
+  /// 难度目标（抽题题位）：{"easy":0.3,"medium":0.5,"hard":0.2}；null = 不约束
+  difficultyTarget Json? @map("difficulty_target")
+
   creator         User?            @relation("PaperCreator", fields: [createdBy], references: [id])
   department      Department?      @relation(fields: [departmentId], references: [id])
   paperQuestions  PaperQuestion[]
@@ -367,6 +370,9 @@ model Exam {
 
   paperId String? @map("paper_id") @db.Uuid
   batchId String? @map("batch_id") @db.Uuid // 关联批次
+
+  /// 绑定试卷时从 Paper 拷贝（与 rule 一样是绑定那一刻的快照）
+  difficultyTarget Json? @map("difficulty_target")
 
   // Relations
   creator          User?                    @relation("ExamCreator", fields: [createdBy], references: [id])
@@ -522,6 +528,9 @@ model StudentExamQuestion {
   /// 来源题位类型：fixed（固定题）/ rule（抽题），便于统计与排查
   source     String   @default("fixed") @db.VarChar(16)
   createdAt  DateTime @default(now()) @map("created_at")
+  /// 这道题怎么来的：{level:'strict'|'relax-schemaRefs'|'relax-difficulty'|'repair',
+  ///   candidates, wantedSignature, actualSignature, repairedFrom?}
+  pickMeta   Json?    @map("pick_meta")
 
   exam     Exam     @relation("ExamStudentPapers", fields: [examId], references: [id], onDelete: Cascade)
   student  User     @relation("StudentExamPaperOwner", fields: [studentId], references: [id])
