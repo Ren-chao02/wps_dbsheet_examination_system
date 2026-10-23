@@ -2306,10 +2306,12 @@ git commit -m "feat(teacher): 组卷报告补难度分布/降级统计 + 异常�
 | 20 | `PUT /:id` 换卷的 paperId 写入与题位重建/快照失效非事务 | **P1c 已闭合**：`lockExam + tx.exam.update + syncPaperIntoExam(tx) + invalidateUnstartedSnapshots(tx)` 同一事务；reschedule 在事务外（失败 500 时状态已一致；换卷分支同请求重试不会重排，需手动「重新组卷」或开考现场生成兜底；PUT /:id/questions 分支可直接重试） |
 | 21 | 批次激活级联发布**不跑预检阻断**，只逐场补预生成调度 | 终审裁定「先补调度、不阻断整批」；是否阻断请产品决定（建议 P1c 用 `paper-generation-scheduler` 统一三入口） |
 | 22 | 组卷调度逻辑重复（publish/retry/lifecycle/batch） | **P1c 已收敛**：`paper-generation-scheduler` 统一 publish/lifecycle/batch；retry 因「状态行写入必须在锁事务内」保留独立写入（`fill` 分支仍手写同形 update）。#6 的调度器抽取已完成核心部分 |
-| 23 | 名单去重：job 的 `listStudents`、进度查询、retry 已用去重计数；**publish 仍按 `examRoomStudent` 行数**（同一学生分到多考场时略高） | 边缘数据；P1c 后续把 publish 也改用 `countDistinctStudents` |
-| 24 | 预生成 job **运行中**改卷时，`reschedule` 的 `remove` 对 active job 失败被吞、`add` 同 jobId 被静默去重仍返回 `queued:true`：已失效的学生靠开考现场生成（内容正确），但存在极窄窗口某生保留旧快照 | P1c 用带尝试序号的 jobId 或先查 `queue.getJob` 状态 |
+| 23 | 名单去重 | **P1c 已闭合**：job 的 `listStudents`、进度查询、retry、publish 的 `studentIds` 均按 studentId 去重 |
+| 24 | 预生成 job 运行中改卷时同 jobId 被静默去重 | **P1c 已闭合**：`Queue.remove` 返回 0（locked）或抛错时改用 `${baseJobId}-${randomUUID()}` 的后继 jobId（真实契约，非抛错假设）。残留：waiting/delayed 的 UUID 后继不被显式清理，靠 removeOnComplete/Fail 20 截断 + 幂等消化 |
 | 25 | 批次激活逐场 `reschedule` 串行 | **P1c 已闭合**：改 `Promise.allSettled` 并行（单场失败只 warn，不影响批次响应）；极端多考试时并发上界=就绪考试数 |
 | 26 | `total=created` 后，并发下 `createMany` 全跳过时该生被计为 `missing`（卷子其实由开考路径插入） | 纯展示、极罕见；P1c 可在汇总里区分「并发已存在」 |
+| 27 | `PUT /:id` 的 `startTime`/`endTime`/`batchId` 仍写预读值（与 paperId 修掉前同类的 lost-update） | 普通编辑并发场景；P1c 后续按「未显式提供就不写」同口径处理 |
+| 28 | 旧版 `ExamForm` 保存时总会回显加载时的 `paperId`，可覆盖并发换卷 | 服务端语义是「显式值胜出」；客户端编辑表单改造留 P1c |
 
 ## 附：任务依赖图
 
