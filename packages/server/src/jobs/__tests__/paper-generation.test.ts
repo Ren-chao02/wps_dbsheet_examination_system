@@ -39,4 +39,17 @@ describe('processPaperGeneration', () => {
     expect(out.generated).toBe(0);
     expect(deps.markStatus).toHaveBeenLastCalledWith('e-1', expect.objectContaining({ status: 'failed' }));
   });
+
+  it('生成抛错 → 状态写回 failed，并把异常抛给 BullMQ 重试', async () => {
+    const deps = {
+      listStudents: vi.fn().mockResolvedValue([{ studentId: 's-0' }]),
+      generate: vi.fn().mockRejectedValue(new Error('DB timeout')),
+      getExamStatus: vi.fn().mockResolvedValue('published'),
+      markStatus: vi.fn().mockResolvedValue(undefined),
+    };
+    await expect(processPaperGeneration('e-1', deps as any)).rejects.toThrow('DB timeout');
+    expect(deps.markStatus).toHaveBeenLastCalledWith('e-1', expect.objectContaining({
+      status: 'failed', error: 'DB timeout',
+    }));
+  });
 });
