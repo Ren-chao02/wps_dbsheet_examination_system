@@ -13,31 +13,40 @@ import { config } from '../config';
 export function createLoginFailureLimiter(
   limit = config.login.ipLimit,
   windowMs = config.login.ipWindowMinutes * 60 * 1000,
+  maxInflight = config.login.ipMaxInflight,
 ) {
-  const buckets = new Map<string, { count: number; resetAt: number }>();
+  // pending 必须在场：只看"已完成失败数"会被并发绕过——攻击者同时发 N 个错误密码，
+  // 全部在计数前通过闸门。pending 给在途请求一个硬上限，失败预算仍按 401 计。
+  const buckets = new Map<string, { failed: number; pending: number; resetAt: number }>();
   let lastSweep = 0;
 
   return (req: Request, res: Response, next: NextFunction) => {
     const key = ipKeyGenerator(req.ip || 'unknown');
     const now = Date.now();
 
-    // 轻量清理：每 5 分钟扫一遍过期桶，避免大量来源把 Map 撑大
+    // 轻量清理：每 5 分钟扫一遍过期且无在途请求的桶，避免大量来源把 Map 撑大
     if (now - lastSweep > 5 * 60 * 1000) {
       lastSweep = now;
-      for (const [k, b] of buckets) if (now >= b.resetAt) buckets.delete(k);
+      for (const [k, b] of buckets) if (now >= b.resetAt && b.pending === 0) buckets.delete(k);
     }
 
-    const bucket = buckets.get(key);
-    if (bucket && now < bucket.resetAt && bucket.count >= limit) {
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { failed: 0, pending: 0, resetAt: now + windowMs };
+      buckets.set(key, bucket);
+    } else if (now >= bucket.resetAt) {
+      bucket.failed = 0;
+      bucket.resetAt = now + windowMs;
+    }
+
+    if (bucket.failed >= limit || bucket.pending >= maxInflight) {
       return res.status(429).json({ message: '登录尝试过于频繁，请稍后再试', code: 'TOO_MANY_ATTEMPTS' });
     }
 
+    bucket.pending += 1;
     res.on('finish', () => {
-      if (res.statusCode !== 401) return;
-      const at = Date.now();
-      const cur = buckets.get(key);
-      if (!cur || at >= cur.resetAt) buckets.set(key, { count: 1, resetAt: at + windowMs });
-      else cur.count += 1;
+      bucket!.pending = Math.max(0, bucket!.pending - 1);
+      if (res.statusCode === 401) bucket!.failed += 1;
     });
 
     next();
