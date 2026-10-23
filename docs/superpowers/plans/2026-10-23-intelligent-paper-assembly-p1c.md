@@ -654,6 +654,259 @@ git commit -m "fix(exams): 普通编辑不回写旧 paperId + 换卷响应回填
 
 ---
 
+### Task 6: start-wps 路由级锁测试
+
+**Files:**
+- Test: `packages/server/src/routes/__tests__/my-exams-start-wps-lock.test.ts`
+
+- [ ] **Step 1: 写测试（纯测试任务，不改生产代码）**
+
+要点：用一个**无实操题**的考试（`examQuestions: []`）绕开 WPS 表格与候选生成，只验证「新建答卷事务内取共享锁 + 建 submission」。mock 结构：
+
+```ts
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import request from 'supertest';
+import express from 'express';
+
+vi.mock('../../middleware/auth', async (importOriginal) => {
+  const actual = await importOriginal<any>();
+  return {
+    ...actual,
+    authenticate: (req: any, _res: any, next: any) => {
+      req.user = { id: 's-1', userId: 's-1', username: 'stu1', role: 'student', permissions: [] };
+      next();
+    },
+  };
+});
+
+const {
+  examFindUnique, submissionFindUnique, submissionUpdateMany, roomStudentFindFirst,
+  tableAssignmentFindUnique, paperQuestionFindMany, sessionFindFirst, txState, tx,
+} = vi.hoisted(() => {
+  const txState = { inTx: false };
+  const tx = {
+    executeRaw: vi.fn(async () => {
+      if (!txState.inTx) throw new Error('lock must be inside transaction');
+      return 1;
+    }),
+    examFindUnique: vi.fn(),
+    examQuestionFindMany: vi.fn(),
+    studentExamQuestionCount: vi.fn(),
+    studentExamQuestionFindMany: vi.fn(),
+    submissionCreate: vi.fn(),
+    sessionCreate: vi.fn(),
+  };
+  return {
+    examFindUnique: vi.fn(), submissionFindUnique: vi.fn(), submissionUpdateMany: vi.fn(),
+    roomStudentFindFirst: vi.fn(), tableAssignmentFindUnique: vi.fn(), paperQuestionFindMany: vi.fn(),
+    sessionFindFirst: vi.fn(), txState, tx,
+  };
+});
+
+vi.mock('../../config/prisma', () => {
+  const prismaMock: any = {
+    exam: { findUnique: examFindUnique },
+    studentSubmission: { findUnique: submissionFindUnique, updateMany: submissionUpdateMany },
+    examRoomStudent: { findFirst: roomStudentFindFirst },
+    examTableAssignment: { findUnique: tableAssignmentFindUnique },
+    studentExamQuestion: { findMany: paperQuestionFindMany },
+    examSession: { findFirst: sessionFindFirst },
+  };
+  prismaMock.$transaction = vi.fn(async (fn: any) => {
+    txState.inTx = true;
+    try {
+      const txClient: any = {
+        exam: { findUnique: tx.examFindUnique },
+        examQuestion: { findMany: tx.examQuestionFindMany },
+        studentExamQuestion: { count: tx.studentExamQuestionCount, findMany: tx.studentExamQuestionFindMany },
+        studentSubmission: { create: tx.submissionCreate },
+        examSession: { create: tx.sessionCreate },
+        $executeRaw: tx.executeRaw,
+      };
+      return await fn(txClient);
+    } finally { txState.inTx = false; }
+  });
+  return { prisma: prismaMock };
+});
+
+import { myExamRouter } from '../my-exams';
+
+const app = express();
+app.use(express.json());
+app.use('/api/my-exams', myExamRouter);
+
+const EXAM = {
+  id: 'e-1', title: '测试考试', status: 'published',
+  startTime: null, endTime: null, durationMinutes: 60, totalScore: 100, passScore: 60,
+  batch: null, examQuestions: [],
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  examFindUnique.mockResolvedValue(EXAM);
+  submissionFindUnique.mockResolvedValue(null);
+  submissionUpdateMany.mockResolvedValue({ count: 0 });
+  roomStudentFindFirst.mockResolvedValue({ id: 'es-1' });
+  tableAssignmentFindUnique.mockResolvedValue(null);
+  paperQuestionFindMany.mockResolvedValue([]);
+  sessionFindFirst.mockResolvedValue({ id: 'sess-1' });
+  tx.examFindUnique.mockResolvedValue({ status: 'published' });
+  tx.examQuestionFindMany.mockResolvedValue([]);
+  tx.studentExamQuestionCount.mockResolvedValue(0);
+  tx.studentExamQuestionFindMany.mockResolvedValue([]);
+  tx.submissionCreate.mockImplementation(async ({ data }: any) => ({ id: 'sub-1', ...data }));
+  tx.sessionCreate.mockResolvedValue({});
+});
+
+describe('POST /api/my-exams/:id/start-wps 的考试锁', () => {
+  it('新建答卷：事务内先取共享 advisory lock，再建 submission', async () => {
+    const res = await request(app).post('/api/my-exams/e-1/start-wps');
+    expect(res.status).toBe(200);
+    expect(tx.executeRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = tx.executeRaw.mock.calls[0];
+    const sql = strings.join('?');
+    expect(sql).toContain('pg_advisory_xact_lock_shared');
+    expect(sql).toContain('hashtextextended');
+    expect(values).toContain('e-1');
+    expect(txState.inTx).toBe(false);           // 事务已结束
+    expect(tx.submissionCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ examId: 'e-1', studentId: 's-1', status: 'in_progress' }),
+    }));
+  });
+
+  it('断点续考：不新建答卷、不取锁', async () => {
+    submissionFindUnique
+      .mockResolvedValueOnce({ id: 'sub-1', status: 'in_progress', startedAt: new Date() })
+      .mockResolvedValueOnce({ id: 'sub-1', status: 'in_progress', startedAt: new Date() });
+    submissionUpdateMany.mockResolvedValue({ count: 1 });
+
+    const res = await request(app).post('/api/my-exams/e-1/start-wps');
+    expect(res.status).toBe(200);
+    expect(tx.executeRaw).not.toHaveBeenCalled();
+    expect(tx.submissionCreate).not.toHaveBeenCalled();
+  });
+});
+```
+
+若 `computeStudentDeadline` 等对 exam 字段有额外要求，按报错补 fixture 字段；不得改生产代码来迁就测试。
+
+- [ ] **Step 2: 跑测试**
+
+```bash
+cd packages/server && npx vitest run src/routes/__tests__/my-exams-start-wps-lock.test.ts
+cd packages/server && npx tsc --noEmit -p tsconfig.json
+cd packages/server && npx eslint src/routes/__tests__/my-exams-start-wps-lock.test.ts
+```
+
+- [ ] **Step 3: 提交**
+
+```bash
+git commit -m "test(my-exams): start-wps 事务内共享锁与断点续考不取锁" -- \
+  packages/server/src/routes/__tests__/my-exams-start-wps-lock.test.ts
+```
+
+---
+
+### Task 7: `PUT /:id` 其余字段 lost-update + 客户端不回显未变化的 paperId
+
+**Files:**
+- Modify: `packages/server/src/routes/exams.ts`
+- Modify: `packages/client/src/pages/teacher/ExamForm.tsx`
+- Create: `packages/client/src/utils/exam-form-payload.ts`
+- Test: `packages/server/src/routes/__tests__/exam-binding-scope.test.ts`
+- Test: `packages/client/src/utils/__tests__/exam-form-payload.test.ts`
+
+- [ ] **Step 1: 服务端 updateData 只在显式提供时写 startTime/endTime/batchId**
+
+```ts
+    const updateData: any = { ...rest };
+    // 只有请求显式提供字段才写入：表单/接口回显旧值会覆盖并发修改（与 paperId 同口径）
+    if (data.startTime !== undefined) updateData.startTime = data.startTime ? new Date(data.startTime) : null;
+    if (data.endTime !== undefined) updateData.endTime = data.endTime ? new Date(data.endTime) : null;
+    if (batchId !== undefined) updateData.batchId = batchId ?? null;
+    if (paperId !== undefined) updateData.paperId = paperId ?? null;
+```
+
+测试：`exam-binding-scope.test.ts` 的「普通编辑（不含 paperId）」补断言 update data 不含 `startTime/endTime/batchId`；再补一条显式提供 `startTime` 时写 Date 的断言（按现有 mock 调整）。
+
+- [ ] **Step 2: 客户端 payload 抽出可测函数**
+
+```ts
+// packages/client/src/utils/exam-form-payload.ts
+export function buildExamPayload(values: any, existingExam: any | null, isEdit: boolean) {
+  const payload: any = {
+    ...values,
+    durationMinutes: values.durationMinutes ?? null,
+    passScore: values.passScore ?? null,
+    startTime: values.startTime ? values.startTime.toISOString() : null,
+    endTime: values.endTime ? values.endTime.toISOString() : null,
+    settings: {
+      ...(typeof existingExam?.settings === 'object' && existingExam?.settings !== null ? existingExam.settings : {}),
+      shuffleQuestions: values.shuffleQuestions === true,
+      earliestSubmitMinutes: values.earliestSubmitMinutes || 0,
+    },
+  };
+  delete payload.shuffleQuestions;
+  // 表单总会回显加载时的 paperId；编辑时未变化就不回传，避免覆盖并发换卷
+  if (isEdit && (values.paperId || null) === (existingExam?.paperId ?? null)) {
+    delete payload.paperId;
+  } else {
+    payload.paperId = values.paperId || null;
+  }
+  return payload;
+}
+```
+
+`ExamForm.tsx` 的 `onFinish` 改用 `buildExamPayload(values, existingExam, isEdit)`，删除原内联构造。
+
+- [ ] **Step 3: 客户端单测**
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { buildExamPayload } from '../exam-form-payload';
+
+const values = {
+  title: '考试', paperId: 'p-1',
+  startTime: null, endTime: null,
+  shuffleQuestions: true, earliestSubmitMinutes: 5,
+};
+
+describe('buildExamPayload', () => {
+  it('编辑且 paperId 未变化 → 不回传 paperId', () => {
+    const p = buildExamPayload(values, { paperId: 'p-1', settings: {} }, true);
+    expect(p).not.toHaveProperty('paperId');
+  });
+  it('编辑且 paperId 变化 → 回传新值', () => {
+    const p = buildExamPayload({ ...values, paperId: 'p-2' }, { paperId: 'p-1', settings: {} }, true);
+    expect(p.paperId).toBe('p-2');
+  });
+  it('创建 → 回传 paperId', () => {
+    const p = buildExamPayload(values, null, false);
+    expect(p.paperId).toBe('p-1');
+  });
+});
+```
+
+- [ ] **Step 4: 验证 + 提交**
+
+```bash
+cd packages/server && npx vitest run src/routes/__tests__/exam-binding-scope.test.ts src/routes/__tests__/exam-paper-generation-invalidation.test.ts
+cd packages/server && npx tsc --noEmit -p tsconfig.json
+cd packages/client && npm run typecheck
+cd packages/client && npm test
+```
+
+```bash
+git commit -m "fix(exams): 其余编辑字段同样只在显式提供时写入 + 客户端不回显未变化 paperId" -- \
+  packages/server/src/routes/exams.ts \
+  packages/server/src/routes/__tests__/exam-binding-scope.test.ts \
+  packages/client/src/pages/teacher/ExamForm.tsx \
+  packages/client/src/utils/exam-form-payload.ts \
+  packages/client/src/utils/__tests__/exam-form-payload.test.ts
+```
+
+---
+
 ### Task 3（控制器）：文档与终验
 
 - 更新计划附二：`#11`（advisory lock 关闭）、`#22`（publish/生命周期/批次已收敛；retry 因锁内事务保留独立写入）、`#25`（批次并行）。
