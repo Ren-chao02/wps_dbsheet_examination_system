@@ -49,8 +49,8 @@ vi.mock('../../jobs/paper-generation-queue', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return { ...actual, enqueuePaperGeneration: enqueueMock };
 });
-vi.mock('../../config/prisma', () => ({
-  prisma: {
+vi.mock('../../config/prisma', () => {
+  const prismaMock: any = {
     exam: { findUnique: examFindUnique, update: examUpdate },
     examQuestion: { deleteMany: examQuestionDeleteMany, createMany: examQuestionCreateMany },
     question: { findMany: questionFindMany },
@@ -59,11 +59,17 @@ vi.mock('../../config/prisma', () => ({
     studentExamQuestion: { deleteMany: sqDeleteMany },
     examRoomStudent: { groupBy: studentGroupBy },
     examPaperGeneration: { upsert: genUpsert, updateMany: genUpdateMany },
-  },
-}));
+  };
+  // 换卷/改题的题位重建 + 快照失效在事务内取考试锁：
+  // $transaction 把 mock 自身当 tx 传回，$executeRaw 模拟 advisory lock 的执行结果。
+  prismaMock.$transaction = vi.fn((fn: any) => fn(prismaMock));
+  prismaMock.$executeRaw = vi.fn().mockResolvedValue(1);
+  return { prisma: prismaMock };
+});
 vi.mock('../../utils/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 
 import { examRouter } from '../exams';
+import { prisma } from '../../config/prisma';
 
 const app = express();
 app.use(express.json());
@@ -100,6 +106,9 @@ describe('PUT /api/exams/:id —— 换卷/解绑后的预生成失效', () => {
       .send({ title: '期中', paperId: NEW_PAPER });
 
     expect(res.status).toBe(200);
+    // sync 重建题位 + 失效旧快照同事务持考试锁（与开考事务互斥）
+    expect((prisma as any).$transaction).toHaveBeenCalled();
+    expect((prisma as any).$executeRaw).toHaveBeenCalled();
     // 先同步题位（换卷）
     expect(examQuestionDeleteMany).toHaveBeenCalledWith({ where: { examId: 'e-1' } });
     // 快照失效必须带原子守卫：已有开考提交的学生绝不能被删
@@ -154,6 +163,9 @@ describe('PUT /api/exams/:id/questions —— 手工改题后的预生成失效'
       .send({ questionIds: [] });
 
     expect(res.status).toBe(200);
+    // 题位重建 + 快照失效同事务持考试锁
+    expect((prisma as any).$transaction).toHaveBeenCalled();
+    expect((prisma as any).$executeRaw).toHaveBeenCalled();
     expect(examQuestionDeleteMany).toHaveBeenCalledWith({ where: { examId: 'e-1' } });
     expect(sqDeleteMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
