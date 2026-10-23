@@ -627,9 +627,10 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
     } catch (err) {
       generationStatus = 'failed';
       logger.error({ err }, '组卷预生成调度失败');
-      // 尽力标记失败（upsert 成功时才有行；连行都没建时，开考兜底仍然成立）
+      // 尽力标记失败（upsert 成功时才有行；连行都没建时，开考兜底仍然成立）。
+      // 与 scheduler 同口径带 status:'pending' 守卫：迟到的 job 若已写成 done，不能倒回 failed。
       await prisma.examPaperGeneration
-        .updateMany({ where: { examId: req.params.id }, data: { status: 'failed', error: '组卷调度失败；开考时将现场生成' } })
+        .updateMany({ where: { examId: req.params.id, status: 'pending' }, data: { status: 'failed', error: '组卷调度失败；开考时将现场生成' } })
         .catch(() => {});
     }
 

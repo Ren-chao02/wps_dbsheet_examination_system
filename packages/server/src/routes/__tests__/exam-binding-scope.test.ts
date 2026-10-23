@@ -56,9 +56,17 @@ const { mockPrisma } = vi.hoisted(() => {
     studentExamQuestion: { deleteMany: vi.fn() },
     question: { findMany: vi.fn() },
   };
-  // 换卷/改题在事务内取考试锁：$transaction 把 mock 自身当 tx 传回，$executeRaw 模拟锁执行
-  prismaMock.$transaction = vi.fn((fn: any) => fn(prismaMock));
-  prismaMock.$executeRaw = vi.fn().mockResolvedValue(1);
+  // 换卷/改题在事务内取考试锁：$transaction 把 mock 自身当 tx 传回，
+  // $executeRaw 校验当前确实处于事务上下文 —— 将来若把 lockExam 挪到事务外，这里会直接抛错。
+  const txState = { inTx: false };
+  prismaMock.$transaction = vi.fn(async (fn: any) => {
+    txState.inTx = true;
+    try { return await fn(prismaMock); } finally { txState.inTx = false; }
+  });
+  prismaMock.$executeRaw = vi.fn(async () => {
+    if (!txState.inTx) throw new Error('lockExam must be called inside a transaction');
+    return 1;
+  });
   return { mockPrisma: prismaMock };
 });
 vi.mock('../../config/prisma', () => ({ prisma: mockPrisma }));

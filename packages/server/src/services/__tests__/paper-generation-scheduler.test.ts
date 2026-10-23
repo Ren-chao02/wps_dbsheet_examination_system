@@ -3,6 +3,7 @@
  * 入队调用、以及队列不可用时带 pending 守卫的 failed 回写。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 
 const { upsert, updateMany, enqueue } = vi.hoisted(() => ({
   upsert: vi.fn(),
@@ -29,6 +30,14 @@ describe('schedulePaperGeneration', () => {
       where: { examId: 'e-1' },
       update: expect.objectContaining({ status: 'pending', totalStudents: 30, startedAt: null }),
     }));
+    // 清空语义必须钉死：重复发布时旧 summary/失败原因不能被当成本轮状态展示。
+    // Prisma.JsonNull 是同一单例，用 toBe 才能区分「显式清空」与「忘了写（undefined = no-op）」。
+    const update = upsert.mock.calls[0][0].update;
+    expect(update).toMatchObject({
+      status: 'pending', totalStudents: 30, startedAt: null, finishedAt: null, error: null,
+    });
+    expect(update.summary).toBe(Prisma.JsonNull);
+    expect(update.unfilledSlots).toBe(Prisma.JsonNull);
     expect(enqueue).toHaveBeenCalledWith('e-1');
   });
 
