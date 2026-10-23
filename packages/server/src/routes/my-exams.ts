@@ -10,6 +10,7 @@ import { autoEndExpiredExams, studentExamVisibilityOR, computeStudentDeadline, c
 import { loadTablePreview } from '../services/wps-table-service';
 import { wpsConfigService } from '../services/wps-config-service';
 import { generateStudentPaper } from '../services/paper-generator';
+import { lockExam } from '../services/exam-lock';
 
 export const myExamRouter = Router();
 myExamRouter.use(authenticate);
@@ -557,6 +558,10 @@ myExamRouter.post('/:id/start-wps', async (req: Request, res: Response) => {
     } else {
       try {
         submission = await prisma.$transaction(async (tx) => {
+          // 与「重新组卷」共用考试锁：锁内重新校验状态 + 生成快照，
+          // 避免重试事务在本事务提交前删掉刚生成的快照。
+          await lockExam(tx, req.params.id);
+
           // 事务内重查考试状态：避免"入场校验通过 → 落库前考试已被结束"的竞态。
           // 结束时 finalize 只收已存在的答卷，新建的答卷会永久悬空在 in_progress。
           const fresh = await tx.exam.findUnique({
