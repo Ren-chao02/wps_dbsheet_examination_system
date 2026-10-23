@@ -8,6 +8,7 @@ import { AuditAction } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { config } from '../config';
 import { isLoopback } from '../utils/ip-utils';
+import { createLoginFailureLimiter } from '../middleware/login-failure-limiter';
 import { authenticate, JwtPayload, getUserPermissions } from '../middleware/auth';
 import { manualAuditLog } from '../middleware/audit-middleware';
 import { generateMathCaptcha, verifyCaptcha } from '../utils/captcha';
@@ -76,7 +77,8 @@ export function createLoginLimiter(
   });
 }
 
-const loginLimiter = createLoginLimiter();
+// 登录用「失败才计数」的限流器：成功请求不占额度，整班 NAT 并发不会误伤
+const loginLimiter = createLoginFailureLimiter();
 const bindLimiter = createLoginLimiter();
 const captchaLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

@@ -31,10 +31,9 @@ export const config = {
   login: {
     maxFailedAttempts: parseInt(process.env.LOGIN_MAX_FAILED || '10', 10),
     lockMinutes: parseInt(process.env.LOGIN_LOCK_MINUTES || '15', 10),
-    // 100 在 200~300 人同 IP 同时登录时会瞬时触顶（成功请求的"回退计数"要等响应结束，
-    // 并发峰值先撞上限），随后 429 重试又会打满验证码限流。账号锁定已挡住爆破，
-    // IP 限流只是异常流量兜底，因此按整班规模放宽到 1000（压测实测 300 人并发不再误伤）。
-    ipLimit: parseInt(process.env.LOGIN_IP_LIMIT || '1000', 10),
+    // 失败预算：只统计 401 失败（middleware/login-failure-limiter），成功请求不占额度，
+    // 因此整班 NAT 数百人同时登录不会误伤；保持 100/15 分钟的失败上限。
+    ipLimit: parseInt(process.env.LOGIN_IP_LIMIT || '100', 10),
     ipWindowMinutes: parseInt(process.env.LOGIN_IP_WINDOW_MINUTES || '15', 10),
   },
   // WPS 账号 SSO（与多维表格 API 的全局 token 是两套东西，绝不能互相写库）
