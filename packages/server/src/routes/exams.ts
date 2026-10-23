@@ -380,10 +380,14 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
     // 旧代码用 `paperId ?? null` 判断，导致「只改标题」被当成解绑，删光题位并把总分重置为 100。
     const effectivePaperId = paperId !== undefined ? (paperId ?? null) : exam.paperId;
     if (effectivePaperId !== exam.paperId) {
-      await syncPaperIntoExam({ examId: req.params.id, paperId: effectivePaperId });
-      // 换卷/解绑会改写题位：发布后预生成过的快照必须失效并重排，
-      // 否则 job 因幂等早退空转，未开考学生拿到的是旧卷。
-      await invalidateUnstartedSnapshots(req.params.id);
+      // 与开考事务共用考试锁：sync 重建题位与失效旧快照必须在同一事务内完成，
+      // 否则学生开考事务在途时会看到"题位已换、快照还是旧的"或快照被删。
+      await prisma.$transaction(async (tx) => {
+        await lockExam(tx, req.params.id);
+        await syncPaperIntoExam({ examId: req.params.id, paperId: effectivePaperId, tx });
+        await invalidateUnstartedSnapshots(req.params.id, tx);
+      });
+      // 入队放在事务外：不能持锁等 Redis
       await reschedulePaperGeneration(req.params.id);
     }
 
@@ -486,20 +490,7 @@ examRouter.put('/:id/questions', async (req: Request, res: Response) => {
       }
     }
 
-    // Delete existing and create new
-    await prisma.examQuestion.deleteMany({ where: { examId: req.params.id } });
-    if (questionIds.length > 0) {
-      await prisma.examQuestion.createMany({
-        data: questionIds.map(q => ({
-          examId: req.params.id,
-          questionId: q.questionId,
-          sortOrder: q.sortOrder,
-          scoreOverride: q.scoreOverride,
-        })),
-      });
-    }
-
-    // Update total score
+    // 总分依赖题目分值，先算好再进事务（题分查询不需要与题位重建原子）
     const questions = await prisma.question.findMany({
       where: { id: { in: questionIds.map(q => q.questionId) } },
     });
@@ -508,13 +499,30 @@ examRouter.put('/:id/questions', async (req: Request, res: Response) => {
       return sum + (q.scoreOverride ?? question?.score ?? 0);
     }, 0);
 
-    await prisma.exam.update({
-      where: { id: req.params.id },
-      data: { totalScore },
-    });
+    // 题位被手工改写：与开考事务共用考试锁，题位重建 + 旧快照失效必须原子完成
+    await prisma.$transaction(async (tx) => {
+      await lockExam(tx, req.params.id);
 
-    // 手工改题同样改写了题位：发布后的未开考快照失效并重排（draft 时删 0 行、reschedule skipped）。
-    await invalidateUnstartedSnapshots(req.params.id);
+      await tx.examQuestion.deleteMany({ where: { examId: req.params.id } });
+      if (questionIds.length > 0) {
+        await tx.examQuestion.createMany({
+          data: questionIds.map(q => ({
+            examId: req.params.id,
+            questionId: q.questionId,
+            sortOrder: q.sortOrder,
+            scoreOverride: q.scoreOverride,
+          })),
+        });
+      }
+
+      await tx.exam.update({
+        where: { id: req.params.id },
+        data: { totalScore },
+      });
+
+      await invalidateUnstartedSnapshots(req.params.id, tx);
+    });
+    // 入队放在事务外：不能持锁等 Redis（draft 时 reschedule skipped）
     await reschedulePaperGeneration(req.params.id);
 
     const updated = await prisma.exam.findUnique({

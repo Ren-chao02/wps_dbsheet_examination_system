@@ -45,8 +45,8 @@ vi.mock('../../utils/exam-utils', () => ({
   finalizeExamSubmissions: vi.fn().mockResolvedValue(undefined),
 }));
 
-const { mockPrisma } = vi.hoisted(() => ({
-  mockPrisma: {
+const { mockPrisma } = vi.hoisted(() => {
+  const prismaMock: any = {
     exam: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     examBatch: { findUnique: vi.fn() },
     paper: { findUnique: vi.fn() },
@@ -55,8 +55,12 @@ const { mockPrisma } = vi.hoisted(() => ({
     // 改题后会失效未开考快照（发布后预生成的快照）；本文件用例都是 draft，reschedule 会 skipped
     studentExamQuestion: { deleteMany: vi.fn() },
     question: { findMany: vi.fn() },
-  } as any,
-}));
+  };
+  // 换卷/改题在事务内取考试锁：$transaction 把 mock 自身当 tx 传回，$executeRaw 模拟锁执行
+  prismaMock.$transaction = vi.fn((fn: any) => fn(prismaMock));
+  prismaMock.$executeRaw = vi.fn().mockResolvedValue(1);
+  return { mockPrisma: prismaMock };
+});
 vi.mock('../../config/prisma', () => ({ prisma: mockPrisma }));
 
 import { examRouter } from '../exams';
