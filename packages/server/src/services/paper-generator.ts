@@ -59,7 +59,7 @@ function seededPickIndex(seed: string, poolSize: number): number {
 }
 
 /** 把 schemaRefs 归一化成可比较的签名（数组排序后拼接），空值统一为 '' */
-function schemaRefsSignature(refs: unknown): string {
+export function schemaRefsSignature(refs: unknown): string {
   if (!refs || typeof refs !== 'object') return '';
   const r = refs as { tables?: unknown; fields?: unknown };
   const norm = (v: unknown) =>
