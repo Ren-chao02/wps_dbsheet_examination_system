@@ -11,6 +11,7 @@ import { preflightExamPaper } from '../services/paper-preflight';
 import { syncPaperIntoExam } from '../services/paper-exam-sync';
 import { enqueuePaperGeneration, getPaperGenerationProgress } from '../jobs/paper-generation-queue';
 import { invalidateUnstartedSnapshots, reschedulePaperGeneration, countDistinctStudents } from '../services/paper-generation-lifecycle';
+import { schedulePaperGeneration } from '../services/paper-generation-scheduler';
 import { lockExam } from '../services/exam-lock';
 import { STARTED_SUBMISSION_STATUSES } from '../services/submission-statuses';
 import { logger } from '../utils/logger';
@@ -363,32 +364,34 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
     }
 
     const { paperId, batchId, ...rest } = data;
-    const updated = await prisma.exam.update({
-      where: { id: req.params.id },
-      data: {
-        ...rest,
-        // 仅在请求显式提供字段时才更新，否则保留原有值（避免编辑时误清空）
-        startTime: data.startTime !== undefined ? (data.startTime ? new Date(data.startTime) : null) : exam.startTime,
-        endTime: data.endTime !== undefined ? (data.endTime ? new Date(data.endTime) : null) : exam.endTime,
-        paperId: paperId !== undefined ? (paperId ?? null) : exam.paperId,
-        batchId: batchId !== undefined ? (batchId ?? null) : exam.batchId,
-      },
-    });
-
-    // 如果更换了试卷绑定，重新同步 ExamQuestion / totalScore / 难度目标。
-    // 与上面的 update data 同口径：只有请求显式提供 paperId 才算换卷/解绑。
+    // 换卷判定与下面的 update data 同口径：只有请求显式提供 paperId 才算换卷/解绑。
     // 旧代码用 `paperId ?? null` 判断，导致「只改标题」被当成解绑，删光题位并把总分重置为 100。
     const effectivePaperId = paperId !== undefined ? (paperId ?? null) : exam.paperId;
+    const updateData = {
+      ...rest,
+      // 仅在请求显式提供字段时才更新，否则保留原有值（避免编辑时误清空）
+      startTime: data.startTime !== undefined ? (data.startTime ? new Date(data.startTime) : null) : exam.startTime,
+      endTime: data.endTime !== undefined ? (data.endTime ? new Date(data.endTime) : null) : exam.endTime,
+      paperId: effectivePaperId,
+      batchId: batchId !== undefined ? (batchId ?? null) : exam.batchId,
+    };
+
+    let updated;
     if (effectivePaperId !== exam.paperId) {
-      // 与开考事务共用考试锁：sync 重建题位与失效旧快照必须在同一事务内完成，
-      // 否则学生开考事务在途时会看到"题位已换、快照还是旧的"或快照被删。
-      await prisma.$transaction(async (tx) => {
+      // 换卷时 exam.update 必须与题位重建/旧快照失效放在同一个锁事务：
+      // 否则事务失败会留下「exam.paperId 已指向新卷、ExamQuestion 仍是旧卷」，
+      // 且同请求重试时 effectivePaperId 已等于 exam.paperId，不再触发重建。
+      updated = await prisma.$transaction(async (tx) => {
         await lockExam(tx, req.params.id);
+        const row = await tx.exam.update({ where: { id: req.params.id }, data: updateData });
         await syncPaperIntoExam({ examId: req.params.id, paperId: effectivePaperId, tx });
         await invalidateUnstartedSnapshots(req.params.id, tx);
+        return row;
       });
       // 入队放在事务外：不能持锁等 Redis
       await reschedulePaperGeneration(req.params.id);
+    } else {
+      updated = await prisma.exam.update({ where: { id: req.params.id }, data: updateData });
     }
 
     res.json(updated);
@@ -611,30 +614,16 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
       data: { status: newStatus },
     });
 
-    // 预生成：建/重置状态行后入队。调度失败**不能**让发布变成 500——考试此时已经发布了，
+    // 预生成：重置状态行后入队（统一走 scheduler，见 services/paper-generation-scheduler.ts）。
+    // 调度失败**不能**让发布变成 500——考试此时已经发布了，
     // 正确语义是"发布成功 + 组卷欠账"（开考时现场生成兜底）。
-    // 重复发布时必须把上一轮的运行痕迹清掉（startedAt/finishedAt/error/summary），
-    // 否则前端会把旧进度/旧失败原因当成本轮状态展示。可空 Json 字段必须用
-    // Prisma.JsonNull / Prisma.DbNull 显式表达清空（undefined 才是 no-op，裸 null 不可赋值）。
     let generationStatus: 'pending' | 'failed' = 'pending';
     try {
-      await prisma.examPaperGeneration.upsert({
-        where: { examId: req.params.id },
-        create: { examId: req.params.id, status: 'pending', totalStudents: studentIds.length },
-        update: {
-          status: 'pending', totalStudents: studentIds.length,
-          queuedAt: new Date(), startedAt: null, finishedAt: null, error: null,
-          summary: Prisma.JsonNull, unfilledSlots: Prisma.JsonNull,
-        },
+      generationStatus = await schedulePaperGeneration({
+        examId: req.params.id,
+        totalStudents: studentIds.length,
+        mode: 'reset',
       });
-      const enqueued = await enqueuePaperGeneration(req.params.id);
-      if (!enqueued.queued) {
-        generationStatus = 'failed';
-        await prisma.examPaperGeneration.update({
-          where: { examId: req.params.id },
-          data: { status: 'failed', error: '组卷队列不可用（Redis 未启动）；开考时将现场生成' },
-        });
-      }
     } catch (err) {
       generationStatus = 'failed';
       logger.error({ err }, '组卷预生成调度失败');
