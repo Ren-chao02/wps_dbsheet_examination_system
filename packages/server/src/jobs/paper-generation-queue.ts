@@ -63,6 +63,8 @@ const ENQUEUE_TIMEOUT_MS = 3000;
 export async function enqueuePaperGeneration(examId: string): Promise<{ queued: boolean }> {
   const q = getPaperGenerationQueue();
   if (!q) return { queued: false };
+  // 计时器在 finally 里清理：入队成功后它还挂着的话，请求/测试进程会被无谓地拖住 3 秒
+  let timer: NodeJS.Timeout | undefined;
   try {
     await Promise.race([
       q.add('generate', { examId }, {
@@ -74,12 +76,16 @@ export async function enqueuePaperGeneration(examId: string): Promise<{ queued: 
         removeOnComplete: 20,
         removeOnFail: 20,
       }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('enqueue timeout')), ENQUEUE_TIMEOUT_MS)),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('enqueue timeout')), ENQUEUE_TIMEOUT_MS);
+      }),
     ]);
     return { queued: true };
   } catch (err) {
     // 队列不可用/超时都按"未入队"处理：调用方标 failed，开考现场生成兜底
     logger.warn({ examId, err }, '组卷预生成入队失败');
     return { queued: false };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
