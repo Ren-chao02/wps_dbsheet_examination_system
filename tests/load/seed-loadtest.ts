@@ -11,6 +11,8 @@ if (process.env.LT_CONFIRM !== 'yes') {
   process.exit(1);
 }
 const N = Number(process.env.LT_STUDENTS || 1000);
+// fixed = 5 道固定题；rule = 5 个抽题题位（30 道同能力点候选，压候选池查询）
+const MODE = process.env.LT_MODE === 'rule' ? 'rule' : 'fixed';
 const PASSWORD = process.env.LT_PASSWORD;
 if (!PASSWORD) {
   console.error('必须通过 LT_PASSWORD=<压测学生统一密码> 指定密码（不写入仓库）');
@@ -65,17 +67,20 @@ async function cleanup() {
     orderBy: { username: 'asc' },
   });
 
+  const QUESTION_COUNT = MODE === 'rule' ? 30 : 5;
   const questions = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < QUESTION_COUNT; i++) {
     const q = await prisma.question.create({
       data: {
-        title: `[LOADTEST] 压测单选 ${i + 1}`,
+        title: `[LOADTEST] ${MODE} 压测单选 ${i + 1}`,
         description: `压测题目 ${i + 1}`,
         type: 'single_choice',
         difficulty: 'easy',
         score: 20,
         status: 'published',
         answerRules: [],
+        // rule 模式靠能力点命中候选池；fixed 模式该字段不参与生成
+        capabilityIds: MODE === 'rule' ? ['lt-cap'] : [],
         objectiveAnswer: {
           options: [
             { key: 'A', text: '选项 A' },
@@ -93,7 +98,7 @@ async function cleanup() {
 
   const exam = await prisma.exam.create({
     data: {
-      title: '[LOADTEST] 千级开考压测',
+      title: `[LOADTEST] ${MODE} 开考压测`,
       description: '自动生成，请勿用于真实考试',
       mode: 'exam',
       durationMinutes: 60,
@@ -105,13 +110,22 @@ async function cleanup() {
       settings: {},
       createdBy: null,
       examQuestions: {
-        create: questions.map((q, i) => ({
-          questionId: q.id,
-          sortOrder: i,
-          scoreOverride: 20,
-          slotType: 'fixed',
-          slotIndex: i,
-        })),
+        create: MODE === 'rule'
+          ? Array.from({ length: 5 }, (_, i) => ({
+              questionId: null,
+              sortOrder: i,
+              scoreOverride: 20,
+              slotType: 'rule',
+              slotIndex: i,
+              rule: { capabilityIds: ['lt-cap'], difficulty: 'easy', type: 'single_choice' },
+            }))
+          : questions.map((q, i) => ({
+              questionId: q.id,
+              sortOrder: i,
+              scoreOverride: 20,
+              slotType: 'fixed',
+              slotIndex: i,
+            })),
       },
     },
   });
@@ -135,6 +149,7 @@ async function cleanup() {
     roomId: room.id,
     assignmentId: assignment.id,
     questionIds: questions.map(q => q.id),
+    mode: MODE,
     students: dbUsers.length,
     studentFrom: STUDENT_FROM,
   };
