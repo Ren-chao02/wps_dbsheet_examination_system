@@ -2294,6 +2294,15 @@ git commit -m "feat(teacher): 组卷报告补难度分布/降级统计 + 异常�
 | 8 | 逐卷降级展示：spec 写"阅卷详情"，实现改为组卷报告的「异常卷子」弹窗 | Task 14 实现（同一信息的集中视图，更利于排查） |
 | 9 | `npm test -w packages/server` 因 `dist/**/*.test.js` 常年红 | 本次顺手修（vitest 配置排除 dist） |
 | 10 | 超时分支缺 fake-timer 单测 | 本次顺手补 |
+| 11 | 「重新组卷」与开考并发的 **ms 级残留窗口**：学生已有已提交预生成快照、其开考事务在 DELETE 执行瞬间未提交时，仍可能删该生快照 | Task 6 复审确认；根治需 `my-exams` 与 retry 共用按 examId 的 advisory lock（**上线前 follow-up**） |
+| 12 | 迁移 `20261023082456_paper_difficulty_meta` 字典序早于已应用的 `20261023152420_paper_generation`（历史迁移用本地时间，本任务误用 UTC） | **控制器显式豁免**：独立表无依赖、开发库均已应用；后续迁移必须与 `ls prisma/migrations` 最大值比较 |
+| 13 | 修复只作用于**本次新生成**的卷（`created > 0`）；已有快照（含已开考）不修 | Task 13 审查修复；补生成时历史卷不会被修复（如需修复，另开「修复存量未开考卷」任务） |
+| 14 | 修复侧 `slot.slotIndex || i` 的 `i` 只数 rule 题位，与生成侧（数全部题位）在「历史脏 slotIndex=0 + fixed 混排」时可能错位 | 新写入路径始终写唯一 slotIndex；脏数据才触发，已注释说明（P1c 可改为按全部题位遍历取同一 i） |
+| 15 | 状态行卡 `running`（worker 硬崩/耗尽 attempts）时 retry 被 409 挡住，恰是恢复手段 | 后续用 `queue.getJob/getState` 判定真实任务状态，或加 force 参数 |
+| 16 | 异常卷子接口一次读全表再截 50 人；「查看异常卷子」入口只在非 `none` 分支 | 诊断接口，按需点击；历史考试可在卡片点「预生成组卷」建状态行后使用（Task 7 修复） |
+| 17 | `fill-missing` 的 upsert 不清 startedAt/finishedAt/summary（展示残留） | 纯展示；Worker 完成时覆盖 |
+| 18 | 修复器对 `NaN`/非数值目标无防御（`sum <= 0` 不拦 NaN），且 `key in dist` 有原型链风险 | 目标写入路径由 Task 9 校验；Task 9 落地后风险闭合，否则 P1c 补 `Number.isFinite` + Set 判定 |
+| 19 | Task 9（试卷 API/编辑器难度目标）**未完成**：并行会话未提交改动占用 `routes/papers.ts` / `PaperEditor.tsx` | 待并行会话提交后补做；在此之前用户无法在 UI 配置难度目标（Task 10/13 的链路已就绪） |
 
 ## 附：任务依赖图
 
