@@ -4,11 +4,13 @@
  * 发布考试后异步为名单内每个考生生成卷子快照。与判分队列同一套连接/降级策略：
  * Redis 不可用时 `queued: false`，发布仍成功，开考时走现场生成兜底。
  *
- * Worker 在 Task 5 接入；本文件先只提供入队能力，保证发布路径不依赖 Worker 是否存在。
+ * 入队与 Worker 在同一文件：发布路径只依赖入队，Worker 只在 listen 成功后启动。
  */
 
-import { Queue, type ConnectionOptions } from 'bullmq';
+import { Queue, Worker, type Job, type ConnectionOptions } from 'bullmq';
 import { config } from '../config';
+import { prisma } from '../config/prisma';
+import { generateStudentPaper } from '../services/paper-generator';
 import { logger } from '../utils/logger';
 
 // ============================================================
@@ -88,4 +90,134 @@ export async function enqueuePaperGeneration(examId: string): Promise<{ queued: 
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+// ============================================================
+// 预生成任务（分页、并发、取消、汇总）
+// ============================================================
+
+/** 依赖注入：生产用默认实现，测试用桩（避免真实队列/DB） */
+export interface PaperGenerationDeps {
+  listStudents: (examId: string) => Promise<Array<{ studentId: string }>>;
+  generate: (examId: string, studentId: string) => Promise<{ created: number; total: number; unfilledSlots: Array<{ slotIndex: number; reason: string }> }>;
+  getExamStatus: (examId: string) => Promise<string | null>;
+  markStatus: (examId: string, patch: { status: string; error?: string; summary?: any; unfilledSlots?: any }) => Promise<void>;
+}
+
+const defaultDeps: PaperGenerationDeps = {
+  listStudents: (examId) => prisma.examRoomStudent.findMany({
+    where: { assignment: { examId } },
+    select: { studentId: true },
+    orderBy: { studentId: 'asc' },   // 确定性：同一批学生顺序稳定
+  }),
+  generate: (examId, studentId) => generateStudentPaper(examId, studentId),
+  getExamStatus: async (examId) => (await prisma.exam.findUnique({ where: { id: examId }, select: { status: true } }))?.status ?? null,
+  // updateMany 而非 update：迟到入队时状态行可能已被删除（考试取消级联），
+  // 此时没有行可更新也不该让整个 job 再失败一次。
+  markStatus: async (examId, patch) => {
+    await prisma.examPaperGeneration.updateMany({ where: { examId }, data: {
+      status: patch.status,
+      ...(patch.error ? { error: patch.error } : {}),
+      ...(patch.summary ? { summary: patch.summary } : {}),
+      ...(patch.unfilledSlots ? { unfilledSlots: patch.unfilledSlots } : {}),
+      ...(patch.status === 'running' ? { startedAt: new Date() } : {}),
+      ...(patch.status === 'done' || patch.status === 'failed' ? { finishedAt: new Date() } : {}),
+    } });
+  },
+};
+
+/** 并发受限的 map：WPS 无关，瓶颈是本机 DB + CPU；4 是保守值 */
+async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      await fn(item);
+    }
+  });
+  await Promise.all(runners);
+}
+
+/**
+ * 为一场考试名单内的所有考生预生成卷子并写回汇总。
+ *
+ * 幂等：`generateStudentPaper` 遇到已有快照会直接返回 total=existing，
+ * 因此 Worker 无条件处理 job（包括"入队超时后迟到落库、状态行已被标 failed"的情况），
+ * 用本次结果覆盖行状态即可，不会重复生成。
+ */
+export async function processPaperGeneration(
+  examId: string,
+  deps: PaperGenerationDeps = defaultDeps,
+): Promise<{ generated: number; missing: number }> {
+  await deps.markStatus(examId, { status: 'running' });
+
+  const students = await deps.listStudents(examId);
+  let generated = 0;
+  const unfilled = new Map<string, { slotIndex: number; reason: string; students: number }>();
+
+  const PAGE = 200;
+  for (let i = 0; i < students.length; i += PAGE) {
+    // 每页开始前检查考试状态：取消/结束/删除后不再继续生成
+    const status = await deps.getExamStatus(examId);
+    if (!status || status === 'cancelled' || status === 'ended') {
+      await deps.markStatus(examId, { status: 'failed', error: `考试已${status === 'ended' ? '结束' : '取消或删除'}，生成中止` });
+      return { generated, missing: students.length - generated };
+    }
+
+    const page = students.slice(i, i + PAGE);
+    await mapWithConcurrency(page, 4, async ({ studentId }) => {
+      const r = await deps.generate(examId, studentId);
+      if (r.total > 0) generated += 1;
+      for (const u of r.unfilledSlots) {
+        const key = `${u.slotIndex}:${u.reason}`;
+        const cur = unfilled.get(key) ?? { slotIndex: u.slotIndex, reason: u.reason, students: 0 };
+        cur.students += 1;
+        unfilled.set(key, cur);
+      }
+    });
+  }
+
+  await deps.markStatus(examId, {
+    status: 'done',
+    summary: { generated, missing: students.length - generated },
+    unfilledSlots: [...unfilled.values()],
+  });
+  return { generated, missing: students.length - generated };
+}
+
+/** 进度查询：总数按考位名单，已生成按快照里出现过的学生去重计数 */
+export async function getPaperGenerationProgress(examId: string): Promise<{ totalStudents: number; generatedStudents: number }> {
+  const [totalStudents, rows] = await Promise.all([
+    prisma.examRoomStudent.count({ where: { assignment: { examId } } }),
+    prisma.studentExamQuestion.findMany({ where: { examId }, select: { studentId: true }, distinct: ['studentId'] }),
+  ]);
+  return { totalStudents, generatedStudents: rows.length };
+}
+
+// ============================================================
+// Worker（在 index.ts 的 listen 回调里启动）
+// ============================================================
+
+let worker: Worker | null = null;
+
+export function startPaperGenerationWorkers(): void {
+  const conn = getConnectionOpts();
+  if (!conn) {
+    logger.warn('[Worker] Redis 不可用，组卷预生成 Worker 未启动（开考时现场生成）');
+    return;
+  }
+  worker = new Worker('paper-generation', async (job: Job) => {
+    const { examId } = job.data as { examId: string };
+    logger.info({ examId, jobId: job.id }, '[Worker] 开始预生成卷子');
+    const result = await processPaperGeneration(examId);
+    logger.info({ examId, jobId: job.id, ...result }, '[Worker] 预生成完成');
+    return result;
+  }, { connection: conn, concurrency: 1 });  // 一场考试一个 job；并发在 job 内控制
+  worker.on('failed', (job, err) => logger.error({ jobId: job?.id, err }, '[Worker] 预生成失败'));
+  logger.info('[Worker] 组卷预生成 Worker 已启动');
+}
+
+export async function stopPaperGenerationWorkers(): Promise<void> {
+  await worker?.close();
+  worker = null;
 }
