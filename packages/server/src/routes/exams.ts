@@ -10,6 +10,8 @@ import { emitStudentSubmit, emitStudentUpdate } from '../services/socket';
 import { preflightExamPaper } from '../services/paper-preflight';
 import { syncPaperIntoExam } from '../services/paper-exam-sync';
 import { enqueuePaperGeneration, getPaperGenerationProgress } from '../jobs/paper-generation-queue';
+import { invalidateUnstartedSnapshots, reschedulePaperGeneration } from '../services/paper-generation-lifecycle';
+import { STARTED_SUBMISSION_STATUSES } from '../services/submission-statuses';
 import { logger } from '../utils/logger';
 
 export const examRouter = Router();
@@ -378,6 +380,10 @@ examRouter.put('/:id', async (req: Request, res: Response) => {
     const effectivePaperId = paperId !== undefined ? (paperId ?? null) : exam.paperId;
     if (effectivePaperId !== exam.paperId) {
       await syncPaperIntoExam({ examId: req.params.id, paperId: effectivePaperId });
+      // 换卷/解绑会改写题位：发布后预生成过的快照必须失效并重排，
+      // 否则 job 因幂等早退空转，未开考学生拿到的是旧卷。
+      await invalidateUnstartedSnapshots(req.params.id);
+      await reschedulePaperGeneration(req.params.id);
     }
 
     res.json(updated);
@@ -505,6 +511,10 @@ examRouter.put('/:id/questions', async (req: Request, res: Response) => {
       where: { id: req.params.id },
       data: { totalScore },
     });
+
+    // 手工改题同样改写了题位：发布后的未开考快照失效并重排（draft 时删 0 行、reschedule skipped）。
+    await invalidateUnstartedSnapshots(req.params.id);
+    await reschedulePaperGeneration(req.params.id);
 
     const updated = await prisma.exam.findUnique({
       where: { id: req.params.id },
@@ -693,7 +703,7 @@ examRouter.get('/:id/paper-generation/anomalies', async (req: Request, res: Resp
       byStudent.set(r.studentId, list);
     }
 
-    // 上限 50 人：这个接口是排查用，不是导出；超出的部分教师可以按学号定位后重查
+    // 上限 50 人：这个接口是排查用，不是导出；仅展示前 50 名学生
     const allIds = [...byStudent.keys()];
     const ids = allIds.slice(0, 50);
     const users = ids.length > 0
@@ -709,9 +719,6 @@ examRouter.get('/:id/paper-generation/anomalies', async (req: Request, res: Resp
     res.status(500).json({ message: '服务器错误' });
   }
 });
-
-// 「已开考」状态集合：这些提交一旦存在，对应学生的卷子快照绝不能再动
-const STARTED_SUBMISSION_STATUSES = ['in_progress', 'submitted', 'grading', 'graded'] as const;
 
 // POST /api/exams/:id/paper-generation/retry —— 补生成 / 重新组卷
 examRouter.post('/:id/paper-generation/retry', async (req: Request, res: Response) => {

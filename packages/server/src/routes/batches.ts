@@ -5,6 +5,8 @@ import { authenticate, authorize } from '../middleware/auth';
 import { validateCidrList } from '../utils/ip-utils';
 import { finalizeExamSubmissions } from '../utils/exam-utils';
 import { checkBatchAccess, denyAccess } from '../middleware/exam-ownership';
+import { reschedulePaperGeneration } from '../services/paper-generation-lifecycle';
+import { logger } from '../utils/logger';
 
 export const batchRouter = Router();
 batchRouter.use(authenticate);
@@ -287,6 +289,12 @@ batchRouter.put('/:id/status', async (req: Request, res: Response) => {
           where: { id: { in: readyExams.map(e => e.id) } },
           data: { status: 'published' },
         });
+        for (const e of readyExams) {
+          // 批次激活是集中统一考试的主发布路径；不补调度的话质量卡片会永远"暂无记录"
+          await reschedulePaperGeneration(e.id).catch((err) => {
+            logger.warn({ examId: e.id, err }, '批次级联发布后的组卷预生成调度失败');
+          });
+        }
         cascadePublished = readyExams.length;
       }
     }

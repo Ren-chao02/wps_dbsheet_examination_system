@@ -52,6 +52,8 @@ const { mockPrisma } = vi.hoisted(() => ({
     paper: { findUnique: vi.fn() },
     paperQuestion: { findMany: vi.fn() },
     examQuestion: { deleteMany: vi.fn(), createMany: vi.fn() },
+    // 改题后会失效未开考快照（发布后预生成的快照）；本文件用例都是 draft，reschedule 会 skipped
+    studentExamQuestion: { deleteMany: vi.fn() },
     question: { findMany: vi.fn() },
   } as any,
 }));
@@ -93,6 +95,7 @@ beforeEach(() => {
   mockPrisma.question.findMany.mockResolvedValue([]);
   mockPrisma.examQuestion.deleteMany.mockResolvedValue({ count: 0 });
   mockPrisma.examQuestion.createMany.mockResolvedValue({ count: 0 });
+  mockPrisma.studentExamQuestion.deleteMany.mockResolvedValue({ count: 0 });
   mockPrisma.exam.create.mockImplementation(async (args: any) => ({ id: 'exam-new', ...args.data }));
   mockPrisma.exam.update.mockImplementation(async (args: any) => ({ id: args.where.id, ...args.data }));
 });
