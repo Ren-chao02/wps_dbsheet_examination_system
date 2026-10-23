@@ -54,3 +54,41 @@ describe('createLoginFailureLimiter', () => {
     expect(next).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('createLoginFailureLimiter 的并发闸门', () => {
+  it('在途请求达到上限后拒绝新请求（防止并发失败绕过失败计数）', () => {
+    const limiter = createLoginFailureLimiter(2, 60_000, 3);
+    const req: any = { ip: '9.9.9.9' };
+    const next = vi.fn();
+
+    // 3 个请求同时进入（都还没 finish）→ 允许；第 4 个被在途上限挡住
+    const inflight = [fakeRes(200), fakeRes(200), fakeRes(200)];
+    for (const res of inflight) limiter(req, res, next);
+    expect(next).toHaveBeenCalledTimes(3);
+
+    const blocked = fakeRes(200);
+    limiter(req, blocked, next);
+    expect(blocked.status).toHaveBeenCalledWith(429);
+    expect(next).toHaveBeenCalledTimes(3);
+
+    // 全部以 401 结束后：失败预算（2）已超，后续请求继续被拒
+    for (const res of inflight) { res.statusCode = 401; res.finish(); }
+    const after = fakeRes(200);
+    limiter(req, after, next);
+    expect(after.status).toHaveBeenCalledWith(429);
+  });
+
+  it('在途上限不影响成功并发：上限内的成功请求全部放行', () => {
+    const limiter = createLoginFailureLimiter(1, 60_000, 5);
+    const req: any = { ip: '8.8.4.4' };
+    const next = vi.fn();
+    const inflight = Array.from({ length: 5 }, () => fakeRes(200));
+    for (const res of inflight) limiter(req, res, next);
+    expect(next).toHaveBeenCalledTimes(5);
+    for (const res of inflight) res.finish();
+    // 成功不占失败预算
+    const more = fakeRes(200);
+    limiter(req, more, next);
+    expect(next).toHaveBeenCalledTimes(6);
+  });
+});

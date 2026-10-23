@@ -34,6 +34,9 @@ export const config = {
     // 失败预算：只统计 401 失败（middleware/login-failure-limiter），成功请求不占额度，
     // 因此整班 NAT 数百人同时登录不会误伤；保持 100/15 分钟的失败上限。
     ipLimit: parseInt(process.env.LOGIN_IP_LIMIT || '100', 10),
+    // 同 IP 在途登录上限：成功请求不占失败预算，但并发在途数必须有界，
+    // 否则并发错误密码可以在计数前全部通过闸门。1000 足够整班 NAT 并发登录。
+    ipMaxInflight: parseInt(process.env.LOGIN_IP_MAX_INFLIGHT || '1000', 10),
     ipWindowMinutes: parseInt(process.env.LOGIN_IP_WINDOW_MINUTES || '15', 10),
   },
   // WPS 账号 SSO（与多维表格 API 的全局 token 是两套东西，绝不能互相写库）
