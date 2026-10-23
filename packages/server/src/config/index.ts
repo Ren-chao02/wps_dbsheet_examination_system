@@ -24,6 +24,27 @@ export const config = {
   jwt: {
     secret: jwtSecret,
     expiresIn: process.env.JWT_EXPIRES_IN || '24h',
+    // 「7 天内免登录」独立于默认有效期：不勾选时仍按 expiresIn（默认 24h）
+    rememberExpiresIn: process.env.JWT_REMEMBER_EXPIRES_IN || '7d',
+  },
+  // 登录安全：账号锁定阈值与 IP 失败限流（IP 阈值故意放宽，避免整班 NAT 误伤）
+  login: {
+    maxFailedAttempts: parseInt(process.env.LOGIN_MAX_FAILED || '10', 10),
+    lockMinutes: parseInt(process.env.LOGIN_LOCK_MINUTES || '15', 10),
+    ipLimit: parseInt(process.env.LOGIN_IP_LIMIT || '100', 10),
+    ipWindowMinutes: parseInt(process.env.LOGIN_IP_WINDOW_MINUTES || '15', 10),
+  },
+  // WPS 账号 SSO（与多维表格 API 的全局 token 是两套东西，绝不能互相写库）
+  wpsSso: {
+    enabled: process.env.WPS_SSO_ENABLED === 'true',
+    clientId: process.env.WPS_SSO_CLIENT_ID || '',
+    clientSecret: process.env.WPS_SSO_CLIENT_SECRET || '',
+    // 服务端自身公网地址，用于拼接 OAuth 回调地址（反向代理后必须显式配置）
+    publicBaseUrl: (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, ''),
+    // 前端公网地址；同源部署时留空即可回退到 publicBaseUrl
+    clientBaseUrl: (process.env.CLIENT_BASE_URL || '').replace(/\/$/, ''),
+    redirectUri: process.env.WPS_SSO_REDIRECT_URI || '',
+    scope: process.env.WPS_SSO_SCOPE || 'kso.user_base.read',
   },
   database: {
     url: process.env.DATABASE_URL!,

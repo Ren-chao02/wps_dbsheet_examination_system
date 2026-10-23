@@ -12,6 +12,15 @@ export interface User {
   permissions?: string[];
   createdAt: string;
   updatedAt?: string;
+  // 管理端用户列表额外字段（登录安全 / WPS SSO）
+  studentId?: string | null;
+  employeeId?: string | null;
+  accountStatus?: string;
+  wpsUserId?: string | null;
+  wpsBoundAt?: string | null;
+  failedLoginAttempts?: number;
+  lockedUntil?: string | null;
+  lastLoginAt?: string | null;
 }
 
 export interface LoginRequest {
@@ -542,6 +551,10 @@ export interface StudentInfo {
   major?: Major;
   classRoom?: ClassRoom;
   lastLoginAt?: string;
+  wpsUserId?: string | null;
+  wpsBoundAt?: string | null;
+  failedLoginAttempts?: number;
+  lockedUntil?: string | null;
   createdAt: string;
   /** 练习表格配置摘要（学生列表接口附带；供"已配置/未配置"展示） */
   practiceTableAssignment?: {
@@ -602,6 +615,10 @@ export interface Account {
   systemRole?: { roleCode: string; roleName: string };
   accountStatus: 'ENABLED' | 'DISABLED';
   lastLoginAt?: string;
+  wpsUserId?: string | null;
+  wpsBoundAt?: string | null;
+  failedLoginAttempts?: number;
+  lockedUntil?: string | null;
   createdAt: string;
 }
 

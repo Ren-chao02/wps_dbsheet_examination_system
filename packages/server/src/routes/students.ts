@@ -16,6 +16,7 @@ import { wpsConfigService } from '../services/wps-config-service';
 
 import { checkStudentAccess, denyAccess } from '../middleware/exam-ownership';
 import { scopeCtxOf, studentWhere, myClassIds } from '../services/data-scope';
+import { findIdentifierConflict, identifierConflictMessage } from '../services/user-identifiers';
 
 export const studentRouter = Router();
 
@@ -49,10 +50,11 @@ const upload = multer({
 const phoneRegex = /^1[3-9]\d{9}$/;
 
 const createStudentSchema = z.object({
-  username: z.string().min(2).max(64),
+  // 兼容旧客户端：仍可传，但服务端忽略，登录名统一由学号派生
+  username: z.string().min(2).max(64).optional(),
   password: z.string().min(6).optional(), // 可选，默认用学号后6位
   realName: z.string().min(1),
-  studentId: z.string().min(1), // 学号
+  studentId: z.string().min(1), // 学号，同时也是登录名
   gender: z.enum(['MALE', 'FEMALE']).optional(),
   phoneNumber: z.string().regex(phoneRegex, '手机号格式不正确').optional().or(z.literal('')),
   email: z.string().email().optional(),
@@ -183,6 +185,11 @@ studentRouter.get('/', async (req: Request, res: Response) => {
           majorId: true,
           classRoomId: true,
           accountStatus: true,
+          // 登录安全 / WPS SSO 管理
+          wpsUserId: true,
+          wpsBoundAt: true,
+          failedLoginAttempts: true,
+          lockedUntil: true,
           createdAt: true,
           department: { select: { id: true, name: true, code: true } },
           major: { select: { id: true, name: true, code: true } },
@@ -496,16 +503,10 @@ studentRouter.post('/', async (req: Request, res: Response) => {
       }
     }
 
-    // 用户名唯一性
-    const existingUsername = await prisma.user.findUnique({ where: { username: data.username } });
-    if (existingUsername) {
-      return res.status(409).json({ message: '用户名已存在' });
-    }
-
-    // 学号唯一性
-    const existingStudentId = await prisma.user.findUnique({ where: { studentId: data.studentId } });
-    if (existingStudentId) {
-      return res.status(409).json({ message: '学号已存在' });
+    // 学号同时是登录名：检查它是否已被任意账号的 username/studentId/employeeId 占用
+    const conflict = await findIdentifierConflict(data.studentId);
+    if (conflict) {
+      return res.status(409).json({ message: identifierConflictMessage(conflict) });
     }
 
     // 查询班级，获取 departmentId / majorId（仅当提供了 classRoomId 时）
@@ -525,7 +526,8 @@ studentRouter.post('/', async (req: Request, res: Response) => {
 
     const student = await prisma.user.create({
       data: {
-        username: data.username,
+        // 学生登录名 = 学号；不再接受独立用户名
+        username: data.studentId,
         passwordHash,
         realName: data.realName,
         studentId: data.studentId,
@@ -579,11 +581,11 @@ studentRouter.put('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ message: '学生不存在' });
     }
 
-    // 如果更新了 studentId，检查唯一性
+    // 如果更新了 studentId：学号即登录名，必须同步检查全局标识冲突
     if (data.studentId && data.studentId !== existing.studentId) {
-      const existingStudentId = await prisma.user.findUnique({ where: { studentId: data.studentId } });
-      if (existingStudentId) {
-        return res.status(409).json({ message: '学号已存在' });
+      const conflict = await findIdentifierConflict(data.studentId, existing.id);
+      if (conflict) {
+        return res.status(409).json({ message: identifierConflictMessage(conflict) });
       }
     }
 
@@ -605,7 +607,11 @@ studentRouter.put('/:id', async (req: Request, res: Response) => {
     const student = await prisma.user.update({
       where: { id: req.params.id },
       data: {
-        ...(data.studentId !== undefined && { studentId: data.studentId }),
+        ...(data.studentId !== undefined && {
+          studentId: data.studentId,
+          // 学号变化时同步登录名，避免旧学号继续可登录、新旧标识分叉
+          username: data.studentId,
+        }),
         ...(data.realName !== undefined && { realName: data.realName }),
         ...(data.gender !== undefined && { gender: data.gender }),
         ...(data.phoneNumber !== undefined && { phoneNumber }),
@@ -641,7 +647,7 @@ studentRouter.put('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ message: '学生不存在' });
     }
     if (err.code === 'P2002') {
-      return res.status(409).json({ message: '学号已存在' });
+      return res.status(409).json({ message: '学号或登录名已存在' });
     }
     res.status(500).json({ message: '服务器错误' });
   }
@@ -936,6 +942,40 @@ export async function processImport(
       email: email || undefined,
       classRoom: classRoom!,
     });
+  }
+
+  // 全局标识守卫：学号=登录名，不能与教师工号/管理员登录名跨列冲突。
+  // 批量预查一次，不逐行查库；已存在的 studentId 冲突在逐行校验里已经处理。
+  if (rows.length > 0) {
+    const ids = rows.map((row) => row.studentId);
+    const crossColumn = await prisma.user.findMany({
+      where: {
+        OR: [{ username: { in: ids } }, { employeeId: { in: ids } }],
+      },
+      select: { username: true, employeeId: true },
+    });
+    if (crossColumn.length > 0) {
+      const conflictIds = new Set<string>();
+      for (const item of crossColumn) {
+        if (item.username) conflictIds.add(item.username);
+        if (item.employeeId) conflictIds.add(item.employeeId);
+      }
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (!conflictIds.has(rows[i].studentId)) continue;
+        const row = rows[i];
+        failedRows++;
+        errors.push({
+          studentId: row.studentId,
+          realName: row.realName,
+          gender: row.gender === 'MALE' ? '男' : row.gender === 'FEMALE' ? '女' : '',
+          phoneNumber: row.phoneNumber || '',
+          email: row.email || '',
+          classRoomCode: row.classRoom.code,
+          error: '学号与已有账号的登录名/工号冲突',
+        });
+        rows.splice(i, 1);
+      }
+    }
   }
 
   // 批量创建学生（事务）— 先计算所有密码哈希

@@ -171,19 +171,6 @@ body[data-route-enter] .ant-row > .ant-col:nth-child(6) { animation-delay: 0.20s
 body[data-route-enter] .ant-row > .ant-col:nth-child(7) { animation-delay: 0.24s; }
 body[data-route-enter] .ant-row > .ant-col:nth-child(8) { animation-delay: 0.28s; }
 
-/* ━━━ Login Page ━━━ */
-.login-container {
-  display: flex; justify-content: center; align-items: center; min-height: 100vh;
-  background: linear-gradient(135deg, #e8edf5 0%, #f2f2f7 100%);
-}
-.login-card {
-  width: 380px; padding: 36px; background: #fff;
-  border-radius: var(--apple-radius-lg); border: 0.5px solid var(--apple-border-light);
-  box-shadow: 0 8px 30px rgba(0,0,0,0.08);
-  animation: zoomIn 0.35s var(--spring-bouncy) both;
-}
-.login-card h1 { text-align: center; margin-bottom: 24px; color: var(--apple-text-h1); font-weight: 700; }
-
 /* ━━━ Page containers ━━━ */
 .page-container { padding: 24px; max-width: 1400px; margin: 0 auto; }
 .page-header { margin-bottom: 24px; }

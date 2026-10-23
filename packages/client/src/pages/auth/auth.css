@@ -1,0 +1,575 @@
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/* 登录 / 绑定页 —— 陕西师范大学品牌分栏    */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.auth-shell {
+  /* 把全局 antd 覆写用的 accent 变量在登录页内换成校色；
+     全局 .ant-btn-primary 的 !important 规则会继承这个值，因此登录按钮变红，
+     而 danger 按钮仍由 .ant-btn-dangerous 的独立规则保住红色语义。 */
+  --apple-accent: #b50007;
+  --apple-accent-hover: #8e0005;
+  --apple-accent-bg: rgba(181, 0, 7, 0.08);
+  --snnu-red: #b50007;
+  --snnu-red-dark: #8e0005;
+  --snnu-serif: "Songti SC", "STSong", "SimSun", "Noto Serif SC", serif;
+
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(900px 520px at 12% 8%, rgba(181, 0, 7, 0.06), transparent 62%),
+    radial-gradient(700px 480px at 88% 92%, rgba(181, 0, 7, 0.05), transparent 66%),
+    #f4f1ef;
+  font-family: var(--apple-font);
+}
+
+/* 弹窗挂在 body 下（getPopupContainer），不在 .auth-shell 内；
+   用 rootClassName 给 portal 根节点补同一套 accent 变量，避免按钮/焦点变回蓝色 */
+.auth-modal {
+  --apple-accent: #b50007;
+  --apple-accent-hover: #8e0005;
+  --apple-accent-bg: rgba(181, 0, 7, 0.08);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 1120px;
+  min-height: 640px;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow:
+    0 30px 80px rgba(42, 5, 7, 0.16),
+    0 4px 16px rgba(42, 5, 7, 0.06);
+  animation: authCardIn 0.46s var(--spring-bouncy) both;
+}
+
+@keyframes authCardIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ===== 品牌区 ===== */
+.auth-brand {
+  position: relative;
+  flex: 0 0 44%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 40px 40px 30px;
+  color: #fff;
+  background: linear-gradient(158deg, #240305 0%, #4b0004 38%, #8e0005 72%, #b50007 100%);
+}
+
+.auth-brand__decor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.auth-brand__ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.auth-brand__ring--one {
+  width: 560px;
+  height: 560px;
+  right: -250px;
+  top: -220px;
+  box-shadow:
+    0 0 0 44px rgba(255, 255, 255, 0.025),
+    0 0 0 88px rgba(255, 255, 255, 0.018);
+}
+
+.auth-brand__ring--two {
+  width: 320px;
+  height: 320px;
+  left: -150px;
+  bottom: -170px;
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.auth-brand__glow {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  left: -90px;
+  bottom: -110px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 120, 100, 0.3), rgba(255, 120, 100, 0) 68%);
+}
+
+.auth-brand__top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.auth-brand__emblem {
+  width: 54px;
+  height: 54px;
+  object-fit: contain;
+  flex-shrink: 0;
+  opacity: 0.97;
+}
+
+.auth-brand__school {
+  font-family: var(--snnu-serif);
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  line-height: 1.1;
+}
+
+.auth-brand__school-en {
+  margin-top: 4px;
+  font-size: 8px;
+  letter-spacing: 1.6px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.auth-brand__copy {
+  position: relative;
+  z-index: 1;
+  margin-block: auto;
+  padding-block: 24px;
+}
+
+.auth-brand__kicker {
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.auth-brand__title {
+  margin-top: 10px;
+  font-family: var(--snnu-serif);
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1.22;
+  letter-spacing: 2px;
+  color: #fff;
+}
+
+.auth-brand__title span {
+  color: #ffd9d6;
+}
+
+.auth-brand__desc {
+  max-width: 320px;
+  margin-top: 20px;
+  font-size: 13px;
+  line-height: 1.9;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.auth-brand__points {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 28px;
+  padding: 0;
+  list-style: none;
+}
+
+.auth-brand__points li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.auth-brand__points li::before {
+  content: "✓";
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: #ffd9d6;
+  flex-shrink: 0;
+}
+
+.auth-brand__motto {
+  position: relative;
+  z-index: 1;
+  font-family: var(--snnu-serif);
+  font-size: 12px;
+  letter-spacing: 6px;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+/* ===== 表单区 ===== */
+.auth-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  background: #fff;
+}
+
+.auth-main__inner {
+  width: min(366px, 100%);
+  padding: 36px 42px;
+}
+
+.auth-eyebrow {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 2.6px;
+  color: #a9a0a0;
+}
+
+.auth-title {
+  margin: 8px 0 6px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #221a1a;
+}
+
+.auth-subtitle {
+  margin-bottom: 22px;
+  font-size: 12px;
+  color: #6f6767;
+}
+
+.auth-alert {
+  margin-bottom: 16px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.auth-form__fields .ant-form-item {
+  margin-bottom: 15px;
+}
+
+.auth-form__fields .ant-form-item-label > label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #5c5454;
+}
+
+.auth-shell .ant-input,
+.auth-shell .ant-input-affix-wrapper,
+.auth-shell .ant-input-password {
+  border-radius: 9px;
+}
+
+.auth-shell .ant-input-affix-wrapper,
+.auth-shell .ant-input {
+  min-height: 42px;
+}
+
+.auth-shell .ant-input-affix-wrapper > .ant-input {
+  min-height: auto;
+}
+
+.auth-shell .ant-input-affix-wrapper-focused,
+.auth-shell .ant-input-focused {
+  box-shadow: 0 0 0 3px rgba(181, 0, 7, 0.1) !important;
+}
+
+.auth-captcha-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.auth-captcha-row .ant-input-affix-wrapper {
+  flex: 1;
+}
+
+.auth-captcha {
+  width: 112px;
+  min-width: 112px;
+  height: 42px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e2dddd;
+  border-radius: 9px;
+  background: #fbf7f6;
+  cursor: pointer;
+  transition: border-color 0.15s var(--spring-smooth), box-shadow 0.15s var(--spring-smooth);
+}
+
+.auth-captcha:hover {
+  border-color: var(--snnu-red);
+}
+
+.auth-captcha:focus-visible,
+.auth-text-link:focus-visible,
+.auth-sso:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(181, 0, 7, 0.18);
+}
+
+.auth-captcha svg {
+  max-width: 100%;
+  max-height: 34px;
+}
+
+.auth-form__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 2px 0 16px;
+  font-size: 11.5px;
+  color: #6b6464;
+}
+
+.auth-shell .ant-checkbox-wrapper {
+  margin-inline-end: 0;
+  font-size: 11.5px;
+  color: #6b6464;
+}
+
+.auth-text-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--snnu-red);
+  font-size: 11.5px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.auth-text-link:hover {
+  color: var(--snnu-red-dark);
+  text-decoration: underline;
+}
+
+.auth-submit.ant-btn {
+  height: 44px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 4px;
+  box-shadow: 0 8px 22px rgba(181, 0, 7, 0.22) !important;
+}
+
+.auth-safe-note {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 10.5px;
+  color: #8a8282;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 12px;
+  font-size: 10.5px;
+  color: #9c9494;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #efebeb;
+}
+
+.auth-sso.ant-btn {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-color: #e2dddd;
+  border-radius: 9px;
+  font-size: 12.5px;
+  color: #3a3232;
+}
+
+.auth-sso.ant-btn:hover {
+  border-color: var(--snnu-red) !important;
+  color: var(--snnu-red) !important;
+}
+
+.auth-sso__mark {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: #1e6fff;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.auth-invite {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 11.5px;
+  color: #7a7272;
+}
+
+.auth-invite .auth-text-link {
+  margin-left: 4px;
+}
+
+.auth-note {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.7;
+  color: #a9a0a0;
+}
+
+.auth-dev {
+  margin-top: 18px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fbf3f3;
+  color: #8a6f6f;
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+/* ===== WPS 绑定页 ===== */
+.auth-binding-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #ece7e7;
+  border-radius: 10px;
+  background: #fbf9f9;
+}
+
+.auth-binding-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2b2323;
+}
+
+.auth-binding-hint {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: #8a8282;
+}
+
+.auth-binding-links {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  color: #b3aaaa;
+  font-size: 11px;
+}
+
+/* ===== 窄屏：品牌区折叠为顶部条 ===== */
+@media (max-width: 1023px) {
+  .auth-shell {
+    padding: 20px;
+  }
+
+  .auth-card {
+    flex-direction: column;
+    max-width: 560px;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .auth-brand {
+    flex: 0 0 auto;
+    padding: 22px 28px;
+  }
+
+  .auth-brand__emblem {
+    width: 40px;
+    height: 40px;
+  }
+
+  .auth-brand__school {
+    font-size: 19px;
+  }
+
+  .auth-brand__copy,
+  .auth-brand__motto {
+    display: none;
+  }
+
+  .auth-main {
+    overflow: visible;
+  }
+
+  .auth-main__inner {
+    padding: 28px 32px 36px;
+  }
+}
+
+@media (max-width: 640px) {
+  .auth-shell {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .auth-card {
+    min-height: 100vh;
+    max-width: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .auth-brand {
+    padding: 18px 20px;
+  }
+
+  .auth-brand__emblem {
+    width: 34px;
+    height: 34px;
+  }
+
+  .auth-brand__school {
+    font-size: 17px;
+    letter-spacing: 1px;
+  }
+
+  .auth-brand__school-en {
+    font-size: 7px;
+    letter-spacing: 1px;
+  }
+
+  .auth-main__inner {
+    width: 100%;
+    padding: 24px 22px 40px;
+  }
+
+  .auth-form__meta {
+    gap: 8px 12px;
+  }
+
+  .auth-submit.ant-btn {
+    letter-spacing: 2px;
+  }
+}

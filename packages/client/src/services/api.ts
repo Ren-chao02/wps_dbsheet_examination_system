@@ -22,7 +22,11 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      if (window.location.pathname !== '/login') {
+      localStorage.removeItem('permissions');
+      // 登录/绑定类接口的 401 由页面自己展示（如「绑定会话已过期」），
+      // 不要整页跳回 /login，否则用户看不到原因
+      const isAuthEndpoint = String(error.config?.url || '').startsWith('/auth/');
+      if (!isAuthEndpoint && window.location.pathname !== '/login') {
         // 考试中遇到 401（服务端重启换密钥/账号被禁用）会整页跳走、丢失当前题与切屏计数。
         // 这里先把当前 URL 存进 sessionStorage，登录成功后跳回（key: login_return_url，
         // 由 LoginPage 消费：登录成功后读取并清除、navigate 回去，未接入前只存不用）。

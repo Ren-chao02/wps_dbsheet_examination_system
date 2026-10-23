@@ -3,14 +3,11 @@ import { Page, expect } from '@playwright/test';
 /**
  * E2E 登录辅助
  *
- * 难点只有一个：登录接口强制要求验证码，而答案只能从图片上认出来。
- * 不过服务端把答案**以明文放进了 JWT payload**（只签名、未加密），
- * 所以这里拦截 /api/auth/captcha 的响应把答案解出来 —— 用的是页面自己
- * 拿到的那一个 token，因此与真实用户提交的完全一致。
- *
- * ⚠️ 这段代码同时也是一份证据：这个验证码挡不住自动化。要真正生效，
- * 答案应当存在服务端（Redis / 数据库）或改成 HMAC 校验，而不是塞进一个
- * 客户端持有的 token。
+ * 登录接口强制要求验证码。验证码答案现在只存在服务端，生产响应里没有答案；
+ * 非生产环境后端会额外返回 debugAnswer 供 E2E 使用（见 utils/captcha.ts）。
+ * 本地若以 NODE_ENV=production 起后端，需在后端环境设置 E2E_CAPTCHA_DEBUG=true
+ * （服务端只对回环地址放行，公网请求仍拿不到答案）。
+ * 这里拦截响应取出 debugAnswer。旧版本服务端仍返回 JWT token 时保留解码兜底。
  */
 
 export interface Credentials {
@@ -36,8 +33,12 @@ export async function armCaptchaSolver(page: Page): Promise<() => string | undef
   await page.route('**/api/auth/captcha', async (route) => {
     const response = await route.fetch();
     const body = await response.json().catch(() => null);
-    if (body?.captchaToken) {
+    if (body?.debugAnswer) {
+      answer = String(body.debugAnswer);
+    } else if (body?.captchaToken) {
+      // 兼容旧服务端：答案曾放在 JWT payload 里
       const payloadPart = String(body.captchaToken).split('.')[1];
+      if (!payloadPart) return;
       const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
       answer = String(payload.answer);
     }
@@ -61,11 +62,11 @@ export async function login(page: Page, creds: Credentials, expectPath: string):
     throw new Error('未能解出验证码答案 —— 请确认 /api/auth/captcha 仍返回 captchaToken');
   }
 
-  await page.getByPlaceholder('用户名').fill(creds.username);
+  await page.getByPlaceholder('学号 / 用户名').fill(creds.username);
   await page.getByPlaceholder('密码').fill(creds.password);
   await page.getByPlaceholder('验证码').fill(answer);
 
-  await page.getByRole('button', { name: /登\s*录/ }).click();
+  await page.locator('button[type="submit"]').click();
 
   await expect(page).toHaveURL(new RegExp(expectPath), { timeout: 20_000 });
 }

@@ -166,7 +166,16 @@ async function main() {
 
   // 管理员/教师账号改用强口令（学生演示账号保持原样，部署后请自行清理）
   const { password: adminPassword, generated } = resolveAdminPassword();
-  const staffUsernames = new Set(['admin', 'teacher1', 'teacher2', 'teacher3', 'teacher4']);
+  // 新模型：教师登录名 = 工号；旧 dump 里的 teacher1-4 也保留，避免历史种子文件漏改口令
+  const staffUsernames = new Set([
+    'admin',
+    'T2026001',
+    'T2026002',
+    'teacher1',
+    'teacher2',
+    'teacher3',
+    'teacher4',
+  ]);
   const hash = await bcrypt.hash(adminPassword, 10);
   for (const u of data.user ?? []) {
     if (staffUsernames.has(u.username)) {

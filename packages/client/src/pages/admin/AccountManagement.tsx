@@ -6,6 +6,7 @@ import {
 import {
   PlusOutlined, EditOutlined, DeleteOutlined,
   ImportOutlined, ExportOutlined, KeyOutlined,
+  DisconnectOutlined, UnlockOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
@@ -102,6 +103,8 @@ export default function AccountManagement() {
       remark: account.remark,
       email: account.email,
       role: account.role,
+      employeeId: account.employeeId,
+      username: account.username,
       systemRoleId: account.systemRoleId,
       accountStatus: account.accountStatus,
       departmentId: account.departmentId ?? undefined,
@@ -120,6 +123,10 @@ export default function AccountManagement() {
           remark: values.remark || null,
           email: values.email || null,
           role: values.role,
+          // 教师：工号即登录名；管理员：保留原来的系统登录名
+          ...(values.role === 'teacher' && values.employeeId
+            ? { employeeId: values.employeeId }
+            : {}),
           systemRoleId: values.systemRoleId || null,
           accountStatus: values.accountStatus,
           departmentId: values.departmentId || null,
@@ -137,13 +144,16 @@ export default function AccountManagement() {
         message.success('更新成功');
       } else {
         await api.post('/accounts', {
-          username: values.username,
           password: values.password,
           realName: values.realName,
           gender: values.gender || null,
           remark: values.remark || null,
           email: values.email || null,
           role: values.role,
+          // 教师只送工号（后端派生登录名）；管理员只送系统登录名
+          ...(values.role === 'teacher'
+            ? { employeeId: values.employeeId }
+            : { username: values.username }),
           systemRoleId: values.systemRoleId || null,
           departmentId: values.departmentId || null,
         });
@@ -208,6 +218,29 @@ export default function AccountManagement() {
     }
   };
 
+  const handleUnbindWps = async (id: string) => {
+    try {
+      await api.delete(`/users/${id}/wps-binding`);
+      message.success('WPS 绑定已解除');
+      fetchAccounts(data.page);
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '解绑失败');
+    }
+  };
+
+  const handleUnlock = async (id: string) => {
+    try {
+      await api.delete(`/users/${id}/login-lock`);
+      message.success('登录锁定已解除');
+      fetchAccounts(data.page);
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '解锁失败');
+    }
+  };
+
+  const isLocked = (account: Account) =>
+    Boolean(account.lockedUntil && new Date(account.lockedUntil).getTime() > Date.now());
+
   const handleExport = async () => {
     try {
       const response = await api.get('/accounts/export', { responseType: 'blob' });
@@ -238,7 +271,11 @@ export default function AccountManagement() {
 
   const columns = [
     {
-      title: '用户名', dataIndex: 'username', key: 'username', width: 120,
+      title: '登录名', dataIndex: 'username', key: 'username', width: 130,
+    },
+    {
+      title: '工号', dataIndex: 'employeeId', key: 'employeeId', width: 110,
+      render: (v: string | null | undefined) => v || '—',
     },
     {
       title: '姓名', dataIndex: 'realName', key: 'realName', width: 100,
@@ -277,6 +314,17 @@ export default function AccountManagement() {
       },
     },
     {
+      title: 'WPS', dataIndex: 'wpsUserId', key: 'wpsUserId', width: 90,
+      render: (v: string | null | undefined) => (
+        <Tag color={v ? 'blue' : 'default'}>{v ? '已绑定' : '未绑定'}</Tag>
+      ),
+    },
+    {
+      title: '登录状态', key: 'loginStatus', width: 90,
+      render: (_: any, r: Account) =>
+        isLocked(r) ? <Tag color="red">锁定中</Tag> : <Tag color="green">正常</Tag>,
+    },
+    {
       title: '备注', dataIndex: 'remark', key: 'remark', width: 120, ellipsis: true,
       render: (v: string | null) => v || '—',
     },
@@ -285,10 +333,33 @@ export default function AccountManagement() {
       render: (v: string) => new Date(v).toLocaleString('zh-CN'),
     },
     {
-      title: '操作', key: 'actions', width: 300,
+      title: '操作', key: 'actions', width: 400,
       render: (_: any, r: Account) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(r)}>编辑</Button>
+          {isLocked(r) && (
+            <Button
+              size="small"
+              icon={<UnlockOutlined />}
+              title="解除登录锁定"
+              onClick={() => handleUnlock(r.id)}
+            >
+              解锁
+            </Button>
+          )}
+          <Popconfirm
+            title={`解除 ${r.username} 的 WPS 绑定？`}
+            description="解绑后该用户下次需重新完成 WPS 首次绑定。"
+            onConfirm={() => handleUnbindWps(r.id)}
+            disabled={!r.wpsUserId}
+          >
+            <Button
+              size="small"
+              icon={<DisconnectOutlined />}
+              title="解除 WPS 绑定"
+              disabled={!r.wpsUserId}
+            />
+          </Popconfirm>
           <Popconfirm
             title={`确定重置 ${r.username} 的密码？`}
             onConfirm={() => handleResetPassword(r.id, r.username)}
@@ -340,7 +411,7 @@ export default function AccountManagement() {
         columns={columns}
         rowKey="id"
         loading={loading}
-        scroll={{ x: 1300 }}
+        scroll={{ x: 1600 }}
         pagination={{
           current: data.page,
           total: data.total,
@@ -363,14 +434,9 @@ export default function AccountManagement() {
       >
         <Form form={form} layout="vertical">
           {!editingAccount && (
-            <>
-              <Form.Item name="username" label="用户名" rules={[{ required: true, min: 2 }]}>
-                <Input placeholder="登录用户名" />
-              </Form.Item>
-              <Form.Item name="password" label="密码" rules={[{ required: true, min: 6 }]}>
-                <Input.Password placeholder="至少6位" />
-              </Form.Item>
-            </>
+            <Form.Item name="password" label="密码" rules={[{ required: true, min: 6 }]}>
+              <Input.Password placeholder="至少6位" />
+            </Form.Item>
           )}
           <Form.Item name="realName" label="姓名">
             <Input placeholder="真实姓名" />
@@ -394,6 +460,39 @@ export default function AccountManagement() {
               <Select.Option value="admin">管理员</Select.Option>
             </Select>
           </Form.Item>
+
+          {/* 登录标识按角色派生：教师=工号，管理员=系统登录名 */}
+          <Form.Item shouldUpdate={(prev, cur) => prev.role !== cur.role} noStyle>
+            {({ getFieldValue }) =>
+              getFieldValue('role') === 'teacher' ? (
+                <>
+                  <Form.Item
+                    name="employeeId"
+                    label="工号（登录名）"
+                    tooltip="教师登录名由工号自动派生"
+                    rules={[{ required: true, message: '请输入教师工号' }]}
+                  >
+                    <Input placeholder="教师工号，同时作为登录名" />
+                  </Form.Item>
+                  {editingAccount && (
+                    <Form.Item label="当前登录名">
+                      <Input value={editingAccount.username} disabled />
+                    </Form.Item>
+                  )}
+                </>
+              ) : (
+                <Form.Item
+                  name="username"
+                  label="系统登录名"
+                  tooltip="管理员是系统账号，没有学号/工号，使用独立登录名"
+                  rules={[{ required: true, message: '请输入系统登录名', min: 2 }]}
+                >
+                  <Input placeholder="管理员系统登录名" disabled={!!editingAccount} />
+                </Form.Item>
+              )
+            }
+          </Form.Item>
+
           <Form.Item name="systemRoleId" label="系统角色">
             <Select allowClear placeholder="选择系统角色" options={roleOptions} />
           </Form.Item>
