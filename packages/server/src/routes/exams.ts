@@ -1,11 +1,14 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { autoEndExpiredExams, finalizeExamSubmissions } from '../utils/exam-utils';
 import { checkExamAccess, denyAccess } from '../middleware/exam-ownership';
 import { scopeCtxOf, examWhere, assertExamAccess, assertPaperRead, questionWhere } from '../services/data-scope';
 import { emitStudentSubmit, emitStudentUpdate } from '../services/socket';
+import { preflightExamPaper } from '../services/paper-preflight';
+import { enqueuePaperGeneration } from '../jobs/paper-generation-queue';
 
 export const examRouter = Router();
 examRouter.use(authenticate);
@@ -628,6 +631,18 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
       return res.status(400).json({ message: `还有 ${missingTables.length} 名考生未分配 WPS 表格，无法发布` });
     }
 
+    // ── 组卷预检（硬约束）──
+    // 预检不通过就不发布：否则学生会拿到缺题的卷子，而教师只能等开考后才发现。
+    // 注意预检是「存在性上界」（不模拟跨题位占用），通过≠每份卷子必然填满，
+    // 真实缺口以生成结果 unfilledSlots 为准（会汇总进 ExamPaperGeneration.summary）。
+    const preflight = await preflightExamPaper(req.params.id);
+    if (!preflight.ok) {
+      return res.status(400).json({
+        message: `组卷预检未通过：${preflight.issues.length} 个题位没有可用题目`,
+        preflight: preflight.issues,
+      });
+    }
+
     // 发布时：有未来开始时间 → scheduled，否则 → published
     const newStatus = exam.startTime && new Date(exam.startTime) > new Date() ? 'scheduled' : 'published';
 
@@ -636,7 +651,29 @@ examRouter.post('/:id/publish', async (req: Request, res: Response) => {
       data: { status: newStatus },
     });
 
-    res.json(updated);
+    // 预生成：建/重置状态行后入队；队列不可用时标记 failed（开考时现场生成兜底）。
+    // 重复发布时必须把上一轮的运行痕迹清掉（startedAt/finishedAt/error/summary），
+    // 否则前端会把旧进度/旧失败原因当成本轮状态展示；Json 字段清空要用 Prisma.JsonNull，
+    // 直接传 null 会被 Prisma 当成「不更新」。
+    await prisma.examPaperGeneration.upsert({
+      where: { examId: req.params.id },
+      create: { examId: req.params.id, status: 'pending', totalStudents: studentIds.length },
+      update: {
+        status: 'pending', totalStudents: studentIds.length,
+        queuedAt: new Date(), startedAt: null, finishedAt: null, error: null,
+        summary: Prisma.JsonNull, unfilledSlots: Prisma.JsonNull,
+      },
+    });
+    const enqueued = await enqueuePaperGeneration(req.params.id);
+    if (!enqueued.queued) {
+      await prisma.examPaperGeneration.update({
+        where: { examId: req.params.id },
+        data: { status: 'failed', error: '组卷队列不可用（Redis 未启动）；开考时将现场生成' },
+      });
+    }
+
+    // 发布本身不因队列不可用而失败（开考现场生成兜底），但要把真实状态告诉前端
+    res.json({ ...updated, paperGeneration: { status: enqueued.queued ? 'pending' : 'failed' } });
   } catch {
     res.status(500).json({ message: '服务器错误' });
   }
