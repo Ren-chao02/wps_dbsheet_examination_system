@@ -7,7 +7,9 @@
  * `unfilledSlots` 为准（会汇总进 `ExamPaperGeneration.summary`，发布后可见）。
  * 后续若要让发布即精确，需按生成同序模拟分配并累加 usedQuestionIds（P1c 可选）。
  *
- * 空题位 / 不存在的考试返回 ok:true：调用方（发布路由）已有"考试必须有题目"的前置校验。
+ * 题位为空时返回一条 issue（不是 ok:true）：发布前置的"有题目"校验只看试卷的 paperQuestions
+ * 计数，试卷题目尚未同步到题位时会放行，最终生成 0 题卷子——这里补一道。考试不存在同样
+ * 会走到这个分支（查不到题位），但发布路由在调用预检前已 404，不会误报。
  */
 import { prisma } from '../config/prisma';
 import type { Prisma } from '@prisma/client';
@@ -28,6 +30,15 @@ export async function preflightExamPaper(
     where: { examId },
     orderBy: [{ slotIndex: 'asc' }, { sortOrder: 'asc' }],
   });
+
+  // 有试卷但题位为空（试卷题目未同步/被清空）：发布前置的 hasQuestions 只看 paper 题数，
+  // 会放行并生成 0 题卷子——这里补一道。不存在的考试同样查不到题位，但发布路由已先 404。
+  if (slots.length === 0) {
+    return {
+      ok: false,
+      issues: [{ slotIndex: 0, reason: '考试没有题位（请检查试卷题目是否已同步）', candidates: 0, signatureConflict: false }],
+    };
+  }
 
   const poolWhere = slots.some(s => s.slotType === 'rule')
     ? await loadQuestionPoolWhereForExamPaper(examId, tx)

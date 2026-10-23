@@ -25,6 +25,16 @@ beforeEach(() => {
 });
 
 describe('preflightExamPaper', () => {
+  it('题位为空（有试卷但题目未同步）→ 阻断，不生成 0 题卷子', async () => {
+    examQuestionFindMany.mockResolvedValue([]);
+    const out = await preflightExamPaper('e-1', tx);
+    expect(out.ok).toBe(false);
+    expect(out.issues).toHaveLength(1);
+    expect(out.issues[0].reason).toContain('没有题位');
+    // 没有 rule 题位时不应再加载候选池条件
+    expect(examFindUnique).not.toHaveBeenCalled();
+  });
+
   it('固定题位未绑题 → 阻断', async () => {
     examQuestionFindMany.mockResolvedValue([
       { slotIndex: 0, slotType: 'fixed', questionId: null, scoreOverride: null, rule: null },
