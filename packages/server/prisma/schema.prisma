@@ -381,6 +381,7 @@ model Exam {
   behaviorReports  BehaviorAnalysisReport[] @relation("ExamReport") // ✅ Phase 3: 分析报告
   tableAssignments ExamTableAssignment[]    @relation("ExamTableAssignments") // ✅ 考试表格分配
   studentPapers    StudentExamQuestion[]    @relation("ExamStudentPapers") // ✅ 每生卷子快照
+  paperGeneration  ExamPaperGeneration? // 组卷预生成状态（一考试一行，异步预生成后立即可查进度）
 
   @@index([batchId])
   @@index([status, endTime])
@@ -529,6 +530,26 @@ model StudentExamQuestion {
   @@unique([examId, studentId, slotIndex])
   @@index([examId, studentId])
   @@map("student_exam_questions")
+}
+
+/// 组卷预生成状态与汇总（一考试一行）：记录异步预生成的状态、进度来源与质量报告。
+/// 状态的行数/进度不冗余存计数器——已生成人数按需从 student_exam_questions 聚合，避免热行写冲突。
+model ExamPaperGeneration {
+  id            String    @id @default(uuid()) @db.Uuid
+  examId        String    @unique @map("exam_id") @db.Uuid
+  /// pending | running | done | failed
+  status        String    @default("pending") @db.VarChar(16)
+  totalStudents Int       @default(0) @map("total_students")
+  unfilledSlots Json?     @map("unfilled_slots")
+  summary       Json?
+  error         String?   @db.Text
+  queuedAt      DateTime  @default(now()) @map("queued_at")
+  startedAt     DateTime? @map("started_at")
+  finishedAt    DateTime? @map("finished_at")
+
+  exam Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  @@map("exam_paper_generations")
 }
 
 model StudentSubmission {
