@@ -20,7 +20,7 @@ vi.mock('../../middleware/auth', async (importOriginal) => {
 // 否则会在模块初始化前访问到 TDZ 里的 const 而直接抛 ReferenceError。
 const {
   preflightMock, enqueueMock, examFindUnique, examUpdate,
-  examRoomStudentFindMany, tableFindMany, generationUpsert, generationUpdate,
+  examRoomStudentFindMany, tableFindMany, generationUpsert, generationUpdate, generationUpdateMany,
 } = vi.hoisted(() => ({
   preflightMock: vi.fn(),
   enqueueMock: vi.fn(),
@@ -30,6 +30,7 @@ const {
   tableFindMany: vi.fn(),
   generationUpsert: vi.fn(),
   generationUpdate: vi.fn(),
+  generationUpdateMany: vi.fn(),
 }));
 
 vi.mock('../../services/paper-preflight', () => ({ preflightExamPaper: preflightMock }));
@@ -41,7 +42,7 @@ vi.mock('../../config/prisma', () => ({
     exam: { findUnique: examFindUnique, update: examUpdate },
     examRoomStudent: { findMany: examRoomStudentFindMany },
     examTableAssignment: { findMany: tableFindMany },
-    examPaperGeneration: { upsert: generationUpsert, update: generationUpdate },
+    examPaperGeneration: { upsert: generationUpsert, update: generationUpdate, updateMany: generationUpdateMany },
   },
 }));
 vi.mock('../../services/data-scope', async (importOriginal) => {
@@ -66,6 +67,8 @@ beforeEach(() => {
   examRoomStudentFindMany.mockResolvedValue([{ studentId: 's-1' }, { studentId: 's-2' }]);
   tableFindMany.mockResolvedValue([{ studentId: 's-1' }, { studentId: 's-2' }]);
   generationUpsert.mockResolvedValue({});
+  generationUpdate.mockResolvedValue({});
+  generationUpdateMany.mockResolvedValue({ count: 1 });
   enqueueMock.mockResolvedValue({ queued: true });
 });
 
@@ -101,6 +104,21 @@ describe('POST /api/exams/:id/publish —— 组卷预检', () => {
     expect(res.body.paperGeneration).toEqual({ status: 'failed' });
     // 先 upsert(pending)，队列不可用后再 update 成 failed
     expect(generationUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'failed' }),
+    }));
+  });
+
+  it('入队抛异常 → 发布仍 200（不 500），状态标 failed，考试已发布', async () => {
+    preflightMock.mockResolvedValue({ ok: true, issues: [] });
+    examUpdate.mockResolvedValue({ ...examRow, status: 'published' });
+    enqueueMock.mockRejectedValue(new Error('redis down'));
+    const res = await request(app).post('/api/exams/e-1/publish');
+    expect(res.status).toBe(200);
+    expect(res.body.paperGeneration).toEqual({ status: 'failed' });
+    expect(examUpdate).toHaveBeenCalled();
+    // upsert 成功后调度才炸：尽力把状态行标 failed（updateMany 兜住"行可能不存在"）
+    expect(generationUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { examId: 'e-1' },
       data: expect.objectContaining({ status: 'failed' }),
     }));
   });
