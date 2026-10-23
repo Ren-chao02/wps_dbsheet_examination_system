@@ -86,12 +86,13 @@ describe('enqueuePaperGeneration 降级契约', () => {
       .toBeLessThan(mockQueueAdd.mock.invocationCallOrder[0]);
   });
 
-  it('旧 job 正在运行（remove 抛错）→ 不阻断入队', async () => {
+  it('旧 job 正在运行（remove 抛错）→ 用带时间戳的后继 jobId（本轮重建不丢）', async () => {
     const { enqueuePaperGeneration } = await loadQueue('redis://127.0.0.1:6379');
     mockQueueRemove.mockRejectedValue(new Error('Job is locked'));
     mockQueueAdd.mockResolvedValue({ id: 'job-3' });
     await expect(enqueuePaperGeneration('e-1')).resolves.toEqual({ queued: true });
-    expect(mockQueueAdd).toHaveBeenCalled();
+    const jobId = mockQueueAdd.mock.calls[0][2].jobId as string;
+    expect(jobId).toMatch(/^paper-generation-e-1-\d+$/);
   });
 
   it('remove 未 settle 前不会 add（防止 fire-and-forget 去重竞态）', async () => {
