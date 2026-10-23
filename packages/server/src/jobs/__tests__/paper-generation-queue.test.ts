@@ -5,9 +5,10 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockConfigState, mockQueueAdd } = vi.hoisted(() => ({
+const { mockConfigState, mockQueueAdd, mockQueueRemove } = vi.hoisted(() => ({
   mockConfigState: { redisUrl: 'redis://127.0.0.1:6379' },
   mockQueueAdd: vi.fn(),
+  mockQueueRemove: vi.fn(),
 }));
 
 // config 的 redis.url 每个用例可切换（非法 URL → 不创建队列）；logger 替换掉避免 pino 副作用
@@ -22,7 +23,9 @@ vi.mock('../../utils/logger', () => ({ logger: { warn: vi.fn(), error: vi.fn() }
 vi.mock('bullmq', () => ({
   Queue: class {
     add = mockQueueAdd;
+    remove = mockQueueRemove;
   },
+  Worker: class {},
 }));
 
 /** 模块内的队列是单例，resetModules 后重新 import 才能让两种 URL 场景互不串味 */
@@ -71,5 +74,23 @@ describe('enqueuePaperGeneration 降级契约', () => {
       { examId: 'e-1' },
       expect.objectContaining({ jobId: 'paper-generation-e-1' }),
     );
+  });
+
+  it('重复入队先移除旧 jobId，避免 BullMQ 静默去重（"返回成功但没有任务在跑"）', async () => {
+    const { enqueuePaperGeneration } = await loadQueue('redis://127.0.0.1:6379');
+    mockQueueRemove.mockResolvedValue(1);
+    mockQueueAdd.mockResolvedValue({ id: 'job-2' });
+    await expect(enqueuePaperGeneration('e-1')).resolves.toEqual({ queued: true });
+    expect(mockQueueRemove).toHaveBeenCalledWith('paper-generation-e-1');
+    expect(mockQueueRemove.mock.invocationCallOrder[0])
+      .toBeLessThan(mockQueueAdd.mock.invocationCallOrder[0]);
+  });
+
+  it('旧 job 正在运行（remove 抛错）→ 不阻断入队', async () => {
+    const { enqueuePaperGeneration } = await loadQueue('redis://127.0.0.1:6379');
+    mockQueueRemove.mockRejectedValue(new Error('Job is locked'));
+    mockQueueAdd.mockResolvedValue({ id: 'job-3' });
+    await expect(enqueuePaperGeneration('e-1')).resolves.toEqual({ queued: true });
+    expect(mockQueueAdd).toHaveBeenCalled();
   });
 });

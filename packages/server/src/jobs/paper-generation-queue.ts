@@ -68,16 +68,22 @@ export async function enqueuePaperGeneration(examId: string): Promise<{ queued: 
   // 计时器在 finally 里清理：入队成功后它还挂着的话，请求/测试进程会被无谓地拖住 3 秒
   let timer: NodeJS.Timeout | undefined;
   try {
+    const jobId = `paper-generation-${examId}`;
     await Promise.race([
-      q.add('generate', { examId }, {
-        // 注意：同 jobId 在 completed/failed 集合里仍存在时，BullMQ 会静默忽略入队——
-        // 重试/重发前必须先 remove（Task 6 的验收集）
-        jobId: `paper-generation-${examId}`,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
-        removeOnComplete: 20,
-        removeOnFail: 20,
-      }),
+      (async () => {
+        // 旧的同名 job 还在 completed/failed 集合里时，add 会被 BullMQ 静默去重：
+        // 重试接口会返回"已触发"但实际没有任何任务在跑。先移除；任务正在运行时
+        // remove 会抛错（locked），此时队列里确实有任务，忽略即可。
+        // remove 与 add 放在同一个 race 里：Redis 假死时 remove 也会挂住，不能只给 add 兜超时。
+        try { await q.remove(jobId); } catch { /* 运行中/已被移除 */ }
+        await q.add('generate', { examId }, {
+          jobId,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+          removeOnComplete: 20,
+          removeOnFail: 20,
+        });
+      })(),
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error('enqueue timeout')), ENQUEUE_TIMEOUT_MS);
       }),
