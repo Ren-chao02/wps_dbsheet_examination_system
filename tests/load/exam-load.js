@@ -40,6 +40,9 @@ export function setup() {
     // 提前失败，避免跑出一堆登录 401 后才发现参数没给
     throw new Error('必须通过 -e EXAM_ID=<考试UUID> -e PASSWORD=<学生密码> 指定参数');
   }
+  if (!['opening', 'steady'].includes(SCENARIO)) {
+    throw new Error(`SCENARIO 只能是 opening 或 steady，收到: ${SCENARIO}`);
+  }
   return { checkedAt: new Date().toISOString() };
 }
 
@@ -54,26 +57,31 @@ const beatTrend = new Trend('stage_heartbeat', true);
 const submitTrend = new Trend('stage_submit', true);
 const businessFailure = new Rate('business_failure');
 
-export const options = {
-  scenarios: {
-    // 开考瞬间：VU 数 = 同时在线的学生数，每人只跑一轮完整流程（登录→开考→答题→交卷）
-    opening: {
-      executor: 'per-vu-iterations',
-      vus: VUS,
-      iterations: 1,
-      maxDuration: '10m',
-      exec: 'examFlow',
-      tags: { scenario: 'opening' },
-    },
-    // 稳态：已开考学生的心跳 + 自动保存，持续压
-    steady: {
-      executor: 'constant-vus',
-      vus: VUS,
-      duration: __ENV.DURATION || '3m',
-      exec: 'steadyFlow',
-      tags: { scenario: 'steady' },
-    },
+const SCENARIO_DEFS = {
+  // 开考瞬间：VU 数 = 同时在线的学生数，每人只跑一轮完整流程（登录→开考→答题→交卷）
+  opening: {
+    executor: 'per-vu-iterations',
+    vus: VUS,
+    iterations: 1,
+    maxDuration: '10m',
+    exec: 'examFlow',
+    tags: { scenario: 'opening' },
   },
+  // 稳态：已开考学生的心跳 + 自动保存，持续压
+  steady: {
+    executor: 'constant-vus',
+    vus: VUS,
+    duration: __ENV.DURATION || '3m',
+    exec: 'steadyFlow',
+    tags: { scenario: 'steady' },
+  },
+};
+
+export const options = {
+  // 只跑 SCENARIO 指定的场景。此前两个场景总是同时启动：
+  // steady 会与 opening 抢同一批学号与同一批登录 CPU，测出来的数字是混合负载，
+  // 更糟的是 steady 的学生没有开考，自动保存会大面积失败，污染失败率。
+  scenarios: { [SCENARIO]: SCENARIO_DEFS[SCENARIO] },
   thresholds: {
     // 这两个阈值是**待校准**的起点，不是结论。先用小规模跑一次拿到基线，
     // 再按实际硬件把数字收紧——否则阈值只会变成一句谁都不看的口号。
