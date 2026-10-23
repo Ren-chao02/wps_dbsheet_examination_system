@@ -2307,6 +2307,9 @@ git commit -m "feat(teacher): 组卷报告补难度分布/降级统计 + 异常�
 | 21 | 批次激活级联发布**不跑预检阻断**，只逐场补预生成调度 | 终审裁定「先补调度、不阻断整批」；是否阻断请产品决定（建议 P1c 用 `paper-generation-scheduler` 统一三入口） |
 | 22 | `POST /publish` 未收敛到共享 `reschedulePaperGeneration`（行为一致、逻辑重复三处：publish/retry/lifecycle） | P1c 抽 `paper-generation-scheduler`（附二 #6 的第三个理由） |
 | 23 | 名单去重只在 job 的 `listStudents` 与进度查询；publish/retry 的 `totalStudents` 仍按 `examRoomStudent` 行数（同一学生分到多考场时略高） | 同一学生跨考场属边缘数据；P1c 统一用 `countDistinctStudents` |
+| 24 | 预生成 job **运行中**改卷时，`reschedule` 的 `remove` 对 active job 失败被吞、`add` 同 jobId 被静默去重仍返回 `queued:true`：已失效的学生靠开考现场生成（内容正确），但存在极窄窗口某生保留旧快照 | P1c 用带尝试序号的 jobId 或先查 `queue.getJob` 状态 |
+| 25 | 批次激活逐场 `reschedule` 串行；Redis 不可用时每场吃满 3s 入队超时，N 场 ≈ N×3s，可能顶网关超时（状态已正确落库） | P1c 改 `Promise.allSettled` 或先探一次队列可用性 |
+| 26 | `total=created` 后，并发下 `createMany` 全跳过时该生被计为 `missing`（卷子其实由开考路径插入） | 纯展示、极罕见；P1c 可在汇总里区分「并发已存在」 |
 
 ## 附：任务依赖图
 
