@@ -117,7 +117,9 @@ const defaultDeps: PaperGenerationDeps = {
   markStatus: async (examId, patch) => {
     await prisma.examPaperGeneration.updateMany({ where: { examId }, data: {
       status: patch.status,
-      ...(patch.error ? { error: patch.error } : {}),
+      // 非 failed 状态清空 error：迟到 job 把 failed 行覆盖成 done 后，
+      // 不能残留"队列不可用"之类的过期原因（发布路径重发时也显式清空）
+      error: patch.status === 'failed' ? (patch.error ?? null) : null,
       ...(patch.summary ? { summary: patch.summary } : {}),
       ...(patch.unfilledSlots ? { unfilledSlots: patch.unfilledSlots } : {}),
       ...(patch.status === 'running' ? { startedAt: new Date() } : {}),
@@ -151,38 +153,49 @@ export async function processPaperGeneration(
 ): Promise<{ generated: number; missing: number }> {
   await deps.markStatus(examId, { status: 'running' });
 
-  const students = await deps.listStudents(examId);
-  let generated = 0;
-  const unfilled = new Map<string, { slotIndex: number; reason: string; students: number }>();
+  try {
+    const students = await deps.listStudents(examId);
+    let generated = 0;
+    const unfilled = new Map<string, { slotIndex: number; reason: string; students: number }>();
 
-  const PAGE = 200;
-  for (let i = 0; i < students.length; i += PAGE) {
-    // 每页开始前检查考试状态：取消/结束/删除后不再继续生成
-    const status = await deps.getExamStatus(examId);
-    if (!status || status === 'cancelled' || status === 'ended') {
-      await deps.markStatus(examId, { status: 'failed', error: `考试已${status === 'ended' ? '结束' : '取消或删除'}，生成中止` });
-      return { generated, missing: students.length - generated };
+    const PAGE = 200;
+    for (let i = 0; i < students.length; i += PAGE) {
+      // 每页开始前检查考试状态：取消/结束/删除后不再继续生成
+      const status = await deps.getExamStatus(examId);
+      if (!status || status === 'cancelled' || status === 'ended') {
+        await deps.markStatus(examId, { status: 'failed', error: `考试已${status === 'ended' ? '结束' : '取消或删除'}，生成中止` });
+        return { generated, missing: students.length - generated };
+      }
+
+      const page = students.slice(i, i + PAGE);
+      await mapWithConcurrency(page, 4, async ({ studentId }) => {
+        const r = await deps.generate(examId, studentId);
+        if (r.total > 0) generated += 1;
+        for (const u of r.unfilledSlots) {
+          const key = `${u.slotIndex}:${u.reason}`;
+          const cur = unfilled.get(key) ?? { slotIndex: u.slotIndex, reason: u.reason, students: 0 };
+          cur.students += 1;
+          unfilled.set(key, cur);
+        }
+      });
     }
 
-    const page = students.slice(i, i + PAGE);
-    await mapWithConcurrency(page, 4, async ({ studentId }) => {
-      const r = await deps.generate(examId, studentId);
-      if (r.total > 0) generated += 1;
-      for (const u of r.unfilledSlots) {
-        const key = `${u.slotIndex}:${u.reason}`;
-        const cur = unfilled.get(key) ?? { slotIndex: u.slotIndex, reason: u.reason, students: 0 };
-        cur.students += 1;
-        unfilled.set(key, cur);
-      }
+    await deps.markStatus(examId, {
+      status: 'done',
+      summary: { generated, missing: students.length - generated },
+      unfilledSlots: [...unfilled.values()],
     });
+    return { generated, missing: students.length - generated };
+  } catch (err) {
+    // 终态失败必须写回：否则状态行永久停在 running，前端无法区分"仍在生成"与"已经失败"。
+    // 写回失败（DB 也不可用）不能掩盖原始异常；BullMQ 会按 attempts 重试，
+    // 下一次进入函数时 running 会覆盖 failed，重试成功则最终为 done。
+    await deps.markStatus(examId, {
+      status: 'failed',
+      error: err instanceof Error ? err.message : String(err),
+    }).catch(() => {});
+    throw err;
   }
-
-  await deps.markStatus(examId, {
-    status: 'done',
-    summary: { generated, missing: students.length - generated },
-    unfilledSlots: [...unfilled.values()],
-  });
-  return { generated, missing: students.length - generated };
 }
 
 /** 进度查询：总数按考位名单，已生成按快照里出现过的学生去重计数 */
@@ -213,7 +226,7 @@ export function startPaperGenerationWorkers(): void {
     logger.info({ examId, jobId: job.id, ...result }, '[Worker] 预生成完成');
     return result;
   }, { connection: conn, concurrency: 1 });  // 一场考试一个 job；并发在 job 内控制
-  worker.on('failed', (job, err) => logger.error({ jobId: job?.id, err }, '[Worker] 预生成失败'));
+  worker.on('failed', (job, err) => logger.error({ examId: (job?.data as any)?.examId, jobId: job?.id, err }, '[Worker] 预生成失败'));
   logger.info('[Worker] 组卷预生成 Worker 已启动');
 }
 
