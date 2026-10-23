@@ -42,7 +42,7 @@ const loginSchema = z
     rememberMe: z.boolean().optional().default(false),
   })
   .refine((v) => Boolean(v.identifier || v.username), {
-    message: '请输入学号或用户名',
+    message: '请输入学号、工号或系统账号',
     path: ['identifier'],
   });
 

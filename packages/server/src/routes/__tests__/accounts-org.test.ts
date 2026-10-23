@@ -301,7 +301,7 @@ describe('GET /api/accounts/import-template 模板列', () => {
     const headers = templateSheet.columns.map((c: any) => c.header);
     // 导入解析按 getCell(6) 读院系编码：表头顺序必须与列号一一对应，改列序会在这里炸出来
     expect(headers).toEqual([
-      '用户名(管理员必填)',
+      '系统登录名(管理员必填)',
       '密码(必填)',
       '姓名',
       '邮箱',

@@ -497,7 +497,7 @@ export default function StudentManagement() {
           )}
           <Form.Item name="studentId" label="学号（登录名）" rules={[
             { required: true, message: '请输入学号' },
-          ]} extra="登录名自动使用学号，无需单独设置用户名">
+          ]} extra="登录名自动使用学号，无需单独设置">
             <Input placeholder="学生学号" />
           </Form.Item>
           <Form.Item name="realName" label="姓名" rules={[{ required: true, message: '请输入姓名' }]}>

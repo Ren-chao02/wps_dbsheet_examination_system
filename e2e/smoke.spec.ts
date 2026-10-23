@@ -12,9 +12,9 @@ test.describe('冒烟 · 无需账号', () => {
 
     await expect(page).toHaveURL(/\/login/, { timeout: 20_000 });
 
-    // 三个输入框缺一不可：学号/用户名、密码、验证码。
+    // 三个输入框缺一不可：学号/工号/系统账号、密码、验证码。
     // 少任何一个都意味着登录链路断了 —— 这是最该在 CI 里守住的东西。
-    await expect(page.getByPlaceholder('学号 / 用户名')).toBeVisible();
+    await expect(page.getByPlaceholder('学号 / 工号 / 系统账号')).toBeVisible();
     await expect(page.getByPlaceholder('密码')).toBeVisible();
     await expect(page.getByPlaceholder('验证码')).toBeVisible();
     await expect(page.locator('button[type="submit"]')).toBeVisible();
