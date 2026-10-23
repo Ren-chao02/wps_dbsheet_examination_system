@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { repairStudentPaper, buildGenerationSummary, processPaperGeneration } from '../paper-generation-queue';
 
+// 失败分支会打结构化日志：挡掉，避免测试往 stdout 刷日志
+vi.mock('../../utils/logger', () => ({ logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+
 const dbStub = (target: any, over: any = {}) => ({
   exam: { findUnique: vi.fn().mockResolvedValue({ difficultyTarget: target }) },
   examQuestion: { findMany: vi.fn().mockResolvedValue([
@@ -12,7 +15,7 @@ const dbStub = (target: any, over: any = {}) => ({
       { slotIndex: 0, questionId: 'a', score: 10 },
       { slotIndex: 1, questionId: 'b', score: 10 },
     ]),
-    update: vi.fn(),
+    updateMany: vi.fn().mockResolvedValue({ count: 1 }),
   },
   question: { findUnique: vi.fn().mockResolvedValue({ difficulty: 'easy' }) },
   ...over,
@@ -25,19 +28,23 @@ const candidatesStub = () => vi.fn().mockResolvedValue([
 
 describe('repairStudentPaper', () => {
   it('有目标时换题并写回 pickMeta=repair（含池大小与签名）', async () => {
-    const db = dbStub({ easy: 0, medium: 1, hard: 0 });   // 2 个可调题位 → 目标 medium 1 道
+    const db = dbStub({ easy: 0, medium: 1, hard: 0 });   // 2 个题位、目标 2 道 medium
     const listCandidates = candidatesStub();
     const changed = await repairStudentPaper('e-1', 's-1', { db, listCandidates });
     expect(changed).toBe(true);
-    expect(db.studentExamQuestion.update).toHaveBeenCalledWith({
-      where: { examId_studentId_slotIndex: { examId: 'e-1', studentId: 's-1', slotIndex: 0 } },
-      data: {
+    expect(db.studentExamQuestion.updateMany).toHaveBeenCalledWith({
+      where: {
+        examId: 'e-1', studentId: 's-1', slotIndex: 0,
+        // 原子守卫：该生有开考提交时 updateMany 命中 0 行
+        student: { submissions: { none: { examId: 'e-1', status: { in: ['in_progress', 'submitted', 'grading', 'graded'] } } } },
+      },
+      data: expect.objectContaining({
         questionId: 'm-1',
         pickMeta: expect.objectContaining({
           level: 'repair', repairedFrom: 'a', candidates: 2,
           wantedSignature: '', actualSignature: '',
         }),
-      },
+      }),
     });
   });
 
@@ -45,7 +52,14 @@ describe('repairStudentPaper', () => {
     const db = dbStub(null);
     const changed = await repairStudentPaper('e-1', 's-1', { db, listCandidates: candidatesStub() });
     expect(changed).toBe(false);
-    expect(db.studentExamQuestion.update).not.toHaveBeenCalled();
+    expect(db.studentExamQuestion.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('学生已开考（守卫使 updateMany 命中 0 行）→ 视为未修复', async () => {
+    const db = dbStub({ easy: 0, medium: 1, hard: 0 });
+    db.studentExamQuestion.updateMany.mockResolvedValue({ count: 0 });
+    const changed = await repairStudentPaper('e-1', 's-1', { db, listCandidates: candidatesStub() });
+    expect(changed).toBe(false);
   });
 
   it('修复候选同样受试卷归属 poolWhere 约束', async () => {
@@ -119,6 +133,46 @@ describe('processPaperGeneration 接入', () => {
         repaired: 1,
         degradation: { strict: 1, relaxSchemaRefs: 0, relaxDifficulty: 0, repaired: 1 },
       }),
+    }));
+  });
+
+  it('已有快照（created=0）不修复——已开考/历史卷子绝不动', async () => {
+    const deps = {
+      listStudents: vi.fn().mockResolvedValue([{ studentId: 's-1' }]),
+      generate: vi.fn().mockResolvedValue({ created: 0, total: 2, unfilledSlots: [] }),
+      getExamStatus: vi.fn().mockResolvedValue('published'),
+      markStatus: vi.fn().mockResolvedValue(undefined),
+      repair: vi.fn().mockResolvedValue(true),
+    };
+    await processPaperGeneration('e-1', deps as any);
+    expect(deps.repair).not.toHaveBeenCalled();
+  });
+
+  it('单卷修复抛错 → 整场生成仍标 done', async () => {
+    const deps = {
+      listStudents: vi.fn().mockResolvedValue([{ studentId: 's-1' }]),
+      generate: vi.fn().mockResolvedValue({ created: 1, total: 1, unfilledSlots: [] }),
+      getExamStatus: vi.fn().mockResolvedValue('published'),
+      markStatus: vi.fn().mockResolvedValue(undefined),
+      repair: vi.fn().mockRejectedValue(new Error('repair boom')),
+    };
+    const out = await processPaperGeneration('e-1', deps as any);
+    expect(out.generated).toBe(1);
+    expect(deps.markStatus).toHaveBeenLastCalledWith('e-1', expect.objectContaining({ status: 'done' }));
+  });
+
+  it('汇总统计抛错 → 生成仍标 done（只写基础进度）', async () => {
+    const deps = {
+      listStudents: vi.fn().mockResolvedValue([{ studentId: 's-1' }]),
+      generate: vi.fn().mockResolvedValue({ created: 1, total: 1, unfilledSlots: [] }),
+      getExamStatus: vi.fn().mockResolvedValue('published'),
+      markStatus: vi.fn().mockResolvedValue(undefined),
+      loadSummaryInput: vi.fn().mockRejectedValue(new Error('summary boom')),
+    };
+    await processPaperGeneration('e-1', deps as any);
+    expect(deps.markStatus).toHaveBeenLastCalledWith('e-1', expect.objectContaining({
+      status: 'done',
+      summary: expect.objectContaining({ generated: 1, missing: 0 }),
     }));
   });
 });

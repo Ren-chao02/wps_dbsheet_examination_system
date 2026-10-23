@@ -177,6 +177,9 @@ async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
   await Promise.all(runners);
 }
 
+/** 「已开考」状态：存在这些提交的学生，其卷子快照绝不能再动（与重新组卷的删除守卫同口径） */
+const STARTED_STATUSES = ['in_progress', 'submitted', 'grading', 'graded'] as const;
+
 /**
  * 为一名学生跑修复；返回是否发生替换（供汇总统计）。
  * `db`/`listCandidates` 可注入：单测不碰真实 DB/题库；生产不传即用默认实现。
@@ -194,7 +197,10 @@ export async function repairStudentPaper(
   if (!exam?.difficultyTarget) return false;   // 没配目标 = 零行为变化
 
   const [slots, rows, poolWhere] = await Promise.all([
-    db.examQuestion.findMany({ where: { examId, slotType: 'rule' }, orderBy: { slotIndex: 'asc' } }),
+    // 排序与 generateStudentPaper 对齐（slotIndex 再 sortOrder）：历史 0 值题位靠 `|| i`
+    // 归一化，迭代顺序不一致会把修复写到别的题位上。这里只取抽题题位，混合卷的极端
+    // 历史数据（fixed 也带 0 值）与生成仍有偏差，但正常数据不会触发该分支。
+    db.examQuestion.findMany({ where: { examId, slotType: 'rule' }, orderBy: [{ slotIndex: 'asc' }, { sortOrder: 'asc' }] }),
     db.studentExamQuestion.findMany({ where: { examId, studentId }, select: { slotIndex: true, questionId: true, score: true } }),
     loadQuestionPoolWhereForExamPaper(examId, db),
   ]);
@@ -204,8 +210,10 @@ export async function repairStudentPaper(
   const usedIds = new Set<string>(rows.map((r: any) => r.questionId));
   const inputs: RepairSlotInput[] = [];
 
-  for (const slot of slots) {
-    const row = rowBySlot.get(slot.slotIndex) as any;
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    const slotIndex = slot.slotIndex || i;   // 与 generateStudentPaper 同口径（历史 0 值行）
+    const row = rowBySlot.get(slotIndex) as any;
     if (!row) continue;
     const rule = (slot.rule || {}) as SlotRule;
     const candidates = await listCandidates({
@@ -215,7 +223,7 @@ export async function repairStudentPaper(
     });
     const current = await db.question.findUnique({ where: { id: row.questionId }, select: { difficulty: true } });
     inputs.push({
-      slotIndex: slot.slotIndex, slotScore: row.score,
+      slotIndex, slotScore: row.score,
       currentQuestionId: row.questionId, currentDifficulty: current?.difficulty ?? null,
       wantedSignature: rule.schemaRefs ? schemaRefsSignature(rule.schemaRefs) : '',
       candidates,
@@ -223,9 +231,14 @@ export async function repairStudentPaper(
   }
 
   const result = repairDifficultyDistribution(inputs, exam.difficultyTarget as DifficultyTarget);
+  let changed = 0;
   for (const change of result.changes) {
-    await db.studentExamQuestion.update({
-      where: { examId_studentId_slotIndex: { examId, studentId, slotIndex: change.slotIndex } },
+    const res = await db.studentExamQuestion.updateMany({
+      where: {
+        examId, studentId, slotIndex: change.slotIndex,
+        // 原子守卫：更新瞬间该生已有开考提交 → 不换题
+        student: { submissions: { none: { examId, status: { in: [...STARTED_STATUSES] } } } },
+      },
       data: {
         questionId: change.to,
         pickMeta: {
@@ -236,8 +249,9 @@ export async function repairStudentPaper(
         },
       },
     });
+    changed += res?.count ?? 0;
   }
-  return result.changes.length > 0;
+  return changed > 0;
 }
 
 export interface GenerationSummaryInput {
@@ -346,10 +360,16 @@ export async function processPaperGeneration(
           unfilled.set(key, cur);
         }
         // 生成后再修复：题位之间争抢候选，只有整卷落库后才能算出偏差并等价替换。
+        // 只修本次新生成的卷：已有快照（包括已开考）绝不动——补生成路径会跑同一个 job，
+        // generateStudentPaper 对已有快照早退返回 created:0，这类卷子一律跳过。
         // JS 单线程，并发回调里自增不会丢计数。
-        if (deps.repair) {
-          const changed = await deps.repair(examId, studentId);
-          if (changed) repaired += 1;
+        if (deps.repair && r.created > 0) {
+          try {
+            if (await deps.repair(examId, studentId)) repaired += 1;
+          } catch (err) {
+            // 修复是增强项：单卷修复失败不能让整场生成变成 failed（卷子已生成，保留原样）
+            logger.warn({ examId, studentId, err }, '组卷修复失败，保留原卷');
+          }
         }
       });
     }
