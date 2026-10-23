@@ -53,9 +53,9 @@ vi.mock('../../config/prisma', () => {
     studentSubmission: { count: submissionCount },
   };
   // 路由在事务内取 advisory lock：$transaction 直接把 mock 自己当 tx 传回，
-  // $queryRaw 模拟 pg_advisory_xact_lock 的返回值（无实际锁语义）。
+  // $executeRaw 模拟 pg_advisory_xact_lock 的执行结果（无实际锁语义）。
   prismaMock.$transaction = vi.fn((fn: any) => fn(prismaMock));
-  prismaMock.$queryRaw = vi.fn().mockResolvedValue([{ pg_advisory_xact_lock: null }]);
+  prismaMock.$executeRaw = vi.fn().mockResolvedValue(1);
   return { prisma: prismaMock };
 });
 
@@ -119,7 +119,7 @@ describe('POST /api/exams/:id/paper-generation/retry', () => {
     expect(res.body.mode).toBe('regenerate');
     // 决议 + 快照失效必须在事务内持考试锁（与开考事务互斥）
     expect((prisma as any).$transaction).toHaveBeenCalled();
-    expect((prisma as any).$queryRaw).toHaveBeenCalled();
+    expect((prisma as any).$executeRaw).toHaveBeenCalled();
     expect(preflightMock).toHaveBeenCalledWith('e-1', expect.anything());
     expect(sqDeleteMany).toHaveBeenCalledWith({
       where: {
