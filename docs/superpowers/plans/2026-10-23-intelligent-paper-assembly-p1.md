@@ -468,6 +468,15 @@ export async function preflightExamPaper(
     orderBy: [{ slotIndex: 'asc' }, { sortOrder: 'asc' }],
   });
 
+  // 有试卷但题位为空（试卷题目未同步/被清空）：发布前置的 hasQuestions 只看 paper 题数，
+  // 会放行并生成 0 题卷子——这里补一道。不存在的考试仍返回 ok（由发布路由的前置校验兜住）。
+  if (slots.length === 0) {
+    return {
+      ok: false,
+      issues: [{ slotIndex: 0, reason: '考试没有题位（请检查试卷题目是否已同步）', candidates: 0, signatureConflict: false }],
+    };
+  }
+
   const poolWhere = slots.some(s => s.slotType === 'rule')
     ? await loadQuestionPoolWhereForExamPaper(examId, tx)
     : undefined;
@@ -695,17 +704,31 @@ export function getPaperGenerationQueue(): Queue | null {
   return queue;
 }
 
+/** 入队超时：Redis 进程宕机但 URL 仍可解析时，ioredis 的离线队列会让 add 一直等重连 */
+const ENQUEUE_TIMEOUT_MS = 3000;
+
 export async function enqueuePaperGeneration(examId: string): Promise<{ queued: boolean }> {
   const q = getPaperGenerationQueue();
   if (!q) return { queued: false };
-  await q.add('generate', { examId }, {
-    jobId: `paper-generation-${examId}`, // 同考试重复发布/重试去重
-    attempts: 3,
-    backoff: { type: 'exponential', delay: 5000 },
-    removeOnComplete: 20,
-    removeOnFail: 20,
-  });
-  return { queued: true };
+  try {
+    await Promise.race([
+      q.add('generate', { examId }, {
+        // 注意：同 jobId 在 completed/failed 集合里仍存在时，BullMQ 会静默忽略入队——
+        // 重试/重发前必须先 remove（Task 6 的验收集）
+        jobId: `paper-generation-${examId}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: 20,
+        removeOnFail: 20,
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('enqueue timeout')), ENQUEUE_TIMEOUT_MS)),
+    ]);
+    return { queued: true };
+  } catch (err) {
+    // 队列不可用/超时都按"未入队"处理：调用方标 failed，开考现场生成兜底
+    logger.warn('组卷预生成入队失败', { examId, err });
+    return { queued: false };
+  }
 }
 ```
 
@@ -730,25 +753,37 @@ export async function enqueuePaperGeneration(examId: string): Promise<{ queued: 
       data: { status: newStatus },
     });
 
-    // 预生成：建/重置状态行后入队；队列不可用时标记 failed（开考时现场生成兜底）
-    await prisma.examPaperGeneration.upsert({
-      where: { examId: req.params.id },
-      create: { examId: req.params.id, status: 'pending', totalStudents: studentIds.length },
-      update: {
-        status: 'pending', totalStudents: studentIds.length,
-        queuedAt: new Date(), startedAt: null, finishedAt: null, error: null,
-        summary: Prisma.JsonNull, unfilledSlots: Prisma.JsonNull,
-      },
-    });
-    const enqueued = await enqueuePaperGeneration(req.params.id);
-    if (!enqueued.queued) {
-      await prisma.examPaperGeneration.update({
+    // 预生成：建/重置状态行后入队。调度失败**不能**让发布变成 500——考试此时已经发布了，
+    // 正确语义是"发布成功 + 组卷欠账"（开考时现场生成兜底）。
+    let generationStatus: 'pending' | 'failed' = 'pending';
+    try {
+      await prisma.examPaperGeneration.upsert({
         where: { examId: req.params.id },
-        data: { status: 'failed', error: '组卷队列不可用（Redis 未启动）；开考时将现场生成' },
+        create: { examId: req.params.id, status: 'pending', totalStudents: studentIds.length },
+        update: {
+          status: 'pending', totalStudents: studentIds.length,
+          queuedAt: new Date(), startedAt: null, finishedAt: null, error: null,
+          summary: Prisma.JsonNull, unfilledSlots: Prisma.JsonNull,
+        },
       });
+      const enqueued = await enqueuePaperGeneration(req.params.id);
+      if (!enqueued.queued) {
+        generationStatus = 'failed';
+        await prisma.examPaperGeneration.update({
+          where: { examId: req.params.id },
+          data: { status: 'failed', error: '组卷队列不可用（Redis 未启动）；开考时将现场生成' },
+        });
+      }
+    } catch (err) {
+      generationStatus = 'failed';
+      logger.error('组卷预生成调度失败', err);
+      // 尽力标记失败（upsert 成功时才有行；连行都没建时，开考兜底仍然成立）
+      await prisma.examPaperGeneration
+        .updateMany({ where: { examId: req.params.id }, data: { status: 'failed', error: '组卷调度失败；开考时将现场生成' } })
+        .catch(() => {});
     }
 
-    res.json({ ...updated, paperGeneration: { status: enqueued.queued ? 'pending' : 'failed' } });
+    res.json({ ...updated, paperGeneration: { status: generationStatus } });
 ```
 
 并在文件顶部补 import：`import { preflightExamPaper } from '../services/paper-preflight';`、`import { enqueuePaperGeneration } from '../jobs/paper-generation-queue';`、`import { Prisma } from '@prisma/client';`（若已有 Prisma import 则复用）。
@@ -993,6 +1028,8 @@ git commit -m "feat(jobs): 组卷预生成 worker（分页/并发4/取消检测/
   - `GET /api/exams/:id/paper-generation` → `{ status, totalStudents, generatedStudents, summary, unfilledSlots, error, queuedAt, startedAt, finishedAt }`
   - `POST /api/exams/:id/paper-generation/retry` → `{ mode: 'regenerate' | 'fill-missing' }`；考试已结束/取消 → 409；重新组卷预检不过 → 400 + preflight
 
+> ⚠️ **重试必须处理 jobId 去重**（Task 4 审查发现）：BullMQ 对已存在的 jobId（含 completed/failed 集合里残留的）会**静默忽略**入队，函数仍返回成功——"failed 后重试"将没有任务在跑。retry 入队前先 `await queue.remove(jobId).catch(() => {})`（或改用带尝试序号的 jobId），并补一条测试：旧 job 存在时重试仍产生新 job。
+
 - [ ] **Step 1: 写失败的测试**
 
 ```ts
@@ -1199,6 +1236,8 @@ git commit -m "feat(exams): 组卷状态与重试接口（补生成 / 重新组�
 - Produces: 考试详情抽屉里的状态/进度/汇总展示 + 「补生成/重新组卷」按钮（带确认框）
 
 - [ ] **Step 1: api.ts 加方法**
+
+> ⚠️ 发布失败的 400 `preflight[]` 必须在**发布调用处**（`ExamForm.tsx` / `ExamManager.tsx`）逐条渲染（哪个题位、差在哪、是否结构签名冲突）——否则教师只看到"N 个题位没有可用题目"，不知道去改什么。这一条与组卷质量卡片同属本任务的教师可见面。
 
 在考试相关分组里：
 
