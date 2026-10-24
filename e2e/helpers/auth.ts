@@ -62,7 +62,8 @@ export async function login(page: Page, creds: Credentials, expectPath: string):
     throw new Error('未能解出验证码答案 —— 请确认 /api/auth/captcha 仍返回 captchaToken');
   }
 
-  await page.getByPlaceholder('学号 / 工号 / 系统账号').fill(creds.username);
+  // 身份入口会改 placeholder，用表单字段 id 保持选择器稳定
+  await page.locator('#identifier').fill(creds.username);
   await page.getByPlaceholder('密码').fill(creds.password);
   await page.getByPlaceholder('验证码').fill(answer);
 

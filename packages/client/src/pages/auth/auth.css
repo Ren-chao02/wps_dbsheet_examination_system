@@ -249,9 +249,58 @@
 }
 
 .auth-subtitle {
+  margin-top: 0;
   margin-bottom: 22px;
   font-size: 12px;
   color: #6f6767;
+}
+
+/* 身份入口：只做输入引导，不参与鉴权 */
+.auth-role-switch.ant-segmented {
+  margin: 8px 0 10px;
+  padding: 3px;
+  border-radius: 9px;
+  background: #f4efee;
+}
+
+.auth-role-switch .ant-segmented-item {
+  border-radius: 7px;
+  color: #6f6767;
+  font-size: 12px;
+  transition: color 0.15s var(--spring-smooth);
+}
+
+.auth-role-switch .ant-segmented-item-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 6px;
+}
+
+.auth-role-switch__label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.auth-role-switch__label .anticon {
+  font-size: 13px;
+}
+
+.auth-role-switch .ant-segmented-item:hover:not(.ant-segmented-item-selected) {
+  color: var(--snnu-red);
+}
+
+.auth-role-switch .ant-segmented-item-selected {
+  color: var(--snnu-red);
+  font-weight: 600;
+}
+
+.auth-role-switch .ant-segmented-thumb {
+  border-radius: 7px;
+  box-shadow: 0 1px 4px rgba(42, 5, 7, 0.12);
 }
 
 .auth-alert {

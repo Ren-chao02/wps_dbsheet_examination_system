@@ -12,14 +12,44 @@ test.describe('冒烟 · 无需账号', () => {
 
     await expect(page).toHaveURL(/\/login/, { timeout: 20_000 });
 
-    // 三个输入框缺一不可：学号/工号/系统账号、密码、验证码。
+    // 三个输入框缺一不可：身份标识、密码、验证码。
     // 少任何一个都意味着登录链路断了 —— 这是最该在 CI 里守住的东西。
-    await expect(page.getByPlaceholder('学号 / 工号 / 系统账号')).toBeVisible();
+    await expect(page.locator('#identifier')).toBeVisible();
     await expect(page.getByPlaceholder('密码')).toBeVisible();
     await expect(page.getByPlaceholder('验证码')).toBeVisible();
     await expect(page.locator('button[type="submit"]')).toBeVisible();
+    // 身份入口是登录页的引导，不能被误删
+    await expect(page.locator('.auth-role-switch')).toBeVisible();
     // 学校品牌区是这次改版的标志
     await expect(page.getByText('陕西师范大学').first()).toBeVisible();
+  });
+
+  test('身份入口会切换输入提示与可用入口', async ({ page }) => {
+    await page.goto('/login');
+
+    const roleSwitch = page.locator('.auth-role-switch');
+    await expect(roleSwitch).toBeVisible();
+
+    // 默认学生：学号 + 邀请入班
+    await expect(page.locator('#identifier')).toHaveAttribute('placeholder', '请输入学号');
+    await expect(page.locator('.auth-invite')).toBeVisible();
+
+    // 教师：工号；邀请入班不适用
+    await roleSwitch.getByText('教师', { exact: true }).click();
+    await expect(page.locator('#identifier')).toHaveAttribute('placeholder', '请输入工号');
+    await expect(page.locator('.auth-invite')).toHaveCount(0);
+    await expect(page.getByText('教师账号由管理员开通', { exact: true })).toBeVisible();
+
+    // 管理员：系统账号；邀请入班不适用
+    await roleSwitch.getByText('管理员', { exact: true }).click();
+    await expect(page.locator('#identifier')).toHaveAttribute('placeholder', '请输入系统账号');
+    await expect(page.locator('.auth-invite')).toHaveCount(0);
+    await expect(page.getByText('管理员账号由系统运维维护', { exact: true })).toBeVisible();
+
+    // 切回学生，入口恢复
+    await roleSwitch.getByText('学生', { exact: true }).click();
+    await expect(page.locator('#identifier')).toHaveAttribute('placeholder', '请输入学号');
+    await expect(page.locator('.auth-invite')).toBeVisible();
   });
 
   test('验证码图片能取回来（后端可达）', async ({ page }) => {

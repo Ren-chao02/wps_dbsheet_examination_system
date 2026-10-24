@@ -1,18 +1,29 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Alert, Button, Checkbox, Form, Input, Modal, Typography, message } from 'antd';
+import { Alert, Button, Checkbox, Form, Input, Modal, Segmented, Typography, message } from 'antd';
 import {
   LockOutlined,
   UserOutlined,
   SafetyOutlined,
   ReloadOutlined,
   RightOutlined,
+  ReadOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
 import type { LoginResponse } from '../../types';
 import { AuthShell } from './AuthShell';
 import { roleHome, takeLoginReturnUrl } from './auth-helpers';
+import {
+  LEGACY_IDENTIFIER_STORAGE_KEY,
+  LOGIN_ROLE_STORAGE_KEY,
+  getLoginRoleMeta,
+  identifierStorageKey,
+  normalizeLoginRole,
+  readRememberedIdentifier,
+  type LoginRole,
+} from './login-roles';
 import { extractInvitationCode } from '../../utils/invitation-code';
 
 const { Paragraph } = Typography;
@@ -75,6 +86,22 @@ const SSO_ERROR_MESSAGES: Record<string, string> = {
   account_disabled: '账号已被禁用，请联系管理员',
 };
 
+const ROLE_ICONS: Record<LoginRole, ReactNode> = {
+  student: <UserOutlined />,
+  teacher: <ReadOutlined />,
+  admin: <SafetyCertificateOutlined />,
+};
+
+const ROLE_OPTIONS = (['student', 'teacher', 'admin'] as LoginRole[]).map((value) => ({
+  value,
+  label: (
+    <span className="auth-role-switch__label">
+      {ROLE_ICONS[value]}
+      {getLoginRoleMeta(value).label}
+    </span>
+  ),
+}));
+
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -104,10 +131,14 @@ export function LoginPage() {
   // 那条 effect 只负责处理「本来已登录却访问 /login」的情况。
   const didJustLogin = useRef(false);
 
-  const initialIdentifier = useMemo(
-    () => localStorage.getItem('login_last_identifier') || '',
-    [],
+  // 身份入口只是引导：默认学生，下次打开沿用上次选中的入口。
+  const [role, setRole] = useState<LoginRole>(() =>
+    normalizeLoginRole(localStorage.getItem(LOGIN_ROLE_STORAGE_KEY)),
   );
+  const roleMeta = getLoginRoleMeta(role);
+  const [initialIdentifier] = useState(() => readRememberedIdentifier(role, localStorage));
+  // 每个身份各自保留正在输入的账号，切回来不丢；密码永不跨身份携带。
+  const identifierDrafts = useRef<Partial<Record<LoginRole, string>>>({});
 
   const fetchCaptcha = useCallback(async () => {
     setCaptchaLoading(true);
@@ -201,6 +232,32 @@ export function LoginPage() {
     void fetchCaptcha();
   };
 
+  const handleRoleChange = (nextRole: LoginRole) => {
+    if (nextRole === role) return;
+
+    identifierDrafts.current[role] = String(form.getFieldValue('identifier') ?? '');
+    // 切换后只找该身份自己的记录，旧版单一账号只在首次进入时兜底，
+    // 避免把学生账号带到管理员输入框里。
+    const nextIdentifier =
+      identifierDrafts.current[nextRole] ??
+      localStorage.getItem(identifierStorageKey(nextRole)) ??
+      '';
+
+    setRole(nextRole);
+    localStorage.setItem(LOGIN_ROLE_STORAGE_KEY, nextRole);
+    // 换身份就是换一次登录尝试：清掉上一位的报错/锁定提示，密码不随行；
+    // 验证码仍属于同一张表单，保留不刷新。
+    setErrorText('');
+    setLockedUntil(null);
+    setNow(Date.now());
+    form.setFieldsValue({ identifier: nextIdentifier, password: '' });
+    form.setFields([
+      { name: 'identifier', errors: [] },
+      { name: 'password', errors: [] },
+      { name: 'captchaText', errors: [] },
+    ]);
+  };
+
   const onFinish = async (values: LoginFormValues) => {
     if (lockRemaining > 0) return;
     setSubmitting(true);
@@ -217,11 +274,20 @@ export function LoginPage() {
 
       didJustLogin.current = true;
       login(res.data.user, res.data.token, res.data.permissions);
+
+      // 按账号真实角色记忆，而不是按当前选中的入口：
+      // 学生在教师入口登录，也能把学号记到学生这一栏。
+      const actualRole = normalizeLoginRole(res.data.user.role);
+      const identifier = values.identifier.trim();
       if (rememberAccount) {
-        localStorage.setItem('login_last_identifier', values.identifier.trim());
+        localStorage.setItem(identifierStorageKey(actualRole), identifier);
+        localStorage.removeItem(LEGACY_IDENTIFIER_STORAGE_KEY);
       } else {
-        localStorage.removeItem('login_last_identifier');
+        localStorage.removeItem(identifierStorageKey(actualRole));
+        localStorage.removeItem(LEGACY_IDENTIFIER_STORAGE_KEY);
       }
+      // 下次打开直接落在真实身份的入口
+      localStorage.setItem(LOGIN_ROLE_STORAGE_KEY, actualRole);
 
       navigate(takeLoginReturnUrl() || roleHome(res.data.user.role), { replace: true });
       message.success('登录成功');
@@ -263,7 +329,16 @@ export function LoginPage() {
       <div className="auth-form">
         <div className="auth-eyebrow">EXAM SYSTEM</div>
         <h2 className="auth-title">登录考试系统</h2>
-        <p className="auth-subtitle">学生使用学号，教师使用工号，管理员使用系统账号</p>
+        <Segmented
+          block
+          className="auth-role-switch"
+          aria-label="选择登录身份"
+          value={role}
+          options={ROLE_OPTIONS}
+          disabled={submitting}
+          onChange={(value) => handleRoleChange(value as LoginRole)}
+        />
+        <p className="auth-subtitle">{roleMeta.subtitle}</p>
 
         {lockedUntil && lockRemaining > 0 ? (
           <Alert
@@ -271,7 +346,7 @@ export function LoginPage() {
             type="warning"
             showIcon
             message={`账号已锁定，请在 ${formatRemaining(lockRemaining)} 后重试`}
-            description="连续登录失败 10 次会触发 15 分钟锁定；也可联系管理员立即解锁。"
+            description={`连续登录失败 10 次会触发 15 分钟锁定；${roleMeta.lockAlertHint}`}
           />
         ) : errorText ? (
           <Alert className="auth-alert" type="error" showIcon message={errorText} />
@@ -287,12 +362,12 @@ export function LoginPage() {
         >
           <Form.Item
             name="identifier"
-            label="学号 / 工号 / 系统账号"
-            rules={[{ required: true, message: '请输入学号、工号或系统账号' }]}
+            label={roleMeta.identifierLabel}
+            rules={[{ required: true, message: roleMeta.identifierRequired }]}
           >
             <Input
               prefix={<UserOutlined />}
-              placeholder="学号 / 工号 / 系统账号"
+              placeholder={roleMeta.identifierPlaceholder}
               autoComplete="username"
               size="large"
             />
@@ -349,7 +424,7 @@ export function LoginPage() {
             连续失败 10 次将锁定 15 分钟 · 公用电脑请勿勾选免登录
           </div>
 
-          {ssoEnabled && (
+          {ssoEnabled && roleMeta.showWpsSso && (
             <>
               <div className="auth-divider">其他登录方式</div>
               <Button
@@ -365,14 +440,16 @@ export function LoginPage() {
             </>
           )}
 
-          <div className="auth-invite">
-            有班级邀请链接？
-            <button type="button" className="auth-text-link" onClick={() => setInviteOpen(true)}>
-              加入班级 <RightOutlined />
-            </button>
-          </div>
+          {roleMeta.showInvitation && (
+            <div className="auth-invite">
+              有班级邀请链接？
+              <button type="button" className="auth-text-link" onClick={() => setInviteOpen(true)}>
+                加入班级 <RightOutlined />
+              </button>
+            </div>
+          )}
 
-          <div className="auth-note">教师账号由管理员开通 · 学生通过班级邀请链接入班</div>
+          <div className="auth-note">{roleMeta.footerNote}</div>
 
           {import.meta.env.DEV && (
             <div className="auth-dev">
@@ -424,16 +501,19 @@ export function LoginPage() {
         onCancel={() => setHelpOpen(false)}
       >
         <Paragraph>
-          <strong>忘记密码：</strong>请联系任课教师或系统管理员重置，系统暂不支持自助找回。
+          <strong>忘记密码：</strong>
+          {roleMeta.help.forgotPassword}
         </Paragraph>
         <Paragraph>
-          <strong>账号被锁定：</strong>连续失败 10 次会锁定 15 分钟，等待自动解锁，或联系管理员立即解锁。
+          <strong>账号被锁定：</strong>
+          {roleMeta.help.locked}
         </Paragraph>
         <Paragraph>
-          <strong>没有账号：</strong>学生请向任课教师索取班级邀请链接；教师账号由管理员开通。
+          <strong>没有账号：</strong>
+          {roleMeta.help.noAccount}
         </Paragraph>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          如需帮助，请联系学校考试系统管理员。
+          {roleMeta.help.footer}
         </Paragraph>
       </Modal>
     </AuthShell>
