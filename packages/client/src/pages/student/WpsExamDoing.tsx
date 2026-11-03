@@ -10,6 +10,7 @@ import {
   ReloadOutlined,
   QuestionCircleOutlined,
   InfoCircleOutlined,
+  TableOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import type { ObjectiveAnswerValue, StudentExamQuestion } from '../../types';
@@ -20,11 +21,12 @@ import {
   isObjectiveQuestion,
   restoreObjectiveAnswers,
 } from '../../components/exam/ObjectiveAnswer';
-import { WpsTablePanel } from '../../components/wps/WpsTablePanel';
+import { WpsTablePanel, type WpsTablePanelActions } from '../../components/wps/WpsTablePanel';
 import { useExamSession } from '../../hooks/useExamSession';
 import { computeExamDeadline, serverNow, syncServerTime } from '../../utils/exam-time';
-import { groupByQuestionType, toChineseIndex } from '../../utils/questionLabels';
+import { groupByQuestionType, questionNeedsTable, toChineseIndex } from '../../utils/questionLabels';
 import { buildRequirementHint } from '../../utils/question-refs-hint';
+import './wps-exam-doing.css';
 
 const { Text, Paragraph, Title } = Typography;
 
@@ -74,6 +76,17 @@ export function WpsExamDoingPage() {
     },
     [setTabSwitchExempt],
   );
+  // 客观题隐藏面板后，顶部「查看表格」按钮仍需打开/聚焦独立窗口
+  const tablePanelActionsRef = useRef<WpsTablePanelActions | null>(null);
+  const handlePopupBlocked = useCallback(() => {
+    message.warning('浏览器拦截了表格窗口，请允许弹窗后重试');
+  }, []);
+  const handleOpenTableWindow = useCallback(() => {
+    const actions = tablePanelActionsRef.current;
+    if (!actions) return;
+    if (actions.workbenchOpen) actions.focusWorkbench();
+    else actions.openWorkbench();
+  }, []);
 
   // ── 客观题作答与自动保存 ────────────────────────────────────────────
   // 客观题在页面内直接作答，必须随时落库：机房断电、浏览器崩溃、误刷新都不该丢答案
@@ -308,7 +321,7 @@ export function WpsExamDoingPage() {
   }, [now, deadline, handleTimerFinish, flushSave]);
 
   const wpsTable = data?.wpsTable || null;
-  const hasWpsTable = !!wpsTable?.shareUrl;
+  const hasExamWpsTable = !!wpsTable?.shareUrl;
   // 右侧表格面板（内嵌 / 独立窗口两种展示方式）见 components/wps/WpsTablePanel：
   // kdocs 对未登录访客强制登录，内嵌 iframe 能否拿到登录态取决于三方 Cookie 策略，
   // 因此失败时必须有出路 —— 面板内置「独立窗口」模式与实时数据面板。
@@ -354,13 +367,18 @@ export function WpsExamDoingPage() {
   const totalQuestions = questions.length;
   const progressPercent = totalQuestions > 0 ? Math.round(((currentStep + 1) / totalQuestions) * 100) : 0;
 
+  // 按当前题型决定是否显示右侧表格：客观题不占布局，实操题恢复分栏。
+  // 面板本身保持挂载（hidden），避免 iframe 重载与独立窗口跟踪断线。
+  const isCurrentObjective = !!currentQuestion && !questionNeedsTable(currentQuestion.type);
+  const showTablePanel = hasExamWpsTable && !!currentQuestion && questionNeedsTable(currentQuestion.type);
+
   // 保存成功只显示 HH:mm：轻量反馈，不把 ISO 时间串怼到学生脸上
   const formatSavedTime = (iso: string) => {
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
   };
 
-  const leftWidth = hasWpsTable ? 420 : '100%';
+  const leftWidth = showTablePanel ? 420 : '100%';
 
   return (
     <FullscreenGuard
@@ -394,6 +412,22 @@ export function WpsExamDoingPage() {
                 style={{ width: 80, margin: 0 }}
               />
             </div>
+
+            {/* 客观题不显示表格面板，但保留独立窗口入口（零占用） */}
+            {hasExamWpsTable && isCurrentObjective && (
+              <Tooltip title={workbenchOpen ? '回到表格窗口' : '查看表格'}>
+                <Button
+                  size="small"
+                  icon={<TableOutlined />}
+                  onClick={handleOpenTableWindow}
+                  aria-label={workbenchOpen ? '回到表格窗口' : '查看表格'}
+                >
+                  <span className="exam-table-btn__label">
+                    {workbenchOpen ? '回到表格窗口' : '查看表格'}
+                  </span>
+                </Button>
+              </Tooltip>
+            )}
 
             {/* Timer */}
             {deadline && (
@@ -461,14 +495,19 @@ export function WpsExamDoingPage() {
 
           {/* Left panel */}
           <div style={{
-            width: leftWidth, minWidth: hasWpsTable ? 420 : undefined,
+            width: leftWidth, minWidth: showTablePanel ? 420 : undefined,
             display: 'flex', flexDirection: 'column',
             background: '#fff',
-            borderRight: hasWpsTable ? '1px solid #f0f0f0' : 'none',
+            borderRight: showTablePanel ? '1px solid #f0f0f0' : 'none',
             overflow: 'hidden',
           }}>
             {/* Question area */}
             <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+              {/* 客观题展开全宽时限宽居中（960px），避免长行阅读；实操题仍受 420 栏宽约束 */}
+              <div
+                key={currentQuestion?.id || 'empty'}
+                className={`exam-question-column${isCurrentObjective ? ' exam-objective-enter' : ''}`}
+              >
               {/* 客观题作答保存失败：顶部横幅 + 重试入口（作答保留在页面与待保存队列里，不丢） */}
               {saveStatus.state === 'error' && (
                 <Alert
@@ -626,6 +665,7 @@ export function WpsExamDoingPage() {
                   </div>
                 )}
               </Card>
+              </div>
             </div>
 
             {/* Bottom nav */}
@@ -686,12 +726,16 @@ export function WpsExamDoingPage() {
           </div>
 
           {/* Right: WPS 多维表格面板（内嵌 / 独立窗口工作台 + 实时数据面板） */}
-          {hasWpsTable && (
+          {hasExamWpsTable && (
             <WpsTablePanel
               shareUrl={wpsTable!.shareUrl}
               storageKey={`exam:${id}`}
               previewEndpoint={`/my-exams/${id}/wps-preview`}
               onWorkbenchChange={handleWorkbenchChange}
+              hidden={!showTablePanel}
+              active={showTablePanel}
+              actionsRef={tablePanelActionsRef}
+              onPopupBlocked={handlePopupBlocked}
             />
           )}
         </div>

@@ -228,13 +228,9 @@ departmentRouter.delete('/:id', authorize('admin'), async (req: Request, res: Re
     if (force === 'true') {
       await prisma.$transaction(async (tx) => {
         const majorIds = (await tx.major.findMany({ where: { departmentId }, select: { id: true } })).map(m => m.id);
-        const classRoomIds = (await tx.classRoom.findMany({ where: { departmentId }, select: { id: true } })).map(c => c.id);
 
-        // 清除用户关联
-        await tx.user.updateMany({
-          where: { classRoomId: { in: classRoomIds } },
-          data: { classRoomId: null },
-        });
+        // 只清除用户档案上的院系/专业；学生的 classRoomId 保留。
+        // ClassRoom 对院系/专业的引用是 SET NULL：删院系不会连带删班。
         await tx.user.updateMany({
           where: { majorId: { in: majorIds } },
           data: { majorId: null },
@@ -244,8 +240,7 @@ departmentRouter.delete('/:id', authorize('admin'), async (req: Request, res: Re
           data: { departmentId: null },
         });
 
-        // 删除院系（Prisma schema 中 Major → Department 和 ClassRoom → Major 设置了 onDelete: Cascade，
-        // 所以删除 Department 会级联删除 Major，删除 Major 会级联删除 ClassRoom）
+        // 删除 Department 会级联删除 Major；班级保留并变为「未分配院系/专业」
         await tx.department.delete({ where: { id: departmentId } });
       });
     } else {
@@ -395,19 +390,14 @@ departmentRouter.delete('/majors/:id', authorize('admin'), async (req: Request, 
 
     if (force === 'true') {
       await prisma.$transaction(async (tx) => {
-        const classRoomIds = (await tx.classRoom.findMany({ where: { majorId }, select: { id: true } })).map(c => c.id);
-
-        // 清除用户关联
-        await tx.user.updateMany({
-          where: { classRoomId: { in: classRoomIds } },
-          data: { classRoomId: null },
-        });
+        // 只清除用户档案上的专业；学生的 classRoomId 保留。
+        // ClassRoom → Major 是 SET NULL：删专业不会连带删班。
         await tx.user.updateMany({
           where: { majorId },
           data: { majorId: null },
         });
 
-        // 删除专业（ClassRoom → Major 设置了 onDelete: Cascade）
+        // 班级保留并变为「未分配专业」
         await tx.major.delete({ where: { id: majorId } });
       });
     } else {
@@ -457,6 +447,8 @@ departmentRouter.post('/majors/:majorId/classrooms', authorize('admin'), async (
         gradeLevel: data.gradeLevel,
         departmentId: major.departmentId,
         majorId,
+        createdBy: req.user!.userId,
+        source: 'MANUAL',
       },
     });
 

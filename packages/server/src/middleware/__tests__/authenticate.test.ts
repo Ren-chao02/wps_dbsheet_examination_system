@@ -41,3 +41,50 @@ describe('authenticate 的 DB 权威字段', () => {
     expect(get().statusCode).toBe(403);
   });
 });
+
+describe('改密后旧 token 失效', () => {
+  it('token 签发时间早于 passwordChangedAt → 401 并要求重新登录', async () => {
+    const issuedAt = Math.floor(Date.now() / 1000) - 60;
+    mockPrisma.user.findUnique.mockResolvedValue({
+      id: 'u-1',
+      accountStatus: 'ENABLED',
+      role: 'teacher',
+      departmentId: null,
+      passwordChangedAt: new Date((issuedAt + 10) * 1000),
+    });
+    const token = jwt.sign(
+      { id: 'u-1', userId: 'u-1', username: 'u1', role: 'teacher', iat: issuedAt },
+      config.jwt.secret,
+      { expiresIn: '1h' },
+    );
+    const { req, res, get } = makeReqRes(token);
+    let nexted = false;
+    await authenticate(req, res, () => { nexted = true; });
+
+    expect(nexted).toBe(false);
+    expect(get().statusCode).toBe(401);
+    expect(get().body.code).toBe('PASSWORD_CHANGED');
+  });
+
+  it('token 签发时间晚于 passwordChangedAt → 放行', async () => {
+    const issuedAt = Math.floor(Date.now() / 1000);
+    mockPrisma.user.findUnique.mockResolvedValue({
+      id: 'u-1',
+      accountStatus: 'ENABLED',
+      role: 'teacher',
+      departmentId: null,
+      passwordChangedAt: new Date((issuedAt - 10) * 1000),
+    });
+    const token = jwt.sign(
+      { id: 'u-1', userId: 'u-1', username: 'u1', role: 'teacher', iat: issuedAt },
+      config.jwt.secret,
+      { expiresIn: '1h' },
+    );
+    const { req, res, get } = makeReqRes(token);
+    let nexted = false;
+    await authenticate(req, res, () => { nexted = true; });
+
+    expect(nexted).toBe(true);
+    expect(get().statusCode).toBe(200);
+  });
+});

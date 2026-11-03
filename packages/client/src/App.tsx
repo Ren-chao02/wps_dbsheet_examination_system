@@ -26,6 +26,7 @@ import { ExamManager } from './pages/teacher/ExamManager';
 import { ExamForm } from './pages/teacher/ExamForm';
 import { PaperBank } from './pages/teacher/PaperBank';
 import { PaperEditor } from './pages/teacher/PaperEditor';
+import { PaperDetail } from './pages/teacher/PaperDetail';
 import { StatisticsPage } from './pages/teacher/StatisticsPage';
 import { StudentProfilePage } from './pages/teacher/StudentProfile';
 // ✅ 新增：批次管理和考场管理组件
@@ -45,6 +46,7 @@ import StudentManagement from './pages/teacher/StudentManagement';
 import StudentImport from './pages/teacher/StudentImport';
 import ImportTaskList from './pages/teacher/ImportTaskList';
 import DepartmentManagement from './pages/teacher/DepartmentManagement';
+import ClassManagement from './pages/teacher/ClassManagement';
 import { DemoPage } from './pages/demo/DemoPage';
 import InvitationManagement from './pages/teacher/InvitationManagement';
 import ApplicationReview from './pages/teacher/ApplicationReview';
@@ -53,11 +55,11 @@ import ForbiddenPage from './pages/public/ForbiddenPage';
 import RoleManagement from './pages/admin/RoleManagement';
 import AccountManagement from './pages/admin/AccountManagement';
 import AccountImport from './pages/admin/AccountImport';
-import TeacherClassAssignment from './pages/admin/TeacherClassAssignment';
 import SystemImportTaskList from './pages/admin/SystemImportTaskList';
 import CacheManagement from './pages/admin/CacheManagement';
 import LlmConfigManager from './pages/admin/LlmConfigManager';
 import { WpsTokenManager } from './pages/teacher/WpsTokenManager';
+import ProfilePage from './pages/profile/ProfilePage';
 
 function PrivateRoute({ children, roles, permissions }: { children: React.ReactNode; roles?: string[]; permissions?: string[] }) {
   const { isAuthenticated, isLoading, user, hasPermission } = useAuthStore();
@@ -131,6 +133,7 @@ export default function App() {
         <Route path="exam/:id/result" element={<ExamResultPage />} />
         <Route path="history" element={<ExamHistory />} />
         <Route path="favorites" element={<FavoriteQuestions />} />
+        <Route path="profile" element={<ProfilePage />} />
       </Route>
 
       {/* Teacher */}
@@ -148,6 +151,7 @@ export default function App() {
         <Route path="exams/new/wizard" element={<ExamWizard />} /> {/* ✅ 新增：向导式创建 */}
         <Route path="papers" element={<PaperBank />} />
         <Route path="papers/new" element={<PaperEditor />} />
+        <Route path="papers/:id" element={<PaperDetail />} />
         <Route path="papers/:id/edit" element={<PaperEditor />} />
         <Route path="exams/new" element={<ExamForm />} />
         <Route path="exams/:id/edit" element={<ExamForm />} />
@@ -158,6 +162,8 @@ export default function App() {
         <Route path="grading/:id" element={<GradingPage />} /> {/* ✅ 阅卷管理（含人工复核） */}
         <Route path="exams/:id/statistics" element={<StatisticsPage />} />
         <Route path="students/:id/profile" element={<StudentProfilePage />} />
+        <Route path="classes" element={<ClassManagement />} />
+        {/* 旧院系架构页保留为隐藏入口（管理员从班级页进入） */}
         <Route path="departments" element={<DepartmentManagement />} />
         <Route path="students" element={<StudentManagement />} />
         <Route path="students/import" element={<StudentImport />} />
@@ -167,6 +173,7 @@ export default function App() {
         <Route path="export-center" element={<ExportCenter />} />
         <Route path="wps-token" element={<WpsTokenManager />} />
         <Route path="llm-config" element={<LlmConfigManager />} />
+        <Route path="profile" element={<ProfilePage />} />
       </Route>
 
       {/* Public - Student Join */}
@@ -181,11 +188,16 @@ export default function App() {
         <Route path="users" element={<Navigate to="/admin/accounts" replace />} />
         <Route path="accounts" element={<AccountManagement />} />
         <Route path="accounts/import" element={<AccountImport />} />
-        <Route path="teacher-classes" element={<TeacherClassAssignment />} />
+        <Route path="classes" element={<ClassManagement />} />
+        {/* 院系/专业降级为高级设置，从班级页进入 */}
+        <Route path="departments" element={<DepartmentManagement />} />
+        {/* 旧教师班级分配入口 → 班级管理（批量分配教师已并入） */}
+        <Route path="teacher-classes" element={<Navigate to="/admin/classes" replace />} />
         <Route path="roles" element={<RoleManagement />} />
         <Route path="import-tasks" element={<SystemImportTaskList />} />
         <Route path="cache" element={<CacheManagement />} />
         <Route path="llm-config" element={<LlmConfigManager />} />
+        <Route path="profile" element={<ProfilePage />} />
       </Route>
 
       {/* Demo - 金山多维表格 API 测试 */}

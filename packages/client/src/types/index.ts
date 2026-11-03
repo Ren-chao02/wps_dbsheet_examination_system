@@ -478,12 +478,42 @@ export interface ClassRoom {
   code: string;
   academicYear: string;
   gradeLevel: number;
-  majorId: string;
-  departmentId: string;
-  major?: Major;
-  department?: Department;
+  majorId: string | null;
+  departmentId: string | null;
+  major?: Major | null;
+  department?: Department | null;
   studentCount?: number;
   createdAt?: string;
+}
+
+export interface ClassOption {
+  id: string;
+  name: string;
+  code: string;
+}
+
+export interface ClassMemberSummary {
+  id: string;
+  username: string;
+  realName: string | null;
+}
+
+export interface ClassRow {
+  id: string;
+  name: string;
+  code: string;
+  academicYear: string;
+  gradeLevel: number;
+  departmentId: string | null;
+  departmentName: string | null;
+  majorId: string | null;
+  majorName: string | null;
+  studentCount: number;
+  invitationCount: number;
+  source: 'MANUAL' | 'SYSTEM';
+  createdAt: string;
+  creator: ClassMemberSummary | null;
+  teachers: ClassMemberSummary[];
 }
 
 // 邀请与审批类型

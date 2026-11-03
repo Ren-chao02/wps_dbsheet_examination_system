@@ -135,6 +135,8 @@ model User {
   gender        Gender?
   phoneNumber   String?       @map("phone_number") @db.VarChar(32)
   accountStatus AccountStatus @default(ENABLED) @map("account_status")
+  /// 最近一次改密时间：authenticate 用它判定更早签发的 JWT 已失效，避免旧 token 继续可用到自然过期
+  passwordChangedAt DateTime? @map("password_changed_at")
   remark        String?       @db.VarChar(512)
   systemRoleId  String?       @map("system_role_id") @db.Uuid
   lastLoginAt   DateTime?     @map("last_login_at")
@@ -154,6 +156,7 @@ model User {
   createdQuestions           Question[]               @relation("QuestionCreator")
   createdExams               Exam[]                   @relation("ExamCreator")
   createdPapers              Paper[]                  @relation("PaperCreator")
+  createdClassRooms          ClassRoom[]              @relation("ClassRoomCreator")
   createdBatches             ExamBatch[]              @relation("BatchCreator") // ✅ 新增：批次创建者
   submissions                StudentSubmission[]
   gradedSubmissions          StudentSubmission[]      @relation("Grader")
@@ -720,19 +723,29 @@ model Major {
   @@unique([departmentId, code])
 }
 
-model ClassRoom {
-  id           String   @id @default(uuid())
-  name         String
-  code         String   @unique
-  academicYear String
-  gradeLevel   Int      @default(1)
-  departmentId String
-  majorId      String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+/// 班级来源：手动创建 / 历史或种子数据（WPS 通讯录导入等来源后续再加）
+enum ClassRoomSource {
+  MANUAL
+  SYSTEM
+}
 
-  department     Department     @relation(fields: [departmentId], references: [id])
-  major          Major          @relation(fields: [majorId], references: [id], onDelete: Cascade)
+model ClassRoom {
+  id           String          @id @default(uuid())
+  name         String
+  code         String          @unique
+  academicYear String
+  gradeLevel   Int             @default(1)
+  // 院系/专业退为可选元数据：班级是主实体，新建班可以不挂院系
+  departmentId String?
+  majorId      String?
+  createdBy    String?         @map("created_by") @db.Uuid
+  source       ClassRoomSource @default(SYSTEM)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  department     Department?    @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  major          Major?         @relation(fields: [majorId], references: [id], onDelete: SetNull)
+  creator        User?          @relation("ClassRoomCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   students       User[]
   invitations    Invitation[]
   teacherClasses TeacherClass[] @relation("TeacherClassRooms") // ✅ 负责该班级的教师（多对多）

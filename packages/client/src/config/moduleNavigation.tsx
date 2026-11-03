@@ -33,7 +33,6 @@ import {
 
   // 学生管理相关图标
   UserOutlined,
-  BankOutlined,
   LinkOutlined,
   AuditOutlined,
   CloudUploadOutlined,
@@ -265,15 +264,13 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
     icon: <TeamOutlined />,
     subItems: [
       {
-        key: '/teacher/departments',
-        label: '院系架构',
-        icon: <BankOutlined />,
+        key: '/teacher/classes',
+        label: '班级管理',
+        icon: <TeamOutlined />,
         permission: 'STUDENT_MANAGEMENT',
-        // 仅校级管理员：P1 数据范围收口后教师看到的院系树只剩自己任教的班级、且整页只读，
-        // 该页对教师已无价值；但它是全系统唯一能建「院系/专业/班级」的界面，对管理员不可替代，
-        // 因此只藏入口（这里）+ 页面内直链守卫（DepartmentManagement），不删页面。
-        // 未来若出现「院系管理员」角色，在此 roles 数组追加即可恢复入口。
-        roles: ['admin'],
+        // 教师端入口：班级列表是主入口；管理员走 /admin/classes，避免两个班
+        // 级管理入口同时出现。旧「院系架构」页降级为班级页里的隐藏入口。
+        roles: ['teacher'],
       },
       {
         key: '/teacher/students',
@@ -300,8 +297,8 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
         permission: 'IMPORT_EXPORT',
       },
     ],
-    defaultSubKey: '/teacher/departments',
-    description: '学生信息维护与批量管理',
+    defaultSubKey: '/teacher/classes',
+    description: '班级与学生信息维护',
   },
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -348,11 +345,11 @@ export const MODULE_NAVIGATION_CONFIG: TopModuleItem[] = [
         description: '用户账户的创建、编辑、禁用、批量导入',
       },
       {
-        key: '/admin/teacher-classes',
-        label: '教师班级分配',
+        key: '/admin/classes',
+        label: '班级管理',
         icon: <TeamOutlined />,
         permission: 'SYSTEM_MANAGEMENT',
-        description: '集中查看并分配每位教师负责的班级',
+        description: '建班、删除、批量分配教师与查看班级人数',
       },
       {
         key: '/admin/roles',

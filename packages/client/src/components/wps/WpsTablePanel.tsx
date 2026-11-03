@@ -11,7 +11,7 @@
  *
  * 学生的选择会按 storageKey 记忆，下次进入同一场考试直接沿用，不用重复踩坑。
  */
-import { useCallback } from 'react';
+import { useCallback, useEffect, type MutableRefObject } from 'react';
 import { Button, Card, Space, Spin, Tag, Typography } from 'antd';
 import {
   CheckCircleOutlined,
@@ -26,6 +26,12 @@ import { WpsLivePreview } from './WpsLivePreview';
 
 const { Text, Title } = Typography;
 
+export interface WpsTablePanelActions {
+  openWorkbench: () => void;
+  focusWorkbench: () => void;
+  workbenchOpen: boolean;
+}
+
 interface WpsTablePanelProps {
   /** 该考生分配的多维表格分享链接 */
   shareUrl: string | null;
@@ -35,6 +41,17 @@ interface WpsTablePanelProps {
   previewEndpoint?: string | null;
   /** 工作台窗口开/关：调用方据此豁免切屏计数、挂起全屏守护 */
   onWorkbenchChange?: (open: boolean) => void;
+  /**
+   * 仅隐藏、不卸载：客观题不需要表格时由调用方置 true。
+   * 保留挂载是为了 iframe 不重载、独立窗口的豁免跟踪不断线。
+   */
+  hidden?: boolean;
+  /** 面板当前是否可见：隐藏时暂停实时数据轮询，切回时立即刷新一次 */
+  active?: boolean;
+  /** 把打开/聚焦独立窗口的能力暴露给调用方（客观题顶部按钮使用） */
+  actionsRef?: MutableRefObject<WpsTablePanelActions | null>;
+  /** 独立窗口被浏览器拦截时的回调 */
+  onPopupBlocked?: () => void;
 }
 
 export function WpsTablePanel({
@@ -42,6 +59,10 @@ export function WpsTablePanel({
   storageKey,
   previewEndpoint,
   onWorkbenchChange,
+  hidden = false,
+  active = true,
+  actionsRef,
+  onPopupBlocked,
 }: WpsTablePanelProps) {
   const {
     reloadKey,
@@ -56,7 +77,16 @@ export function WpsTablePanel({
     focusWorkbench,
     workbenchOpen,
     popupBlocked,
-  } = useWpsEmbed(shareUrl, { timeoutMs: 15000, storageKey, onWorkbenchChange });
+  } = useWpsEmbed(shareUrl, { timeoutMs: 15000, storageKey, onWorkbenchChange, onPopupBlocked });
+
+  // 把窗口控制能力交给父组件：隐藏面板时学生仍能从顶部按钮打开/聚焦独立窗口
+  useEffect(() => {
+    if (!actionsRef) return;
+    actionsRef.current = { openWorkbench, focusWorkbench, workbenchOpen };
+    return () => {
+      actionsRef.current = null;
+    };
+  }, [actionsRef, openWorkbench, focusWorkbench, workbenchOpen]);
 
   const switchToWorkbench = useCallback(() => {
     setMode('workbench');
@@ -73,7 +103,16 @@ export function WpsTablePanel({
   if (!shareUrl) return null;
 
   return (
-    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#f0f2f5' }}>
+    <div
+      style={{
+        flex: 1,
+        minWidth: 0,
+        // display:none 而不是卸载：保留 iframe 状态与独立窗口的豁免跟踪
+        display: hidden ? 'none' : 'flex',
+        flexDirection: 'column',
+        background: '#f0f2f5',
+      }}
+    >
       {/* ═══ 工具栏 ═══ */}
       <div
         style={{
@@ -253,7 +292,7 @@ export function WpsTablePanel({
           {/* 实时数据面板：主页面始终能看到表格真实数据 */}
           <div style={{ flex: 1, minHeight: 0, margin: '0 12px 12px', background: '#fff', border: '1px solid #f0f0f0', borderRadius: 6, overflow: 'hidden' }}>
             {previewEndpoint ? (
-              <WpsLivePreview endpoint={previewEndpoint} enabled />
+              <WpsLivePreview endpoint={previewEndpoint} enabled={active} />
             ) : (
               <div style={{ padding: 24, textAlign: 'center' }}>
                 <Text type="secondary">

@@ -1,43 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Table, Button, Tag, Space, Modal, Form, DatePicker, InputNumber,
-  message, Tooltip, Card, Typography, TreeSelect
+  message, Tooltip, Card, Typography, Select
 } from 'antd';
 import {
   PlusOutlined, CopyOutlined, StopOutlined, LinkOutlined
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
-import { Invitation, Department } from '../../types';
+import type { Invitation, ClassOption } from '../../types';
 
 const { Title } = Typography;
-
-interface DeptTreeNode {
-  title: string;
-  value: string;
-  selectable: boolean;
-  children?: DeptTreeNode[];
-}
-
-function buildTreeData(departments: Department[]): DeptTreeNode[] {
-  return departments.map((dept) => ({
-    title: dept.name,
-    value: `dept_${dept.id}`,
-    selectable: false,
-    children: (dept.majors || []).map((major) => ({
-      title: major.name,
-      value: `major_${major.id}`,
-      selectable: false,
-      children: (major.classRooms || []).map((cls) => ({
-        title: cls.name,
-        value: cls.id,
-        selectable: true,
-        children: undefined,
-      })),
-    })),
-  }));
-}
 
 const statusConfig: Record<string, { color: string; text: string }> = {
   ACTIVE: { color: 'green', text: '有效' },
@@ -53,8 +28,9 @@ export default function InvitationManagement() {
   const [pageSize] = useState(10);
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [deptTree, setDeptTree] = useState<DeptTreeNode[]>([]);
+  const [classOptions, setClassOptions] = useState<ClassOption[]>([]);
   const [form] = Form.useForm();
+  const [searchParams] = useSearchParams();
 
   const fetchInvitations = useCallback(async (p = page) => {
     setLoading(true);
@@ -70,23 +46,18 @@ export default function InvitationManagement() {
     }
   }, [page, pageSize]);
 
-  const fetchDepts = async () => {
-    try {
-      const res = await api.get('/departments');
-      const depts: Department[] = res.data.data;
-      setDeptTree(buildTreeData(depts));
-    } catch {
-      message.error('加载院系数据失败');
-    }
-  };
-
   useEffect(() => {
     fetchInvitations();
   }, [fetchInvitations]);
 
   const handleOpenModal = () => {
-    fetchDepts();
+    api
+      .get<{ data: ClassOption[] }>('/classrooms/options')
+      .then((res) => setClassOptions(res.data.data || []))
+      .catch(() => setClassOptions([]));
     form.resetFields();
+    const classRoomId = searchParams.get('classRoomId');
+    if (classRoomId) form.setFieldValue('classRoomId', classRoomId);
     setModalOpen(true);
   };
 
@@ -279,11 +250,14 @@ export default function InvitationManagement() {
             label="选择班级"
             rules={[{ required: true, message: '请选择班级' }]}
           >
-            <TreeSelect
-              treeData={deptTree}
-              placeholder="请选择班级（院系 > 专业 > 班级）"
+            <Select
+              placeholder="请选择班级"
               showSearch
-              treeNodeFilterProp="title"
+              optionFilterProp="label"
+              options={classOptions.map((cls) => ({
+                value: cls.id,
+                label: `${cls.name}（${cls.code}）`,
+              }))}
               style={{ width: '100%' }}
               dropdownStyle={{ maxHeight: 400, overflow: 'auto' }}
             />

@@ -273,6 +273,65 @@ export function analyzeItems(items: EditorItem[]): PaperAnalysis {
   return { totalQuestions, totalScore, rows };
 }
 
+// ── 试卷详情页：题位 → 卷面文档（按题型分组，题号 = 题位序号）──────
+//
+// 题号取「题位序号」而不是组内序号：开考后答题卡按题位序号编号，
+// 分组只改变展示顺序，不能让题号跟着组内位置漂移。
+
+export interface DocEntry {
+  /** 题号：1 基，与开考后 StudentExamQuestion.slotIndex 的展示口径一致 */
+  index: number;
+  slotId: string;
+  kind: 'fixed' | 'rule';
+  score: number;
+  question: Question | null;
+  rule: SlotRule | null;
+  typeKey: string;
+}
+
+export interface DocGroup {
+  key: string;
+  label: string;
+  entries: DocEntry[];
+  score: number;
+}
+
+/**
+ * 题位列表 → 卷面分组。分组键为题型（抽题题位按规则题型，旧规则无题型 → any），
+ * 同题型的固定题与抽题题位落在同一组：卷面上就该并排展示，抽题位渲染成占位卡。
+ */
+export function buildDocGroups(slots: PaperQuestion[]): DocGroup[] {
+  const map = new Map<string, DocGroup>();
+  slots.forEach((slot, i) => {
+    const isRule = slot.slotType === 'rule';
+    const typeKey = isRule ? (slot.rule?.type ?? 'any') : (slot.question?.type ?? 'unset');
+    let group = map.get(typeKey);
+    if (!group) {
+      const label = typeKey === 'any' ? '抽题（不限题型）'
+        : typeKey === 'unset' ? '未指定题型'
+          : questionTypeLabel(typeKey);
+      group = { key: typeKey, label, entries: [], score: 0 };
+      map.set(typeKey, group);
+    }
+    group.entries.push({
+      index: i + 1,
+      slotId: slot.id,
+      kind: isRule ? 'rule' : 'fixed',
+      score: slot.score,
+      question: slot.question,
+      rule: slot.rule ?? null,
+      typeKey,
+    });
+    group.score += slot.score;
+  });
+  return Array.from(map.values());
+}
+
+/** 卷面条目的难度：固定题看题目难度，抽题题位看规则难度（旧规则无难度 → undefined） */
+export function docEntryDifficulty(entry: DocEntry): Difficulty | undefined {
+  return entry.kind === 'fixed' ? entry.question?.difficulty : entry.rule?.difficulty;
+}
+
 /** 已选清单浮层的难度分布：固定题按题目难度；抽题行按各难度抽题数量（旧规则无难度不计入） */
 export function difficultyBreakdown(items: EditorItem[]): Record<Difficulty, number> {
   const result = emptyCounts();

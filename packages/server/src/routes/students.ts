@@ -17,7 +17,7 @@ import { wpsConfigService } from '../services/wps-config-service';
 import { checkStudentAccess, denyAccess } from '../middleware/exam-ownership';
 import { scopeCtxOf, studentWhere, myClassIds } from '../services/data-scope';
 import { findIdentifierConflict, identifierConflictMessage } from '../services/user-identifiers';
-import { hashPassword, verifyPassword } from '../services/password-hash';
+import { hashPassword, passwordChangedTimestamp } from '../services/password-hash';
 
 export const studentRouter = Router();
 
@@ -510,9 +510,9 @@ studentRouter.post('/', async (req: Request, res: Response) => {
       return res.status(409).json({ message: identifierConflictMessage(conflict) });
     }
 
-    // 查询班级，获取 departmentId / majorId（仅当提供了 classRoomId 时）
-    let departmentId: string | undefined;
-    let majorId: string | undefined;
+    // 查询班级，获取 departmentId / majorId（仅当提供了 classRoomId 时；班级可不挂院系）
+    let departmentId: string | null | undefined;
+    let majorId: string | null | undefined;
     if (data.classRoomId) {
       const classRoom = await prisma.classRoom.findUnique({ where: { id: data.classRoomId } });
       if (!classRoom) {
@@ -677,7 +677,11 @@ studentRouter.put('/:id/reset-password', async (req: Request, res: Response) => 
 
     await prisma.user.update({
       where: { id: student.id },
-      data: { passwordHash },
+      data: {
+        passwordHash,
+        // 重置后旧 token 立即失效（与自助改密同一口径）
+        passwordChangedAt: passwordChangedTimestamp(),
+      },
     });
 
     // 口令只在这一处返回，系统不留明文；教师需当场转告学生

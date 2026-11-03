@@ -6,6 +6,7 @@ import { SaveOutlined, ImportOutlined, LinkOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 import { useAuthStore } from '../../../stores/auth';
 import { useNavigate } from 'react-router-dom';
+import { readDraft, writeDraft, clearDraft, examTableLinksDraftKey } from '../../../utils/wizard-draft';
 
 const { Text } = Typography;
 
@@ -23,7 +24,22 @@ interface StudentRow {
   shareUrl: string;
 }
 
-// 独立输入组件：本地 state 管理，只在失焦时提交到父级，避免每次按键全量更新
+/**
+ * 把当前输入里的非空链接落成本地草稿；全空则清掉草稿。
+ * 只存非空值：恢复时按 `草稿 ?? 服务端值` 合并，空串会把服务端已保存的链接覆盖没。
+ */
+function persistLinksDraft(examId: string, rows: StudentRow[]) {
+  const links: Record<string, string> = {};
+  for (const s of rows) {
+    const url = s.shareUrl.trim();
+    if (url) links[s.studentId] = url;
+  }
+  const key = examTableLinksDraftKey(examId);
+  if (Object.keys(links).length > 0) writeDraft(key, links);
+  else clearDraft(key);
+}
+
+// 独立输入组件：本地 state 管理，防抖 + 失焦时才提交到父级，避免每次按键全量更新
 function StudentUrlCell({
   studentId,
   value,
@@ -36,6 +52,9 @@ function StudentUrlCell({
   const [localValue, setLocalValue] = useState(value);
   const prevStudentIdRef = useRef(studentId);
   const prevExternalValueRef = useRef(value);
+  // 已提交给父级的值：避免防抖与失焦重复提交同一个值
+  const committedRef = useRef(value);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 使用 useEffect 同步外部值变化，避免在 render 中调用 setState 导致级联重渲染
   useEffect(() => {
@@ -43,23 +62,44 @@ function StudentUrlCell({
       prevStudentIdRef.current = studentId;
       setLocalValue(value);
       prevExternalValueRef.current = value;
+      committedRef.current = value;
     } else if (value !== prevExternalValueRef.current) {
       prevExternalValueRef.current = value;
       setLocalValue(value);
     }
   }, [studentId, value]);
 
+  const commit = useCallback((next: string) => {
+    if (next === committedRef.current) return;
+    committedRef.current = next;
+    onChange(studentId, next);
+  }, [studentId, onChange]);
+
   const handleBlur = useCallback(() => {
-    if (localValue !== value) {
-      onChange(studentId, localValue);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
     }
-  }, [studentId, localValue, value, onChange]);
+    commit(localValue);
+  }, [commit, localValue]);
+
+  // 输入即起一个防抖提交：粘贴完链接往往直接切去 WPS 拿下一个（不产生 blur），
+  // 不主动提交的话这份输入永远进不了父级状态和本地草稿
+  const handleChange = useCallback((v: string) => {
+    setLocalValue(v);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => commit(v), 800);
+  }, [commit]);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
 
   return (
     <Input
       placeholder="https://www.kdocs.cn/l/xxxxxx"
       value={localValue}
-      onChange={(e) => setLocalValue(e.target.value)}
+      onChange={(e) => handleChange(e.target.value)}
       onBlur={handleBlur}
       onPressEnter={(e: any) => e.target?.blur?.()}
     />
@@ -72,6 +112,17 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [bulkText, setBulkText] = useState('');
+  // 列表装载并合并草稿完成前不要回写草稿，否则初始空列表会把草稿冲掉
+  const [hydrated, setHydrated] = useState(false);
+  // 以下 ref 供卸载时的兜底落盘使用（[] 依赖的清理函数里拿不到最新 state/props）
+  const hydratedRef = useRef(false);
+  const savedRef = useRef(false);
+  const examIdRef = useRef(exam.id);
+  const studentsRef = useRef<StudentRow[]>([]);
+  examIdRef.current = exam.id;
+  useEffect(() => {
+    studentsRef.current = students;
+  }, [students]);
   const accessToken = useAuthStore(state => state.wpsToken?.accessToken) || '';
   const wpsToken = useAuthStore(state => state.wpsToken);
   const getWpsTokenRemainingSeconds = useAuthStore(state => state.getWpsTokenRemainingSeconds);
@@ -90,6 +141,8 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
       const assignedMap = new Map<string, any>(
         (assignmentsRes.data.assignments || []).map((a: any) => [a.studentId, a])
       );
+      // 上次没保存成功就刷新/关页的输入：本地草稿优先于服务端快照
+      const draftLinks = readDraft<Record<string, string>>(examTableLinksDraftKey(exam.id)) || {};
 
       setStudents((studentsRes.data.students || []).map((s: any) => {
         const assigned = assignedMap.get(s.id);
@@ -98,15 +151,32 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
           realName: s.realName || s.username,
           username: s.username,
           studentIdNumber: s.studentId || null,
-          shareUrl: assigned?.shareUrl || '',
+          shareUrl: draftLinks[s.id] ?? assigned?.shareUrl ?? '',
         };
       }));
+      hydratedRef.current = true;
+      setHydrated(true);
     } catch {
       message.error('加载失败');
     } finally {
       setLoading(false);
     }
   };
+
+  // 输入变化防抖落草稿：dev 下页面随时可能被整页重载，粘贴的链接不能只活在内存里
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = setTimeout(() => persistLinksDraft(exam.id, students), 500);
+    return () => clearTimeout(timer);
+  }, [students, hydrated, exam.id]);
+
+  // 卸载（弹窗关闭 / 切步骤）时兜底再写一次，避免最后 500ms 内的输入没落盘；
+  // 保存成功后的卸载不再写，否则会把刚清掉的草稿又复活出来
+  useEffect(() => () => {
+    if (hydratedRef.current && !savedRef.current) {
+      persistLinksDraft(examIdRef.current, studentsRef.current);
+    }
+  }, []);
 
   const handleShareUrlChange = useCallback((studentId: string, value: string) => {
     setStudents(prev => prev.map(s =>
@@ -143,6 +213,8 @@ export function WpsTableAssignStep({ exam, onSaved, onBack }: WpsTableAssignStep
       } else {
         message.success('分配保存成功');
       }
+      savedRef.current = true;
+      clearDraft(examTableLinksDraftKey(exam.id)); // 已保存成功，链接草稿作废
       onSaved();
     } catch (err: any) {
       message.error(err.response?.data?.message || '保存失败');

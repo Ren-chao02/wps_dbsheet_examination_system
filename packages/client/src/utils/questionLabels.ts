@@ -31,6 +31,16 @@ export function isObjectiveQuestionType(type?: string | null): boolean {
   return !!type && OBJECTIVE_QUESTION_TYPES.includes(type);
 }
 
+/**
+ * 该题型是否需要右侧 WPS 表格面板。
+ *
+ * 只对**已知**的三种客观题隐藏；实操题、历史遗留类型、空类型一律按需要表格处理
+ * —— 按「没有判分规则就隐藏」会把规则缺失的实操题误伤成无表格可做。
+ */
+export function questionNeedsTable(type?: string | null): boolean {
+  return !isObjectiveQuestionType(type);
+}
+
 /** 单选题/多选题/判断题（判断题的选项就是「正确/错误」两项，编辑器预填） */
 export const OBJECTIVE_TYPE_OPTIONS = OBJECTIVE_QUESTION_TYPES.map((value) => ({
   value,

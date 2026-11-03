@@ -2,7 +2,13 @@
  * questionLabels 纯函数测试 — 题型标签、中文序号与答题卡分组
  */
 import { describe, it, expect } from 'vitest';
-import { QUESTION_TYPE_LABELS, questionTypeLabel, toChineseIndex, groupByQuestionType } from '../questionLabels';
+import {
+  QUESTION_TYPE_LABELS,
+  questionTypeLabel,
+  toChineseIndex,
+  groupByQuestionType,
+  questionNeedsTable,
+} from '../questionLabels';
 
 describe('questionTypeLabel', () => {
   it('实操 5 种与客观 3 种都有中文标签（与题目编辑器命名一致）', () => {
@@ -15,6 +21,20 @@ describe('questionTypeLabel', () => {
 
   it('未知题型回退为原始 type，不显示 undefined', () => {
     expect(questionTypeLabel('brand_new_type')).toBe('brand_new_type');
+  });
+});
+
+describe('questionNeedsTable', () => {
+  it('三种客观题不需要右侧表格', () => {
+    expect(questionNeedsTable('single_choice')).toBe(false);
+    expect(questionNeedsTable('multiple_choice')).toBe(false);
+    expect(questionNeedsTable('true_false')).toBe(false);
+  });
+
+  it('实操题、未知题型、空题型都需要表格（宁可多显示，不能误伤）', () => {
+    for (const type of ['create_table', 'add_field', 'config_view', 'create_form', 'comprehensive', 'legacy_type', '', null, undefined]) {
+      expect(questionNeedsTable(type)).toBe(true);
+    }
   });
 });
 

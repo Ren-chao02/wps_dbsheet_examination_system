@@ -12,7 +12,7 @@ import fs from 'fs';
 import { prisma } from '../config/prisma';
 import { authenticate, authorizePermission } from '../middleware/auth';
 import { findIdentifierConflict, identifierConflictMessage } from '../services/user-identifiers';
-import { hashPassword, verifyPassword } from '../services/password-hash';
+import { hashPassword, passwordChangedTimestamp } from '../services/password-hash';
 
 export const accountRouter = Router();
 
@@ -500,7 +500,11 @@ accountRouter.put('/reset-password/:id', async (req: Request, res: Response) => 
     const passwordHash = await hashPassword(password);
     await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash },
+      data: {
+        passwordHash,
+        // 重置后旧 token 立即失效（与自助改密同一口径）
+        passwordChangedAt: passwordChangedTimestamp(),
+      },
     });
 
     res.json({ message: '密码已重置，请把新密码转告使用者', password });

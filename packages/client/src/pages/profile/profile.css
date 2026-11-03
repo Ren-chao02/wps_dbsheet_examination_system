@@ -1,0 +1,26 @@
+/* 个人信息页：三端共用，宽度收窄到阅读舒适区（表单/描述列表不需要 1400px） */
+.profile-page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.profile-card {
+  margin-bottom: 16px;
+}
+
+.profile-name {
+  margin: 0 !important;
+  color: var(--apple-text-h1);
+}
+
+.profile-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--apple-text-secondary);
+}
+
+.profile-avatar {
+  background: linear-gradient(135deg, #5e5ce6, #007aff);
+  flex-shrink: 0;
+}

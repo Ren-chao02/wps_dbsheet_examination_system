@@ -173,7 +173,7 @@ export function TeacherLayout() {
   const [activeTopModuleKey, setActiveTopModuleKey] = useState<string>('dashboard');
 
   const accessibleModules = useMemo(() => {
-    // 传 role 以过滤「角色限定」菜单项（如「院系架构」仅校级管理员可见）
+    // 传 role 以过滤「角色限定」菜单项（教师端/管理端各有班级管理入口）
     return filterAccessibleModules(hasPermission, user?.role);
   }, [hasPermission, user?.role]);
 
@@ -198,7 +198,7 @@ export function TeacherLayout() {
     setActiveTopModuleKey(moduleKey);
     const targetModule = accessibleModules.find(m => m.key === moduleKey);
     if (!targetModule?.defaultSubKey) return;
-    // defaultSubKey 可能被过滤掉（如教师看不到「院系架构」，而它恰是「学生管理」的默认子项）：
+    // defaultSubKey 可能被过滤掉（如教师端与管理端的班级管理入口不同）：
     // 回退到第一个可见子项，否则点顶栏 Tab 会把教师直接送进 403 守卫页
     const defaultVisible = targetModule.subItems.some(item => item.key === targetModule.defaultSubKey);
     navigate(defaultVisible ? targetModule.defaultSubKey : targetModule.subItems[0].key);
@@ -206,6 +206,13 @@ export function TeacherLayout() {
 
   const userMenu = {
     items: [
+      {
+        key: 'profile',
+        icon: <UserOutlined />,
+        label: '个人信息',
+        onClick: () => navigate('/teacher/profile'),
+      },
+      { type: 'divider' as const },
       { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: handleLogout },
     ],
   };

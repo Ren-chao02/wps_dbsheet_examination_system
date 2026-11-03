@@ -77,7 +77,13 @@ export function PaperBank() {
 
         <div className="paper-row__main">
           <div className="paper-row__title-line">
-            <span className="paper-row__name">{paper.name}</span>
+            <button
+              type="button"
+              className="paper-row__name paper-row__name--link"
+              onClick={() => navigate(`/teacher/papers/${paper.id}`)}
+            >
+              {paper.name}
+            </button>
             {diff && <Tag color={diff.color}>{diff.text}</Tag>}
             <Tag color={paper.source === 'official' ? 'orange' : 'cyan'}>
               {paper.source === 'official' ? '官方' : '校本'}
@@ -100,7 +106,7 @@ export function PaperBank() {
         </div>
 
         <div className="paper-row__actions">
-          <Button type="link" size="small" onClick={() => navigate(`/teacher/papers/${paper.id}/edit?tab=preview`)}>预览</Button>
+          <Button type="link" size="small" onClick={() => navigate(`/teacher/papers/${paper.id}`)}>预览</Button>
           <Tooltip title={ownerTip}>
             <Button type="link" size="small" disabled={!owner} onClick={() => navigate(`/teacher/papers/${paper.id}/edit`)}>编辑</Button>
           </Tooltip>

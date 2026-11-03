@@ -92,8 +92,21 @@ body {
 }
 .ant-btn:hover:not(:disabled) { transform: translateY(-1px); }
 .ant-btn:active:not(:disabled) { transform: translateY(0); transition: transform 0.08s var(--spring-snappy); }
-.ant-btn-primary { background: var(--apple-accent) !important; border-color: var(--apple-accent) !important; }
-.ant-btn-primary:hover:not(:disabled) { background: var(--apple-accent-hover) !important; box-shadow: 0 4px 14px rgba(0,122,255,0.35) !important; }
+/* 只给「普通主按钮」上 accent 蓝：danger 主按钮（交卷/强制收卷这类不可逆动作）必须保住 antd 的红色，
+   否则 `!important` 会把 danger 一起刷成蓝色，作者写的危险语义就没了。 */
+.ant-btn-primary:not(.ant-btn-dangerous) { background: var(--apple-accent) !important; border-color: var(--apple-accent) !important; }
+.ant-btn-primary:not(.ant-btn-dangerous):hover:not(:disabled) { background: var(--apple-accent-hover) !important; box-shadow: 0 4px 14px rgba(0,122,255,0.35) !important; }
+/* 禁用态必须一并兜住：上面那条 `!important` 底色会盖掉 antd 的禁用底色，
+   而 antd 的禁用字色 rgba(0,0,0,.25) 照旧生效 —— 结果就是「蓝底 + 深蓝字」几乎读不出来
+   （学生端「我的考试」里过期场次的「已结束」按钮实测就是这个颜色）。
+   这里按 antd 默认禁用口径还原成灰底灰字，与未覆写的 default 按钮禁用态保持一致。 */
+.ant-btn-primary:disabled,
+.ant-btn-primary.ant-btn-disabled {
+  background: rgba(0, 0, 0, 0.04) !important;
+  border-color: #d9d9d9 !important;
+  color: rgba(0, 0, 0, 0.25) !important;
+  box-shadow: none !important;
+}
 .ant-btn-default:hover:not(:disabled):not(.ant-btn-dangerous) { border-color: var(--apple-accent) !important; }
 .ant-btn-dangerous:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(255,59,48,0.3) !important; }
 .ant-btn-link:hover:not(:disabled) { transform: none; }
@@ -257,10 +270,14 @@ body[data-route-enter] .ant-row > .ant-col:nth-child(8) { animation-delay: 0.28s
   font-family: var(--apple-font) !important;
 }
 
-/* === Radio & Checkbox === */
-.ant-radio-checked .ant-radio-inner { border-color: var(--apple-accent) !important; background: var(--apple-accent) !important; }
-.ant-checkbox-checked .ant-checkbox-inner { background: var(--apple-accent) !important; border-color: var(--apple-accent) !important; }
-.ant-checkbox-inner { border-radius: var(--apple-radius-sm) !important; }
+/* === Radio & Checkbox ===
+   antd v6 把圆点/勾的样式从 `-inner` 元素挪到了根节点（`.ant-radio` / `.ant-checkbox`），
+   原先写 `.ant-*-inner` 的三条在 v6 下不再命中：勾选态一直是 antd 默认蓝 #1677ff，
+   与本设计系统的 accent 蓝（按钮/菜单/分页/步骤条）对不上。按 v6 结构改写。
+   `:not(.-disabled)` 不能省：禁用态 antd 用灰底 + 灰勾，被 accent 盖回去就没法看了。 */
+.ant-radio-checked:not(.ant-radio-disabled) { border-color: var(--apple-accent) !important; background: var(--apple-accent) !important; }
+.ant-checkbox-checked:not(.ant-checkbox-disabled) { background: var(--apple-accent) !important; border-color: var(--apple-accent) !important; }
+.ant-checkbox { border-radius: var(--apple-radius-sm) !important; }
 
 /* === Select Dropdown === */
 .ant-select-dropdown { border-radius: var(--apple-radius-md) !important; }
@@ -507,6 +524,9 @@ body[data-route-enter] .ant-row > .ant-col:nth-child(8) { animation-delay: 0.28s
 .paper-row__main { flex: 1; min-width: 0; }
 .paper-row__title-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .paper-row__name { font-size: 15px; font-weight: 600; color: var(--apple-text-h1); }
+/* 试卷名可点进详情页：按钮化以便键盘可达，样式保持标题观感 */
+.paper-row__name--link { padding: 0; font-family: inherit; background: none; border: none; cursor: pointer; text-align: left; }
+.paper-row__name--link:hover { color: var(--apple-accent); }
 .paper-row__meta { display: flex; align-items: center; flex-wrap: wrap; margin-top: 6px; font-size: 12px; color: var(--apple-text-secondary); }
 .paper-row__meta > span { white-space: nowrap; }
 .paper-row__meta i { font-style: normal; margin: 0 6px; color: var(--apple-border-subtle); }
@@ -558,3 +578,94 @@ body[data-route-enter] .ant-row > .ant-col:nth-child(8) { animation-delay: 0.28s
 .rule-avail--over { color: var(--apple-red); }
 .rule-total { font-size: 14px; font-weight: 600; padding-bottom: 2px; }
 .rule-strip__ops { display: inline-flex; align-items: center; padding-bottom: 2px; margin-left: auto; }
+
+/* === 试卷详情页（版式对齐参考产品「试卷详情」：卷面文档 + 右侧试卷结构） === */
+.paper-doc-topbar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+.paper-doc-topbar h2 { margin: 0; font-size: 18px; color: var(--apple-text-h1); }
+.paper-doc { display: flex; gap: 16px; align-items: flex-start; justify-content: center; }
+
+/* 卷面文档：白卡居中，宽度向参考产品的 748px 对齐 */
+.paper-doc__page {
+  flex: 1 1 0; min-width: 0; max-width: 748px; padding: 12px 28px 28px;
+  background: var(--apple-bg-card);
+  border: 0.5px solid var(--apple-border-light);
+  border-radius: var(--apple-radius-lg);
+  box-shadow: var(--apple-shadow-card);
+}
+.paper-doc__head { padding-bottom: 20px; }
+.paper-doc__name { margin-bottom: 8px; font-size: 32px; font-weight: 700; line-height: 1.4; text-align: center; color: var(--apple-text-h1); }
+.paper-doc__meta { display: flex; gap: 18px; justify-content: center; color: var(--apple-text-secondary); }
+.paper-doc__remark { margin-top: 8px; text-align: center; font-size: 12px; color: var(--apple-text-secondary); }
+
+.paper-doc__group { margin-bottom: 12px; }
+.paper-doc__group-title { margin-bottom: 12px; font-size: 14px; font-weight: 600; color: var(--apple-text-h1); }
+
+/* 题目卡片：默认只有透明边框，悬停时边框浮现 + 底部信息条淡入（常驻占位，不引起版面跳动） */
+.paper-doc__item {
+  display: flex; flex-direction: column; gap: 12px; padding: 8px;
+  border: 1px solid transparent; border-radius: 8px; scroll-margin-top: 16px;
+  transition: border-color 0.2s var(--spring-smooth), background-color 0.2s var(--spring-smooth);
+}
+.paper-doc__item:hover, .paper-doc__item:focus-within { border-color: var(--apple-border-subtle); }
+.paper-doc__item--flash { border-color: rgba(0, 122, 255, 0.35); background: var(--apple-accent-bg); }
+.paper-doc__stem { font-size: 14px; line-height: 1.5; color: var(--apple-text-h1); }
+.paper-doc__seq { margin-right: 4px; }
+.paper-doc__desc { font-size: 13px; line-height: 1.6; color: var(--apple-text-secondary); white-space: pre-wrap; }
+.paper-doc__options { margin-top: 12px; }
+.paper-doc__option { display: flex; gap: 4px; align-items: flex-start; font-size: 14px; line-height: 22px; color: var(--apple-text-body); }
+.paper-doc__option + .paper-doc__option { margin-top: 12px; }
+.paper-doc__option-key { flex-shrink: 0; width: 18px; font-weight: 600; }
+.paper-doc__option-text { overflow-wrap: break-word; }
+.paper-doc__option--correct .paper-doc__option-text, .paper-doc__option--correct .paper-doc__option-key { color: var(--apple-green); font-weight: 600; }
+.paper-doc__refs { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--apple-text-secondary); }
+
+.paper-doc__footer { display: flex; align-items: center; justify-content: space-between; min-height: 24px; opacity: 0; transition: opacity 0.2s var(--spring-smooth); user-select: none; }
+.paper-doc__item:hover .paper-doc__footer, .paper-doc__item:focus-within .paper-doc__footer { opacity: 1; }
+.paper-doc__stats { display: flex; gap: 10px; align-items: center; font-size: 13px; color: var(--apple-text-secondary); }
+.paper-doc__stats-divider { width: 1px; height: 12px; background: var(--apple-border-subtle); }
+.paper-doc__link { border: none; background: none; padding: 0 4px; font: inherit; font-size: 13px; color: var(--apple-accent); cursor: pointer; }
+.paper-doc__link:hover { color: var(--apple-accent-hover); }
+
+/* 试卷结构：吸顶侧栏，题号可点击跳转 */
+.paper-doc__structure {
+  position: sticky; top: 0; width: 260px; flex-shrink: 0; max-height: calc(100vh - 120px); overflow: auto;
+  display: flex; flex-direction: column; gap: 12px; padding: 16px 12px;
+  background: var(--apple-bg-sidebar);
+  border: 0.5px solid var(--apple-border-light);
+  border-radius: var(--apple-radius-lg);
+  user-select: none;
+}
+.paper-doc__structure-head { display: flex; align-items: center; gap: 6px; }
+.paper-doc__structure-head h3 { font-size: 14px; font-weight: 600; color: var(--apple-text-h1); }
+.paper-doc__structure-help { color: var(--apple-text-label); cursor: help; }
+.paper-doc__structure-section { display: flex; flex-direction: column; gap: 10px; }
+.paper-doc__structure-title { font-size: 14px; font-weight: 600; color: var(--apple-text-h1); }
+.paper-doc__structure-title em { font-style: normal; font-size: 12px; font-weight: 400; color: var(--apple-text-secondary); }
+.paper-doc__structure-empty { font-size: 12px; color: var(--apple-text-secondary); }
+.paper-doc__chips { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; }
+.paper-doc__chip {
+  min-width: 40px; height: 32px; padding: 0 8px; font: inherit; font-size: 13px; color: var(--apple-text-body);
+  background: transparent; border: 1px solid var(--apple-border-subtle); border-radius: 5px; cursor: pointer;
+  transition: color 0.2s var(--spring-smooth), border-color 0.2s var(--spring-smooth);
+}
+.paper-doc__chip:hover { color: var(--apple-accent); border-color: var(--apple-accent); }
+.paper-doc__chip--rule { border-style: dashed; color: var(--apple-text-secondary); }
+@media (max-width: 1000px) {
+  .paper-doc { flex-direction: column; align-items: stretch; }
+  .paper-doc__page { max-width: none; }
+  .paper-doc__structure { position: static; width: 100%; max-height: none; }
+}
+
+/* 题目详情弹窗：左 题目/答案/解析/知识点，右 题目信息 */
+.paper-qm { display: flex; gap: 24px; align-items: flex-start; }
+.paper-qm__main { flex: 1; min-width: 0; }
+.paper-qm__side { width: 190px; flex-shrink: 0; }
+.paper-qm__block + .paper-qm__block { margin-top: 20px; }
+.paper-qm__block h4, .paper-qm__side h4 { margin-bottom: 8px; font-size: 14px; font-weight: 600; color: var(--apple-text-h1); }
+.paper-qm__stem { font-size: 14px; line-height: 1.6; color: var(--apple-text-body); }
+.paper-qm__desc { font-size: 13px; line-height: 1.7; color: var(--apple-text-secondary); }
+.paper-qm__answer { font-size: 14px; font-weight: 600; color: var(--apple-green); }
+.paper-qm__tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.paper-qm__info > div { display: flex; gap: 8px; font-size: 13px; line-height: 2; }
+.paper-qm__info dt { flex-shrink: 0; color: var(--apple-text-secondary); }
+.paper-qm__info dd { color: var(--apple-text-body); overflow-wrap: break-word; }

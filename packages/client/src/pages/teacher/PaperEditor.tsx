@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   Form, Input, Select, Button, Card, message, Spin, Space, Row, Col,
   Modal, Tag, InputNumber, Popconfirm, Empty, Table, Popover,
@@ -42,7 +42,6 @@ const DIFFICULTY_OPTIONS = [
 export function PaperEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -69,9 +68,6 @@ export function PaperEditor() {
           passScore: p.passScore,
         });
         setItems(itemsFromSlots(p.paperQuestions || []));
-        if (searchParams.get('tab') === 'preview') {
-          setPreviewOpen(true);
-        }
       }).catch(() => message.error('加载失败')).finally(() => setLoading(false));
     }
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -95,6 +91,15 @@ export function PaperEditor() {
       [next[idx], next[target]] = [next[target], next[idx]];
       return next;
     });
+  };
+
+  /** 整卷预览：已保存的试卷走独立的详情页（卷面文档 + 试卷结构）；新建未保存时没有 id，退回弹窗看当前编辑内容 */
+  const handlePreview = () => {
+    if (isEdit) {
+      navigate(`/teacher/papers/${id}`);
+      return;
+    }
+    setPreviewOpen(true);
   };
 
   const handleAddRuleItem = () => {
@@ -331,7 +336,7 @@ export function PaperEditor() {
           <h2 style={{ margin: 0 }}>{isEdit ? '编辑试卷' : '新建试卷'}</h2>
         </Space>
         <Space>
-          <Button icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>整卷预览</Button>
+          <Button icon={<EyeOutlined />} onClick={handlePreview}>整卷预览</Button>
           <Button icon={<BarChartOutlined />} onClick={() => setAnalysisOpen(true)}>试卷分析</Button>
           <Button type="primary" icon={<SaveOutlined />} onClick={() => form.submit()} loading={saving}>保存</Button>
         </Space>

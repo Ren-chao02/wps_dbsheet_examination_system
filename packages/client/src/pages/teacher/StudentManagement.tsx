@@ -6,11 +6,11 @@ import {
   PlusOutlined, EditOutlined, ExportOutlined, ImportOutlined, LinkOutlined, ReloadOutlined, DeleteOutlined,
   DisconnectOutlined, UnlockOutlined,
 } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import dayjs from 'dayjs';
 import api from '../../services/api';
 import { useAuthStore } from '../../stores/auth';
-import type { StudentInfo, Department, Major, ClassRoom, PaginatedResponse } from '../../types';
+import type { StudentInfo, Department, Major, ClassOption, PaginatedResponse } from '../../types';
 import { PracticeFileModal } from '../../components/student/PracticeFileModal';
 
 const genderMap: Record<string, string> = { MALE: '男', FEMALE: '女' };
@@ -38,17 +38,19 @@ export default function StudentManagement() {
     setPracticeModalOpen(true);
   };
 
-  // 筛选状态
-  const [filters, setFilters] = useState<{ departmentId?: string; majorId?: string; classRoomId?: string; search?: string }>({});
+  // 从班级管理跳转过来时带 classRoomId，直接筛到该班
+  const [searchParams] = useSearchParams();
+  const initialClassRoomId = searchParams.get('classRoomId') || undefined;
 
-  // 组织架构数据
+  // 筛选状态
+  const [filters, setFilters] = useState<{ departmentId?: string; majorId?: string; classRoomId?: string; search?: string }>({
+    classRoomId: initialClassRoomId,
+  });
+
+  // 组织架构数据（院系/专业只作为可选筛选，班级选择走扁平列表）
   const [departments, setDepartments] = useState<Department[]>([]);
   const [majorOptions, setMajorOptions] = useState<Major[]>([]);
-  const [classRoomOptions, setClassRoomOptions] = useState<ClassRoom[]>([]);
-
-  // 表单中的级联选择数据
-  const [formMajors, setFormMajors] = useState<Major[]>([]);
-  const [formClassRooms, setFormClassRooms] = useState<ClassRoom[]>([]);
+  const [allClassOptions, setAllClassOptions] = useState<ClassOption[]>([]);
 
   // ---------- Fetch departments tree ----------
   const fetchDepartments = useCallback(async () => {
@@ -61,6 +63,19 @@ export default function StudentManagement() {
   }, []);
 
   useEffect(() => { fetchDepartments(); }, [fetchDepartments]);
+
+  // 扁平班级列表：新班级不挂院系时，仍能在筛选/建学生时选到
+  useEffect(() => {
+    api
+      .get<{ data: ClassOption[] }>('/classrooms/options')
+      .then((res) => setAllClassOptions(res.data.data || []))
+      .catch(() => setAllClassOptions([]));
+  }, []);
+
+  useEffect(() => {
+    const id = searchParams.get('classRoomId') || undefined;
+    setFilters((prev) => (prev.classRoomId === id ? prev : { ...prev, classRoomId: id }));
+  }, [searchParams]);
 
   // ---------- Fetch students ----------
   const fetchStudents = useCallback(async (page = 1) => {
@@ -78,7 +93,7 @@ export default function StudentManagement() {
 
   useEffect(() => { fetchStudents(); }, [fetchStudents]);
 
-  // ---------- Filter: cascading selects ----------
+  // ---------- Filter: 院系/专业保留为可选筛选，班级用扁平列表 ----------
   const handleDepartmentChange = (departmentId: string | undefined) => {
     setFilters(prev => ({ ...prev, departmentId, majorId: undefined, classRoomId: undefined }));
     if (departmentId) {
@@ -87,81 +102,32 @@ export default function StudentManagement() {
     } else {
       setMajorOptions([]);
     }
-    setClassRoomOptions([]);
   };
 
   const handleMajorChange = (majorId: string | undefined) => {
     setFilters(prev => ({ ...prev, majorId, classRoomId: undefined }));
-    if (majorId) {
-      const major = majorOptions.find(m => m.id === majorId);
-      setClassRoomOptions(major?.classRooms || []);
-    } else {
-      setClassRoomOptions([]);
-    }
   };
 
   const handleClassRoomChange = (classRoomId: string | undefined) => {
     setFilters(prev => ({ ...prev, classRoomId }));
   };
 
-  // ---------- Form: cascading selects ----------
-  const handleFormDeptChange = (departmentId: string | undefined) => {
-    form.setFieldsValue({ majorId: undefined, classRoomId: undefined });
-    if (departmentId) {
-      const dept = departments.find(d => d.id === departmentId);
-      setFormMajors(dept?.majors || []);
-    } else {
-      setFormMajors([]);
-    }
-    setFormClassRooms([]);
-  };
-
-  const handleFormMajorChange = (majorId: string | undefined) => {
-    form.setFieldsValue({ classRoomId: undefined });
-    if (majorId) {
-      const major = formMajors.find(m => m.id === majorId);
-      setFormClassRooms(major?.classRooms || []);
-    } else {
-      setFormClassRooms([]);
-    }
-  };
-
   // ---------- Create / Edit ----------
   const handleCreate = () => {
     setEditingStudent(null);
     form.resetFields();
-    setFormMajors([]);
-    setFormClassRooms([]);
     setModalOpen(true);
   };
 
   const handleEdit = async (student: StudentInfo) => {
     setEditingStudent(student);
     form.resetFields();
-
-    // Populate cascading selects based on student's current department/major
-    let fmajors: Major[] = [];
-
-    if (student.departmentId) {
-      const dept = departments.find(d => d.id === student.departmentId);
-      fmajors = dept?.majors || [];
-      setFormMajors(fmajors);
-    }
-
-    if (student.majorId) {
-      const major = fmajors.find(m => m.id === student.majorId);
-      const fclassRooms = major?.classRooms || [];
-      setFormClassRooms(fclassRooms);
-    }
-
     form.setFieldsValue({
       studentId: student.studentId,
       realName: student.realName,
       gender: student.gender,
       phoneNumber: student.phoneNumber,
       email: student.email,
-      departmentId: student.departmentId,
-      majorId: student.majorId,
       classRoomId: student.classRoomId,
     });
     setModalOpen(true);
@@ -295,24 +261,27 @@ export default function StudentManagement() {
   // ---------- Table columns ----------
   const columns = [
     {
-      title: '学号（登录名）', dataIndex: 'studentId', key: 'studentId', render: (v: string) => v || '—',
+      title: '学号（登录名）', dataIndex: 'studentId', key: 'studentId', width: 140,
+      render: (v: string) => v || '—',
     },
     {
-      title: '姓名', dataIndex: 'realName', key: 'realName', render: (v: string) => v || '—',
+      title: '姓名', dataIndex: 'realName', key: 'realName', width: 90,
+      render: (v: string) => v || '—',
     },
     {
-      title: '性别', dataIndex: 'gender', key: 'gender', width: 80,
+      title: '性别', dataIndex: 'gender', key: 'gender', width: 70,
       render: (v: string) => genderMap[v] || '—',
     },
     {
-      title: '班级', key: 'classInfo',
+      title: '班级', key: 'classInfo', width: 200,
       render: (_: any, r: StudentInfo) => {
         const parts = [r.department?.name, r.major?.name, r.classRoom?.name].filter(Boolean);
         return parts.length > 0 ? parts.join(' / ') : '—';
       },
     },
     {
-      title: '手机号', dataIndex: 'phoneNumber', key: 'phoneNumber', render: (v: string) => v || '—',
+      title: '手机号', dataIndex: 'phoneNumber', key: 'phoneNumber', width: 120,
+      render: (v: string) => v || '—',
     },
     {
       title: '账号状态', dataIndex: 'accountStatus', key: 'accountStatus', width: 100,
@@ -351,7 +320,7 @@ export default function StudentManagement() {
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '—',
     },
     {
-      title: '操作', key: 'actions', width: 380,
+      title: '操作', key: 'actions', width: 340,
       render: (_: any, r: StudentInfo) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(r)}>编辑</Button>
@@ -437,11 +406,15 @@ export default function StudentManagement() {
           <Select
             placeholder="班级"
             allowClear
-            style={{ width: 160 }}
+            showSearch
+            optionFilterProp="label"
+            style={{ width: 190 }}
             value={filters.classRoomId}
             onChange={handleClassRoomChange}
-            disabled={!filters.majorId}
-            options={classRoomOptions.map(c => ({ value: c.id, label: c.name }))}
+            options={allClassOptions.map(c => ({
+              value: c.id,
+              label: `${c.name}（${c.code}）`,
+            }))}
           />
         </Col>
         <Col>
@@ -469,6 +442,8 @@ export default function StudentManagement() {
         columns={columns}
         rowKey="id"
         loading={loading}
+        // 11 列在窄屏下会被压成逐字换行；内容不足一屏时铺满，超宽时横向滚动
+        scroll={{ x: 'max-content' }}
         pagination={{
           current: data.page,
           total: data.total,
@@ -517,29 +492,20 @@ export default function StudentManagement() {
           <Form.Item name="email" label="邮箱" rules={[{ type: 'email', message: '请输入有效邮箱' }]}>
             <Input placeholder="电子邮箱" />
           </Form.Item>
-          <Form.Item name="departmentId" label="院系">
-            <Select
-              placeholder="选择院系"
-              allowClear
-              onChange={handleFormDeptChange}
-              options={departments.map(d => ({ value: d.id, label: d.name }))}
-            />
-          </Form.Item>
-          <Form.Item name="majorId" label="专业">
-            <Select
-              placeholder="选择专业"
-              allowClear
-              onChange={handleFormMajorChange}
-              disabled={formMajors.length === 0}
-              options={formMajors.map(m => ({ value: m.id, label: m.name }))}
-            />
-          </Form.Item>
-          <Form.Item name="classRoomId" label="班级">
+          <Form.Item
+            name="classRoomId"
+            label="班级"
+            extra="院系/专业由班级自动带出；新班级未挂院系时也能选择"
+          >
             <Select
               placeholder="选择班级"
               allowClear
-              disabled={formClassRooms.length === 0}
-              options={formClassRooms.map(c => ({ value: c.id, label: c.name }))}
+              showSearch
+              optionFilterProp="label"
+              options={allClassOptions.map(c => ({
+                value: c.id,
+                label: `${c.name}（${c.code}）`,
+              }))}
             />
           </Form.Item>
         </Form>

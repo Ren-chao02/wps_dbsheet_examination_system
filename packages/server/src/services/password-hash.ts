@@ -17,3 +17,13 @@ export function hashPassword(plain: string): Promise<string> {
 export function verifyPassword(plain: string, storedHash: string): Promise<boolean> {
   return nativeVerify(plain, storedHash);
 }
+
+/**
+ * 改密/重置密码的时间戳，供 authenticate 判定旧 token 失效。
+ *
+ * 必须截断到秒：JWT 的 iat 是秒级，保留毫秒会让“同一秒内改密后重新登录”
+ * 拿到的新 token 也被当成旧 token（iat*1000 < passwordChangedAt）。
+ */
+export function passwordChangedTimestamp(): Date {
+  return new Date(Math.floor(Date.now() / 1000) * 1000);
+}

@@ -97,8 +97,8 @@ invitationRouter.get('/:code/info', async (req: Request, res: Response) => {
       classRoom: {
         name: classRoom.name,
         academicYear: classRoom.academicYear,
-        major: { name: classRoom.major.name },
-        department: { name: classRoom.department.name },
+        major: classRoom.major ? { name: classRoom.major.name } : null,
+        department: classRoom.department ? { name: classRoom.department.name } : null,
       },
     });
   } catch {

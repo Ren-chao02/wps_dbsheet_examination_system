@@ -12,6 +12,8 @@ export interface JwtPayload {
   permissions?: string[];
   /// P2：由 authenticate 从数据库实时覆盖（JWT 里的值可能过期，仅作兜底）
   departmentId?: string | null;
+  /// 签发时间（秒级），由 jwt.sign 自动写入；用于改密后判定旧 token 失效
+  iat?: number;
 }
 
 declare global {
@@ -36,7 +38,7 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     // 全局角色权限判断（authorize / authorizePermission）由此自然拿到最新值。
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
-      select: { id: true, accountStatus: true, role: true, departmentId: true },
+      select: { id: true, accountStatus: true, role: true, departmentId: true, passwordChangedAt: true },
     });
 
     if (!user) {
@@ -47,6 +49,15 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       return res.status(403).json({
         message: '账号已被禁用，请联系管理员',
         code: 'ACCOUNT_DISABLED',
+      });
+    }
+
+    // 改密后立即失效旧 token。passwordChangedAt 写入时已截断到秒（与 iat 对齐），
+    // 所以同一秒内重新登录签发的 token 不会被误杀。
+    if (user.passwordChangedAt && payload.iat && payload.iat * 1000 < user.passwordChangedAt.getTime()) {
+      return res.status(401).json({
+        message: '密码已修改，请重新登录',
+        code: 'PASSWORD_CHANGED',
       });
     }
 

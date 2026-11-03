@@ -1,0 +1,31 @@
+/* 客观题没有表格面板时，正文限宽居中；实操题仍受左侧 420 栏宽约束 */
+.exam-question-column {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+/* 顶部「查看表格」：窄屏只留图标，避免挤占计时器空间 */
+.exam-table-btn__label {
+  display: none;
+}
+
+@media (min-width: 1280px) {
+  .exam-table-btn__label {
+    display: inline;
+  }
+}
+
+/* 切到客观题时轻微淡入；表格面板本身不做过渡（避免 iframe 连续 resize） */
+.exam-objective-enter {
+  animation: exam-objective-enter 120ms ease-out;
+}
+
+@keyframes exam-objective-enter {
+  from {
+    opacity: 0.6;
+  }
+  to {
+    opacity: 1;
+  }
+}

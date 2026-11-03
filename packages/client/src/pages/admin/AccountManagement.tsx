@@ -58,25 +58,35 @@ export default function AccountManagement() {
     } catch { /* ignore */ }
   };
 
-  // 加载院系树：班级展平供教师班级分配，「所属院系」下拉取自同一响应（不再多发请求）
+  // 院系树只用于「所属院系」下拉；教师负责班级用扁平班级选项，
+  // 这样没有挂院系的新班级也能选到。
   const fetchDepartments = async () => {
     try {
       const res = await api.get('/departments');
       const deps = res.data.data || [];
       setDepartments(deps.map((d: any) => ({ id: d.id, name: d.name, code: d.code })));
-      const list: { id: string; name: string; code: string; departmentName?: string }[] = [];
-      for (const dep of deps) {
-        for (const major of dep.majors || []) {
-          for (const cls of major.classRooms || []) {
-            list.push({ id: cls.id, name: cls.name, code: cls.code, departmentName: dep.name });
-          }
-        }
-      }
-      setAllClasses(list);
     } catch { /* ignore */ }
   };
 
-  useEffect(() => { fetchAccounts(); fetchRoles(); fetchDepartments(); }, []);
+  const fetchClassOptions = async () => {
+    try {
+      const res = await api.get('/classrooms/options');
+      setAllClasses(
+        (res.data.data || []).map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          code: c.code,
+        })),
+      );
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => {
+    fetchAccounts();
+    fetchRoles();
+    fetchDepartments();
+    fetchClassOptions();
+  }, []);
 
   const handleCreate = () => {
     setEditingAccount(null);

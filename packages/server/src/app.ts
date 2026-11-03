@@ -6,6 +6,7 @@ import { authRouter } from './routes/auth';
 import { authenticate } from './middleware/auth';
 import { userRouter } from './routes/users';
 import { departmentRouter } from './routes/departments';
+import { classroomRouter } from './routes/classrooms';
 import { questionRouter } from './routes/questions';
 import { categoryRouter } from './routes/categories';
 import { capabilityRouter } from './routes/capabilities';
@@ -40,6 +41,7 @@ import { exportRouter } from './routes/export';
 // ✅ Phase 3.4 新增：实时通知推送路由
 import { notificationRouter } from './routes/notifications';
 import { studentProfileRouter } from './routes/student-profile';
+import { profileRouter } from './routes/profile';
 // ✅ Phase 2 新增：AI 对话式教练路由
 import { coachingRouter } from './routes/coaching';
 import { llmConfigRouter } from './routes/llm-config';
@@ -110,6 +112,7 @@ export function createApp() {
   app.use('/api/auth', authRouter);
   app.use('/api/users', userRouter);
   app.use('/api/departments', departmentRouter);
+  app.use('/api/classrooms', classroomRouter);
   app.use('/api/questions', questionRouter);
   app.use('/api/categories', categoryRouter);
   app.use('/api/capabilities', capabilityRouter);
@@ -123,6 +126,7 @@ export function createApp() {
   app.use('/api/demo', demoRouter);
   app.use('/api/kingsoft', kingsoftRouter);
   app.use('/api/students', studentRouter);
+  app.use('/api/profile', profileRouter);
   app.use('/api/import-tasks', importTaskRouter);
   app.use('/api/invitations', invitationRouter);
   app.use('/api/applications', applicationRouter);

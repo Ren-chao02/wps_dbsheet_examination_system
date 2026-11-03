@@ -74,10 +74,11 @@ describe('POST /api/papers/:id/duplicate', () => {
     expect(mockPrisma.paper.create).not.toHaveBeenCalled();
   });
 
-  it('复制同院系试卷（他人创建）→ 201，新卷归属复制者院系', async () => {
+  it('复制他院系已上架试卷 → 201，新卷归属复制者院系（原卷院系不同，归属取谁可判别）', async () => {
+    // 原卷 d-9 上架（d-1 的复制者可读）；若归属错取原卷院系，断言 departmentId === 'd-1' 会炸
     mockPrisma.paper.findUnique.mockResolvedValue({
-      id: 'p-2', name: '院系卷', source: 'school', createdBy: 't-1',
-      departmentId: 'd-1', sharedToSchool: false, paperQuestions: [],
+      id: 'p-2', name: '上架卷', source: 'school', createdBy: 't-1',
+      departmentId: 'd-9', sharedToSchool: true, paperQuestions: [],
     });
     const res = await request(makeApp())
       .post('/api/papers/p-2/duplicate')

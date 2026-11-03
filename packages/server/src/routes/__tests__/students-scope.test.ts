@@ -75,10 +75,10 @@ vi.mock('exceljs', () => {
 });
 
 // 初始密码哈希与数据范围判定无关，mock 掉省去真实 bcrypt 开销
-vi.mock('bcryptjs', () => {
-  const bcrypt = { hash: vi.fn(async () => 'hashed-password'), compare: vi.fn(async () => true) };
-  return { __esModule: true, default: bcrypt, ...bcrypt };
-});
+vi.mock('../../services/password-hash', () => ({
+  hashPassword: vi.fn(async () => 'hashed-password'),
+  verifyPassword: vi.fn(async () => true),
+}));
 
 import { studentRouter, processImport } from '../students';
 

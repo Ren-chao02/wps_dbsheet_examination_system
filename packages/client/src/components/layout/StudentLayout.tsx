@@ -47,6 +47,13 @@ export function StudentLayout() {
 
   const userMenu = {
     items: [
+      {
+        key: 'profile',
+        icon: <UserOutlined />,
+        label: '个人信息',
+        onClick: () => navigate('/student/profile'),
+      },
+      { type: 'divider' as const },
       { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: handleLogout },
     ],
   };

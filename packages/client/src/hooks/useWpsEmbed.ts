@@ -32,6 +32,8 @@ interface UseWpsEmbedOptions {
    * （含学生切回本页、窗口被最小化后焦点交还本页等），详见下方轮询 effect 注释。
    */
   onWorkbenchChange?: (exempt: boolean) => void;
+  /** 独立窗口被浏览器拦截时的回调：调用方在可见位置给出提示（面板可能被隐藏） */
+  onPopupBlocked?: () => void;
 }
 
 const modeStorageKey = (key: string) => `wps_panel_mode:${key}`;
@@ -45,7 +47,7 @@ function readStoredMode(key: string): WpsPanelMode {
 }
 
 export function useWpsEmbed(url: string | null, options: UseWpsEmbedOptions = {}) {
-  const { timeoutMs = 12000, storageKey = 'default', onWorkbenchChange } = options;
+  const { timeoutMs = 12000, storageKey = 'default', onWorkbenchChange, onPopupBlocked } = options;
 
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
@@ -82,6 +84,11 @@ export function useWpsEmbed(url: string | null, options: UseWpsEmbedOptions = {}
     onWorkbenchChangeRef.current = onWorkbenchChange;
   }, [onWorkbenchChange]);
 
+  const onPopupBlockedRef = useRef(onPopupBlocked);
+  useEffect(() => {
+    onPopupBlockedRef.current = onPopupBlocked;
+  }, [onPopupBlocked]);
+
   const windowName = `wps-table-${storageKey}`;
 
   const openWorkbench = useCallback(() => {
@@ -93,9 +100,11 @@ export function useWpsEmbed(url: string | null, options: UseWpsEmbedOptions = {}
     onWorkbenchChangeRef.current?.(true);
     const win = window.open(url, windowName, 'popup=yes,width=1440,height=900');
     if (!win) {
-      // 弹窗被拦截：撤销放行，交由 UI 提示学生允许弹窗后重试
+      // 弹窗被拦截：撤销放行，交由 UI 提示学生允许弹窗后重试。
+      // 面板在客观题时是隐藏的，提示必须由调用方在可见位置弹出。
       setPopupBlocked(true);
       onWorkbenchChangeRef.current?.(false);
+      onPopupBlockedRef.current?.();
       return;
     }
     setPopupBlocked(false);

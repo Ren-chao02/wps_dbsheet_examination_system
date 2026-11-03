@@ -240,6 +240,39 @@ paperRouter.put('/:id/questions', async (req: Request, res: Response) => {
     const { questionIds } = paperQuestionSchema.parse(req.body);
     const totalScore = questionIds.reduce((sum, q) => sum + q.score, 0);
 
+    // 数据范围（P2）：新挂的题目必须在当前请求者的题库读池内（本院系 / 校级 / 本人 / 上架）——
+    // 否则同一响应与后续 GET /api/papers/:id 都会回吐题目全文（含 answerRules 标准答案），
+    // 与 PUT /api/exams/:id/questions 是同族的「拿到 ID 就直连」绕过。
+    // 例外：「本卷已挂载」的题 —— 存量试卷可能含 P2 之前挂上的跨院系题，
+    // 严格池校验会让教师一保存就 403、卷子永远不可编辑。
+    // 必须在 deleteMany 之前 —— 先删后报错会把试卷原有题目清光（与 exams 挂题同口径）。
+    const scope = scopeCtxOf(req);
+    const poolWhere = await questionWhere(scope);
+    // rule 题位的 questionId 可为空（null/undefined 不能混进 in），去重后空数组直接跳过校验
+    const ids = [...new Set(questionIds.map((i) => i.questionId).filter(Boolean))] as string[];
+    if (ids.length > 0) {
+      const usable = await prisma.question.findMany({
+        where: {
+          id: { in: ids },
+          // 空池（admin）表示不收口，此时不能加 OR 分支：Prisma 会把 OR 里的空对象省略，
+          // 语义会从「全匹配」变成「不匹配」；留 { id: in } 一并完成存在性检查
+          ...(Object.keys(poolWhere).length > 0
+            ? {
+                OR: [
+                  poolWhere,
+                  // 已挂在本卷上的题（含 P2 之前挂的存量跨院系题）：保持可编辑，不再要求可见
+                  { paperQuestions: { some: { paperId: req.params.id } } },
+                ],
+              }
+            : {}),
+        },
+        select: { id: true },
+      });
+      if (usable.length !== ids.length) {
+        return res.status(403).json({ message: '包含不在你可见题库范围内的题目（本院系 / 校级 / 本人）' });
+      }
+    }
+
     // 事务保护：删除旧题目、创建新题目、更新总分在同一事务中完成
     const [, , updated] = await prisma.$transaction([
       prisma.paperQuestion.deleteMany({ where: { paperId: req.params.id } }),

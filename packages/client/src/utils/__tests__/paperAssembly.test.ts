@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   itemsFromSlots, slotsFromItems, validateEditorItems, analyzeItems, difficultyBreakdown,
-  ruleItemTotal, normalizeSchemaRefs,
+  ruleItemTotal, buildDocGroups, docEntryDifficulty, normalizeSchemaRefs,
   type EditorItem, type RuleEditorItem,
 } from '../paperAssembly';
 import type { PaperQuestion, Question } from '../../types';
@@ -250,5 +250,54 @@ describe('difficultyBreakdown — 已选清单难度分布', () => {
       },
     ];
     expect(difficultyBreakdown(items)).toEqual({ easy: 3, medium: 1, hard: 0 });
+  });
+});
+
+describe('buildDocGroups — 试卷详情页的卷面分组', () => {
+  it('按题型分组，题号取题位序号（不随组内位置漂移），组内分值为各题位分值之和', () => {
+    const slots = [
+      fixedSlot('q1', 2, 0, 'true_false', 'hard'),
+      fixedSlot('q2', 3, 1, 'multiple_choice', 'easy'),
+      ruleSlot(2, 2, { type: 'single_choice', difficulty: 'easy', capabilityIds: [] }),
+      ruleSlot(2, 3, { type: 'single_choice', difficulty: 'medium', capabilityIds: [] }),
+    ];
+    const groups = buildDocGroups(slots);
+    expect(groups.map(g => g.label)).toEqual(['判断题', '多选题', '单选题']);
+    expect(groups[2].entries.map(e => e.index)).toEqual([3, 4]);
+    expect(groups[2].score).toBe(4);
+    expect(groups[1].entries[0].index).toBe(2);
+  });
+
+  it('同题型的固定题与抽题题位落在同一组（卷面上应并排展示）', () => {
+    const slots = [
+      fixedSlot('q1', 2, 0, 'single_choice'),
+      ruleSlot(2, 1, { type: 'single_choice', difficulty: 'easy', capabilityIds: [] }),
+    ];
+    const groups = buildDocGroups(slots);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].entries.map(e => e.kind)).toEqual(['fixed', 'rule']);
+  });
+
+  it('旧规则未限题型进「抽题（不限题型）」组；题目被删的固定题位不丢（进未指定题型组）', () => {
+    const slots = [
+      ruleSlot(5, 0, { capabilityIds: ['cap-a'] }),
+      { ...fixedSlot('q-gone', 4, 1), question: null },
+    ];
+    const groups = buildDocGroups(slots);
+    expect(groups.map(g => g.label)).toEqual(['抽题（不限题型）', '未指定题型']);
+    expect(groups[1].entries[0].question).toBeNull();
+  });
+
+  it('难度口径：固定题看题目难度、抽题题位看规则难度、旧规则无难度返回 undefined', () => {
+    const fixed = buildDocGroups([fixedSlot('q1', 2, 0, 'single_choice', 'hard')])[0].entries[0];
+    expect(docEntryDifficulty(fixed)).toBe('hard');
+    const rule = buildDocGroups([ruleSlot(2, 0, { type: 'single_choice', difficulty: 'medium' })])[0].entries[0];
+    expect(docEntryDifficulty(rule)).toBe('medium');
+    const legacy = buildDocGroups([ruleSlot(2, 0, { capabilityIds: [] })])[0].entries[0];
+    expect(docEntryDifficulty(legacy)).toBeUndefined();
+  });
+
+  it('空试卷返回空分组（不产生空组）', () => {
+    expect(buildDocGroups([])).toEqual([]);
   });
 });
