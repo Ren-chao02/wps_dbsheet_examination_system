@@ -32,3 +32,16 @@ debug-*
 *.jpg
 *.jpeg
 *.gif
+
+# 说明：docs/ 只保留公开的 API 参考与知识点清单；
+# 内部设计稿、实施计划、调研笔记与 CLAUDE.md 在下方逐条忽略。
+# 仍被忽略的本地目录：.qoder/ .trae/ mockups/ test_screenshots/
+# （分别是 AI 工具产物、本地原型、本地截图）
+
+# 内部笔记/计划（不进入公开仓）
+docs/superpowers/
+docs/reference/
+docs/2026-06-21-*.md
+docs/ui-ux-analysis-report.md
+docs/wps-edu-ui-borrowing-proposal.md
+CLAUDE.md
