@@ -32,6 +32,14 @@ docs/ui-ux-analysis-report.md
 docs/wps-edu-ui-borrowing-proposal.md
 CLAUDE.md
 
+# 过程笔记与数据文件默认不入库（2026-11-03 约定）：
+# - docs/superpowers/：superpowers 的计划/规格，属于工作过程记录；
+# - docs/backfill-*.md：一次性数据回填笔记；
+# - 根目录 *.xlsx：题库数据导出物，不是源码。
+# 操作手册 docs/help-manual/ 是交付物，不在此列；确需入库时逐条 ! 放行或在提交时明确点名。
+docs/backfill-*.md
+/*.xlsx
+
 # 后端 scripts/：只挡临时探针脚本，正式脚本用 ! 逐条放行。
 # 注意不要写成裸 `scripts/` —— 那条会匹配任意层级的 scripts 目录，
 # 新加的脚本会"写完就静默不进库"（既不报错也不出现在 git status 里）。
