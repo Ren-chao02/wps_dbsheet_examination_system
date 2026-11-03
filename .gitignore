@@ -19,11 +19,18 @@ backups/
 # 视觉头脑风暴（brainstorming skill）的本地 mockup 与状态，不入库
 .superpowers/
 
-# 说明：docs/ 不再整体忽略 —— 里面的 API 参考、知识点清单、设计稿与实施计划
-# 是项目的一部分，交付/迁移/交接时应当随代码一起走（此前被整体忽略，
-# 换台机器 clone 下来就只剩代码、看不到设计来龙去脉）。
+# 说明：docs/ 只保留公开的 API 参考与知识点清单；
+# 内部设计稿、实施计划、调研笔记与 CLAUDE.md 在下方逐条忽略。
 # 仍被忽略的本地目录：.qoder/ .trae/ mockups/ test_screenshots/
 # （分别是 AI 工具产物、本地原型、本地截图）
+
+# 内部笔记/计划（不进入公开仓）
+docs/superpowers/
+docs/reference/
+docs/2026-06-21-*.md
+docs/ui-ux-analysis-report.md
+docs/wps-edu-ui-borrowing-proposal.md
+CLAUDE.md
 
 # 后端 scripts/：只挡临时探针脚本，正式脚本用 ! 逐条放行。
 # 注意不要写成裸 `scripts/` —— 那条会匹配任意层级的 scripts 目录，
@@ -81,3 +88,4 @@ blob-report/
 coverage/
 # 导出中心生成的文件目录
 packages/server/exports/
+

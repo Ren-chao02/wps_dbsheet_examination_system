@@ -271,7 +271,6 @@ npm run docker:down  # 停止并移除容器
 ├── Dockerfile                      # 应用镜像（多阶段构建）
 ├── docker-entrypoint.sh            # 容器入口：等待 DB → 迁移 → 首次种子 → 启动
 ├── DEPLOYMENT.md                   # 部署与服务器迁移指南
-├── CLAUDE.md                       # 面向开发者的代码库导览
 ├── eslint.config.mjs               # ESLint 扁平配置（前后端一份）
 └── package.json                    # Monorepo 根配置与统一脚本
 ```
@@ -309,10 +308,8 @@ k6 run tests/load/exam-load.js ...   # k6 并发压测，见 tests/load/README.m
 | [使用说明书.md](使用说明书.md) | 面向教师 / 学生的完整功能使用说明 |
 | [参赛项目详细介绍.md](参赛项目详细介绍.md) | 作品定位、需求分析、系统设计与实现要点 |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | 部署上线与服务器迁移（含数据搬迁清单、反向代理、常见坑） |
-| [CLAUDE.md](CLAUDE.md) | 面向开发者的代码库导览（架构、判分扩展、测试与排障约定） |
 | [docs/kingsoft-api-reference.md](docs/kingsoft-api-reference.md) | 金山多维表格开放平台 API 速查 |
 | [docs/knowledge-points.md](docs/knowledge-points.md) | 66 项能力点（知识点）清单，抽题组卷的依据 |
-| [docs/superpowers/specs/](docs/superpowers/specs/) | 各模块设计文档（含抽题组卷、通知、AI 辅助出题等） |
 | `packages/client/public/help/` | 站内帮助文档（系统使用说明书、WPS Token 获取引导） |
 
 ---
