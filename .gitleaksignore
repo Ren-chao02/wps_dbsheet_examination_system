@@ -1,0 +1,12 @@
+# gitleaks 逐条豁免清单　指纹格式：<提交SHA>:<文件>:<规则ID>:<行号>
+#
+# 不要用 .gitleaks.toml 的 paths allowlist：实测 paths 与 regexes 是 OR 语义，
+# 写路径等于把整个文件放行。这里只放逐条指纹，同一文件将来出现新密钥照样会被拦。
+
+# ① 环境变量模板里的空值行（2 条，false positive）。
+#    generic-api-key 遇到 `KINGSOFT_API_KEY=""` 会跨行匹配下一行键名；模板不含真实凭据。
+24b13b43710adc7e92573f33f1bbe8ef2d59af7d:.env.production:generic-api-key:28
+a1693b319bb4c128627e3e612b56d3ed42f20abd:.env.example:generic-api-key:10
+
+# ② 单元测试夹具里的假 key（mock 用，1 条）
+a1693b319bb4c128627e3e612b56d3ed42f20abd:packages/server/src/services/__tests__/llm-config-service.test.ts:generic-api-key:113
